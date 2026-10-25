@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security reporting policy
+    url: https://github.com/puyu-tech/puyudb/security/policy
+    about: Read the reporting policy first. Do not post exploit details, secrets, or sensitive data in public issues.

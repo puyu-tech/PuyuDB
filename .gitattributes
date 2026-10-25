@@ -1,0 +1,5 @@
+# CLI output uses LF on every platform; preserve exact byte snapshots on checkout.
+apps/puyu-cli/tests/snapshots/*.txt text eol=lf
+crates/puyudb-crdt/tests/fixtures/*.txt text eol=lf
+docs/validation/**/*.csv text eol=lf
+scripts/*.py text eol=lf

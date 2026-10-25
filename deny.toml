@@ -1,0 +1,65 @@
+[graph]
+all-features = true
+
+[advisories]
+db-urls = ["https://github.com/RustSec/advisory-db"]
+# Research-only comparator dependencies; never waive a known vulnerability.
+# Revisit/remove these maintenance exceptions before adopting either comparator.
+ignore = [
+    { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill is an unmaintained transitive of dev-only Loro comparison" },
+    { id = "RUSTSEC-2026-0247", reason = "bitmaps is an unmaintained transitive of dev-only Loro comparison" },
+    { id = "RUSTSEC-2026-0248", reason = "im is an unmaintained transitive of dev-only Loro comparison" },
+    { id = "RUSTSEC-2026-0251", reason = "sized-chunks is an unmaintained transitive of dev-only Loro comparison" },
+    { id = "RUSTSEC-2026-0215", reason = "smallstr is an unmaintained transitive of dev-only Yrs comparison" },
+    { id = "RUSTSEC-2026-0249", reason = "smartstring is an unmaintained transitive of the dev-only pinned diamond-types comparison" },
+]
+
+[licenses]
+allow = ["Apache-2.0", "MIT", "Unicode-3.0", "Zlib"]
+confidence-threshold = 0.93
+include-dev = true
+
+# Unmodified dev-only Loro transitive code; MPL source/notice obligations apply
+# if comparison executables or vendored sources are ever distributed.
+[[licenses.exceptions]]
+name = "bitmaps"
+version = "=2.1.0"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "im"
+version = "=15.1.0"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "sized-chunks"
+version = "=0.6.5"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "xxhash-rust"
+version = "=0.8.19"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+name = "diamond-types"
+version = "=2.0.0"
+allow = ["ISC"]
+
+[[licenses.exceptions]]
+name = "smartstring"
+version = "=1.0.1"
+allow = ["MPL-2.0"]
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+# Current Automerge's tracing macros require syn 2; current serde/thiserror use 3.
+skip = [{ name = "syn", version = "=2.0.119" }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Only the reviewed, full-revision-pinned dev comparator (and same-source rle).
+allow-git = ["https://github.com/josephg/diamond-types"]

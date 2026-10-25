@@ -1,0 +1,13 @@
+Puyu command-line tools
+
+Usage: puyu <COMMAND>
+
+Commands:
+  db    PuyuDB database and synchronization engine
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Foundation only. No database operations are implemented yet.

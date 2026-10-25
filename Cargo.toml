@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "crates/puyudb-core",
+    "crates/puyudb-crdt",
+    "crates/puyudb-local",
+    "apps/puyu-cli",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0-dev"
+edition = "2024"
+rust-version = "1.99.1"
+license = "Apache-2.0"
+repository = "https://github.com/puyu-tech/puyudb"
+readme = "README.md"
+publish = false
+
+[workspace.dependencies]
+automerge = { version = "=0.12.0", default-features = false }
+clap = { version = "=4.6.7", default-features = false, features = ["std", "help", "usage", "error-context"] }
+diamond-types = { version = "=2.0.0", git = "https://github.com/josephg/diamond-types", rev = "89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922", default-features = false }
+loro = { version = "=1.17.1", default-features = false }
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
+rand = "=0.10.3"
+sha2 = { version = "=0.11.1", default-features = false }
+stats_alloc = "=0.1.10"
+thiserror = "=2.0.21"
+yrs = { version = "=0.28.0", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
