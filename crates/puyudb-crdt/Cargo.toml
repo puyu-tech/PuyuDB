@@ -1,0 +1,30 @@
+[package]
+name = "puyudb-crdt"
+description = "PuyuDB experimental native text and history validation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+automerge.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+diamond-types.workspace = true
+loro.workspace = true
+proptest.workspace = true
+rand.workspace = true
+stats_alloc.workspace = true
+yrs.workspace = true
+
+[[example]]
+name = "candidate_workloads"
+test = true
+
+[lints]
+workspace = true

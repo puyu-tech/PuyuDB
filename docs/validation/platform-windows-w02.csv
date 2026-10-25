@@ -1,0 +1,15 @@
+metric,value
+baseline_bytes,1048576
+seed_ns,1189488900
+native_edit_transactions,100000
+history_build_ns,16624812000
+retained_native_changes,100001
+raw_native_snapshot_bytes,13653102
+compressed_native_snapshot_bytes,291896
+cold_native_decode_ns,2083520100
+historical_cut_0_read_ns,215110500
+historical_cut_1_read_ns,226715600
+historical_cut_2_read_ns,233931400
+historical_cut_3_read_ns,247975100
+historical_cut_4_read_ns,28457600
+final_text_sha256,d4e1c82b2e791a77690d5c80a22021e8915ccc2a47c58b9d5c1153654d9a6b0f
