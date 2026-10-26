@@ -2,4 +2,10 @@
 apps/puyu-cli/tests/snapshots/*.txt text eol=lf
 crates/puyudb-crdt/tests/fixtures/*.txt text eol=lf
 docs/validation/**/*.csv text eol=lf
+docs/validation/loro-fit/*.hex text eol=lf
+docs/validation/diamond-fit/*.hex text eol=lf
+experiments/diamond-types-interfaces/** text eol=lf
+# Unified diffs contain a required space marker on otherwise blank context lines.
+experiments/diamond-types-interfaces/*.patch whitespace=-blank-at-eol
+experiments/dt-loro-final/** text eol=lf
 scripts/*.py text eol=lf

@@ -1,6 +1,12 @@
-# ADR-01 evidence addendum: native text/history feasibility
+# ADR-01 proposal: long-term native text binding
 
-**Status: Proposed — local validation evidence, not format acceptance.**
+**Status: Accepted 2026-10-26 — DT selected with the small maintained patch
+set; I02 closed; I03 not started; no native/PayuDB format frozen.**
+The maintainer prioritizes one long-term engine choice before format freeze,
+not the easiest initial implementation followed by a planned engine migration.
+The earlier initial-AM recommendation remains on hold. A separate reviewed
+native-interface spike addresses the two DT adapter gaps without a replacement
+merger or decoder; the main workspace still uses unmodified DT.
 
 ## Context
 
@@ -14,93 +20,241 @@ No production engine is selected solely because a benchmark or smoke trace passe
 The maintainer has separately [accepted provisional WSL2 evidence for I02](01-wsl2-validation-scope.md).
 That platform-only amendment does not accept this native-semantic proposal.
 The subsequent [common four-candidate comparison](../validation/I02-candidate-comparison.md)
-is now available. The maintainer requested comparison before selection; the
-Automerge direction below remains proposed, not a decision that rejects alternatives.
+and [Loro-fit report](../validation/I02-loro-fit.md) are now available.
+The [diamond-types assessment](../validation/I02-diamond-types-assessment.md)
+records the executed fit outcomes and unresolved native seams. More existing tests for one candidate
+are evidence, not a reason to select it before investigating a credible rival.
+The [final bounded DT–Loro comparison](../validation/I02-dt-loro-final.md) then
+measured the complete validation-path flow for both engines on macOS, native
+Windows and WSL2 under one frozen source fingerprint; those results are the
+deciding measurements for this proposal.
 
-## Findings and proposed direction
+## Recommendation and alternatives
 
-Retain **Automerge 0.12.0 as the proposed text candidate**. Local evidence supports
-deterministic epoch-owned seeds, original-byte retention, historical cuts,
-explicit scalar indexing, and text-only operation inspection. The ordinary writer
-and seed namespaces remain separate. No new CRDT, eager seeding fallback, or
-native/PuyuDB identity conflation is justified by current findings.
+**DT is the selected engine (2026-10-26) with a small maintained native patch
+set.** The [bounded spike](../validation/I02-dt-interface-spike.md) is not a
+permanent fork; its reviewed patches are the reference for I03 promotion.
+Keep AM as the conformance reference, not the assumed production winner.
 
-Alternatives remain meaningful but are not drop-in replacements:
+The earlier AM recommendation favored the smaller demonstrated binding design.
+AM still has the deepest executed seed, original-byte, operation-scope,
+historical-cut and anchor evidence. That is not proof it is the best long-term
+choice: diamond-types has favorable native edit/history/historical-read/memory
+observations. Its follow-up now demonstrates useful identity/history projection
+but also concrete stable-anchor and representation-independent inspection gaps.
 
-- **Yrs 0.28.0:** tested history needs GC disabled. The byte-offset anchor fixture
-  fails; an explicit UTF-16 profile with checked conversion passes separately.
-- **Loro 1.17.1:** tested full-history snapshots and historical-fork anchors work.
-  Peer-ID width, change coalescing and historical anchor fallback need a distinct
-  binding design before adopting it.
-- **diamond-types pinned upstream:** the safe no-LZ4 Git revision passes the common
-  trace and retained remote-frontier checks. It is unpublished, has a legacy list
-  codec, prerelease/transitive maintenance risk and a distribution-notice gap.
+Correctness, retained history, offline identity and anchors are hard requirements.
+Among candidates that satisfy them, evaluate complete native/binding workloads,
+format/decoder compatibility and an explicit maintenance obligation. Neither the
+fastest microbenchmark nor the smallest amount of already-written adapter code
+alone decides. No universal “best forever” guarantee follows; the goal is to
+avoid a known-compromise choice justified by an assumed later migration.
 
-No cross-engine speed ranking or universal non-interleaving guarantee follows.
-The backward-insertion diagnostic confirms a native interleaving limitation; this
-does not change convergence semantics or license a hand-written merge override.
+| Candidate | Evidence and limitation | Proposed disposition |
+| --- | --- | --- |
+| Automerge 0.12.0 | Broadest binding-specific corpus; deterministic empty/Unicode seeds, original changes and exact-cut negatives; expensive seed/load/history work; inspector not hardened | Conformance reference; prior initial-binding recommendation remains on hold |
+| Loro 1.17.1 | Favorable native seed/history/load costs and markedly faster native cursor creation; complete tested binding flow slower in every paired cell on all three measured platforms; narrow inspection and new same-cut/cursor controls pass; full-writer-to-peer allocation and empty-seed semantics still need a feasible amended contract | Documented alternative; not selected 2026-10-26; not declared rejected |
+| Yrs 0.28.0 | Common trace passes with retained history; default-GC and byte-anchor profiles fail named fixtures; explicit UTF-16 profile passes; editor interoperability is not a current deciding requirement | Retain evidence; do not adopt for the initial binding |
+| diamond-types Git `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` | Favorable native costs; original adapters have two counterexamples, now addressed by a separate small native-interface prototype; faster complete tested binding flow in every paired cell on all three measured platforms; unpublished/format/maintenance obligations remain | **Selected 2026-10-26** with explicit patch/policy ownership; production binding promotion is I03 work |
 
-## Required clarification before accepting a native profile
+These dispositions are not universal algorithm rankings. Missing equivalent
+tests are not observed failures. No candidate supplies PuyuDB authentication,
+immutable outer batches or durable publication by itself. A new specialized CRDT,
+whole-repository Automerge model or generic multi-engine production framework
+is not justified by these findings. Native convergence is reused only for text;
+core continues to own domain/history rules.
 
-“Native counter continuity” must not mean gapless operation counters per actor.
-The pinned engine allocates a change's operation counter after the **exact base
-cut's maximum counter**, so observing another actor permits a jump. Native change
-sequences remain gapless per actor; outer batch sequence and IDs are independent.
-The existing executable jump test checks this interpretation.
+## Compared costs and the proposed cost acceptance
 
-This is a proposed clarification, not a silent format change. I03 must disposition
-the metadata syntax, supported counter widths, exact seed/profile versions and
-decoder/resource limits explicitly.
-Those exact profile details are I03 deliverables, not a requirement to finish
-I03 before it can start. The meaning of the native counter rule, however, is an
-I02 feasibility decision because it changes which histories are accepted.
+Decision inputs are the retained 2026-10-25 common native runs and 2026-10-26
+fit evidence, not production telemetry or a new measurement. The complete
+four-engine/macOS data remain in the [common report](../validation/I02-candidate-comparison.md).
+No samples are removed or pooled here. The earlier
+[AM-specific cost assessment](../validation/I02-cost-assessment.md) uses a
+different metadata/profile setup and is not substituted into this comparison.
+The [final bounded comparison](../validation/I02-dt-loro-final.md) adds the
+complete validation-path flow (inspection, publication, anchors, historical
+read, save/load) for DT and Loro on three platforms; its totals include
+verification work and are not bare native timings.
 
-## Stop/go and remaining cost decision
+Selected WSL2 observations, **nanoseconds unless the row says bytes**:
 
-**GO:** continue the proposed native approach using retained original bytes.
-**NO-GO:** public native-format freeze, production-safe admission, or starting I03.
+| Metric | Automerge | Loro | diamond-types |
+| --- | ---: | ---: | ---: |
+| W01, 100 KiB native API p95, median of three process p95s | 101,059 | 3,557 | 561 |
+| W01, same aggregation, call + full UTF-8 text p95 | 2,975,338 | 12,544 | 7,504 |
+| W02, 1 MiB seed/writer setup | 1,230,979,333 | 2,846,207 | 1,967,031 |
+| W02, 100,000-batch history construction | 13,954,208,103 | 398,742,318 | 107,179,655 |
+| W02, native save | 7,063,721 | 50,090,762 | 17,063,630 |
+| W02, native load from resident bytes | 1,856,456,688 | 4,737,105 | 26,405,514 |
+| W02, maximum saved-cut read in that run | 232,522,826 | 997,123,620 | 10,143,617 |
+| W02, whole-process maximum RSS, bytes | 395,202,560 | 192,315,392 | 64,704,512 |
 
-Local correctness fixtures and native-only cost baselines have passed. The
-experimental inspector still clones/forks/scans historical state and is not an
-optimized or resource-hardened publication interface. Compressed native input is
-refused before upstream inflation; raw byte limits and tested negatives do not
-prove bounded work for every malicious column encoding.
+Sources: [W01 per-process summaries](../validation/candidates/w01-summary.csv),
+[W02 summaries](../validation/candidates/w02-summary.csv) and the common report's
+saved-cut observations. W01 uses nearest-rank p95 within each 64-sample process;
+the table reports their median, not a pooled p95. W02 has one process per engine,
+not a latency distribution. Its history construction includes oracle/coordinate
+work and cut checks. Saved-cut maxima cover heterogeneous cuts, not a p95.
 
-[Native Windows, Debian WSL2 and refreshed macOS resource observations](../validation/I02-platform-results.md)
-are now available from identical input inventories. Windows memory is only a
-sampled lower bound. WSL2 remains a VM observation, not independent reference
-Linux; the accepted amendment permits its provisional use for I02 only.
-No remote infrastructure was provisioned. W01's native timings do not include
-`edit_at`/`inspect`; W02's process maximum includes original/reloaded documents
-and temporaries. Do not claim production latency/memory budgets from these numbers.
+DT has the lowest observations in several displayed paths, but does not dominate:
+Loro loads faster in this run, and AM's native save is faster. DT can defer rope
+work to later reads; the complete-text W01 row matters, not just its tiny native
+call. Whole-process RSS includes writer/reloaded documents, expected text and
+temporaries; it is not per-document heap or an idle-space budget. macOS results
+remain separate. The baseline is repetitive ASCII with localized edits, not a
+representative repository or a full multi-writer PuyuDB cost model.
+There is no equivalent common Windows performance run, and its earlier sampled
+working set is only a lower bound. WSL2's approved I02 substitution remains a VM
+observation, not independent native Linux or production support.
 
-The [cost assessment](../validation/I02-cost-assessment.md) records the numerical
-evaluation and engineering GO recommendation with its exclusions. No observed
-native W01/W02 result requires an engine replacement; first-edit and retained
-history costs remain substantial. This is not owner acceptance of costs or a
-resource upper bound.
+Any future AM acceptance must explicitly address O(n) initialization and
+potentially seconds-scale seed/load work in these retained fixtures, not promise
+that a later engine switch or cache will remove it. Initialize edited epochs
+lazily, not one live CRDT per repository
+file, and keep historical reads separately budgeted. This is not acceptance of
+an end-to-end latency SLO, an 8 MiB-file upper resource bound, storage growth,
+idle memory, durable receipts or disk-cold performance. The fork/scan inspectors
+are not included in common native W01/W02 timings.
 
-## Candidate direction remains proposed
+The common profiles omit per-edit binding messages and external original-update
+retention; they cannot establish total cost of either production binding.
+Loro's separate 10 KiB/1,000-update fit probe retains 375,708 payload bytes plus
+32,000 digest-value bytes despite a 7,382-byte native snapshot. These are byte
+components, not total storage, and must not be extrapolated to the different
+1 MiB/100,000-batch common fixture.
 
-The common baseline records favorable observations for additional candidates,
-but PuyuDB-fit validation is not equally complete. Prioritize the proposed
-bounded Loro-fit experiment before engine selection; keep AM as the reference.
-This document's AM-specific direction is retained for acceptance or supersession,
-not silently frozen from native timing results:
+## AM-specific semantics if chosen
 
-1. Continue with pinned Automerge 0.12.0, epoch-owned deterministic lazy seeds,
-   retained original native bytes/history and distinct native/outer identities.
-2. Accept the counter clarification above: gapless native change sequences per
-   actor, but operation-counter allocation follows the exact base cut's maximum,
-   not the actor's last operation or the replica's unrelated current history.
-3. Accept the native-feasibility cost assessment under the approved WSL2 scope,
-   with no durable-latency, hardened-admission or production memory guarantee.
+1. **Epoch-owned seed, not first-arrival ownership.** Retain the deterministic
+   native seed bytes and identity once per content epoch, including empty text.
+   Seed and writer namespaces remain separate. Never regenerate an existing
+   lineage with a newer library or add a hidden eager-seeding fallback.
+2. **Full writer context, distinct identities.** Derive the ordinary native actor
+   from the full writer key, branch, writer epoch and content epoch. A native
+   actor/hash is neither a PuyuDB batch/artifact ID nor authentication.
+   Authentication and admission policy remain separate core obligations.
+3. **Exact intent cut.** Interpret UTF-8 byte ranges at scalar boundaries in the
+   captured base, using an explicit UTF-16 conversion only when requested.
+   Multiple edits to an epoch use its staged view in order. A historical fork
+   cannot reuse an actor's newer counter state or acquire unrelated current heads.
+   If the previous outer-stream batch is absent from the cut, use a fresh writer
+   epoch instead of silently widening that cut.
+4. **Native counter clarification.** Native change sequences are gapless per
+   actor. Operation counters are allocated after the exact base cut's maximum,
+   so observing another actor can cause a jump; they are not gapless per actor.
+   Outer batch sequence and the outer DAG Lamport clock remain separate from
+   both native counters.
+   The existing executable counter-jump fixture supports this interpretation.
+5. **One native change per edited epoch per outer batch.** Inspect the expected
+   root text object, insert/delete forms, targets, dependencies, actor and metadata
+   against that cut. Bind writer context, outer sequence, epoch and ordinal;
+   native parse/apply success or visible text equality alone is insufficient.
+6. **Retained original artifacts and outer publication.** Preserve original
+   native changes and seed bytes, dependency/producer associations and the outer
+   immutable batch. A native snapshot is a rebuild accelerator, not permission
+   to drop original authoritative artifacts. A change shared as a dependency is
+   not newly authored again; seed availability does not make an editing batch
+   its producer. Core, not a native commit, will enforce cross-file atomicity.
 
-Acceptance would close I02's direction/feasibility decision, not freeze a
-persistent or wire format. I03 then owns canonical records, tags, exact profile
-syntax/versioning, supported widths/limits and signed compatibility vectors.
-The current `i02` fixture metadata and experimental limits are not thereby made
-normative. No I03 implementation or format freeze is authorized by this proposal
-while it remains unaccepted. If another engine is proposed, its native identity
-and counter binding needs its own evidence-backed amendment; the AM counter
-rule must not be treated as a universal candidate requirement.
+These are semantic constraints for the next design stage, not public types or
+an implementation of storage/authentication. Exact actor/metadata encodings,
+tags, widths, profile versions, limits, canonical records and signed compatibility
+vectors remain I03 deliverables. Current experimental `i02` strings and numeric
+limits are not frozen by acceptance of this direction.
+
+## What choosing Loro instead would require
+
+Loro remains a credible alternative, not a failed algorithm. The fit experiment
+does not yet establish the following replacement semantics:
+
+- **Offline native-peer allocation and collisions.** Define a full
+  writer/branch/writer-epoch/content-epoch association to native `u64` peers.
+  The caller-supplied fixture registry is not that allocator. Hash truncation,
+  first-arrival ownership or a central allocator cannot be introduced silently:
+  preserve full authentication context and explicitly address independent offline
+  histories that assign the same peer to different writers. Never rewrite
+  retained native IDs to repair a collision or claim it cannot happen.
+- **Empty-seed amendment.** The tested empty root needs no native change and has
+  identical native snapshots across epochs. Adopt an explicit epoch-owned outer
+  descriptor/seed-binding contract if that is intended, rather than pretending
+  it satisfies AM's native seed-change rule or adding a hidden dummy operation.
+- **Native spans versus immutable publications.** Retain exact original updates
+  and outer producer/batch associations independently. Export/import can merge
+  native changes despite local no-merge configuration. Fully known conflicting
+  native IDs can be import no-ops; that cannot establish byte equality or authorize
+  a new producer. Unique messages in a fixture are not a durable batch ledger.
+- **Binding validation and native bounds.** Specify ownership, exact-cut span
+  and operation rules, native counter exhaustion and anchor behavior, with
+  corresponding negatives/compatibility vectors. Existing narrow reconstruction
+  tests are not equivalent to AM's broader corpus or a proof over every encoding.
+
+The identity/collision and seed-contract choices are I02 feasibility decisions,
+not merely field names to leave for I03. Accepting a different engine requires
+an explicit amendment that resolves them; AM's counter rule must not be imposed
+on Loro. Authentication, original-artifact retention and hardened decoding remain
+obligations for either choice, not requirements invented only for the challenger.
+
+## Remaining risks and stop/go
+
+**DECIDED (2026-10-26):** DT selected with the small maintained patch set;
+I02 closed.
+**NO-GO now:** start I03 without an explicit maintainer go-ahead, or freeze a
+native/PayuDB format. Promoting the reviewed patch set into the main dependency
+graph is I03 work, not part of this decision.
+
+The AM inspector rejects compressed input before upstream inflation; the Loro
+fixture's metadata decoder already allocates/decodes before reporting counts.
+DT's strict fixture guard catches ignored input but is not representation-independent:
+valid same-cut updates can fail it after opposite import orders. Its numeric
+cursor projection likewise fails import-order stability after deletion.
+No experimental inspector establishes bounded hostile-input work or general
+canonical native encoding. Decoder hardening/fuzzing and full-system performance
+still need their implementing gates; their absence is not concealed by green
+native tests.
+
+The backward-insertion diagnostic confirms a native interleaving limitation:
+convergence is not semantic code correctness or universal non-interleaving.
+No hand-written merger or actor sort is proposed to override native integration.
+No release, production support, storage/replication implementation, legal clearance
+or independent proof of an upstream algorithm follows from I02 acceptance.
+
+## Maintainer decision (2026-10-26)
+
+The previous request to accept initial AM binding/counters/costs remains **on hold**.
+The clarified goal was one evidence-backed long-term choice before I03, without
+planning an engine migration as the answer to a known performance compromise.
+
+**Decision: DT is selected** with the small maintained native patch set, on the
+completed [DT-fit experiments](../validation/I02-diamond-types-assessment.md#decisive-fit-gates)
+and [final bounded DT–Loro comparison](../validation/I02-dt-loro-final.md)
+(macOS, native Windows and WSL2, audited evidence chain). I02 is closed.
+
+Accepted with the selection, per the [small native-interface prototype](../validation/I02-dt-interface-spike.md):
+the native identity-boundary cursor policy including post-deletion replacement
+behavior, the epoch-owned external empty-seed descriptor, the original
+operation-span/outer-publication association, and patch/dependency/notice
+ownership. The old numeric cursor and byte-reconstruction adapters are not the
+permanent implementation; the spike patches are the reviewed reference for I03
+promotion. Loro remains a documented alternative; its full offline
+writer-to-peer allocation/collision policy and empty-seed amendment remain
+unimplemented and were not required for this decision. AM remains the
+conformance reference.
+
+Neither path has production authentication, outer publication,
+resource-hardened decoding or a full-system cost assessment; choosing DT does
+not claim them. The current experimental bytes remain unfrozen; no transparent
+future engine migration is promised.
+
+The [native-interface spike](../validation/I02-dt-interface-spike.md)
+supplies a concrete small implementation of both DT seams: native insertion/
+tombstone ordering and strict all-new-operation decoding with original metadata.
+It does not change merge rules or the native format, and it fixes the tested
+counterexamples in a separate harness. The old unmodified-pin characterization
+results remain valid.
+
+**I03 has not started.** The maintainer explicitly deferred it; starting I03
+requires an explicit go-ahead. Exact syntax/widths/versions and promotion of
+the patch set into the production binding remain I03 work. No end-to-end
+performance, hostile-input security, upstream acceptance or distribution
+guarantee follows from the prototype or this decision.

@@ -1,0 +1,16 @@
+metric,value
+profile,loro-fit-i02-retained-updates-v1
+baseline_bytes,10240
+logical_batches,1000
+seed_snapshot_bytes,475
+retained_original_update_bytes,375708
+smallest_original_update_bytes,372
+largest_original_update_bytes,377
+digest_value_bytes,32000
+full_native_snapshot_bytes,7382
+source_native_changes,1001
+reloaded_native_changes,1001
+original_replays_noop,1000
+same_range_reexports_byte_equal,1000
+ordered_original_digest_index_sha256,6f12abc5d5c040f5aad5f17f53b37bc9cbf503d4fed3aa187fb47d254f882e72
+final_text_sha256,1fb2c5bc5f1ca6c369109903a3cc16da45179a1b771436f4b60342dc2cc48cef

@@ -1,0 +1,917 @@
+{
+  "evidence_format": 1,
+  "profile": "diamond-fit-i02-retained-updates-v1",
+  "run_id": "20261026T142650716518Z",
+  "source_archive_sha256": "735c03f315c8ce87c975e68f17773eb7dc0c94a8f56e60680c15465d390de9ae",
+  "source_manifest": {
+    "tool_report_format": 1,
+    "files": {
+      ".gitattributes": "0b32e6de8d8dd360e29cfbdd94c564901e6ccfcd7072c731d83bf953f69c0239",
+      ".gitignore": "1674de402849d41be2473d82718ead8aff0a76885a65a45f3752ead48b6048ca",
+      "Cargo.lock": "a31fc17f20dda26b52772c23d3500842fdc372e8c691102987baf73db56851b4",
+      "Cargo.toml": "4f349ada3b5bf755940e1898d37be158afa2576972ba75363d2d51d84b687786",
+      "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "NOTICE": "7ebffd3864c4242a0f9d657bc36a2d158ac767775daa6ff2f95929fb06ef70e8",
+      "README.md": "54bb57b0f7864b0a30bb42f695a1af853023008d22aea598d79e3e0c1194624d",
+      "THIRD_PARTY_NOTICES.md": "dfe7404ca561b851265d081c646e560b31a97def9e7a88ad089dec35e0b111ab",
+      "apps/puyu-cli/Cargo.toml": "9d7c8c1beebb916ce37827571e27bf07616778499f5b6115741cbf9adfe822f4",
+      "apps/puyu-cli/src/main.rs": "3124ceaf225d18ebe815ff7ec3146b6eba4e4e855595b071db3a7159561b609f",
+      "apps/puyu-cli/tests/cli.rs": "00475657a4c6b88f0b12939f77f535e7bd352c7ef763f15acfc9f3ab6035f256",
+      "apps/puyu-cli/tests/snapshots/db-help.txt": "bb2e5733a0e5e96e9ac7d45110760d811571a076de5d32581d7ada1628309a1c",
+      "apps/puyu-cli/tests/snapshots/puyu-help.txt": "897f245c54a15418b2d280b3fd9641e8aa855b64f1ad73f6e5fb295d5d53fc51",
+      "crates/puyudb-core/Cargo.toml": "ba626c709206751e676a68d917441905a0f61a94fec3deb96d17160b31baec83",
+      "crates/puyudb-core/src/lib.rs": "5c14cb10f238e305b3463579043d0443be37a7b4f44bbb2d733c3d648d8954bb",
+      "crates/puyudb-crdt/Cargo.toml": "9c3c08b543551b8d69cdaa271f4f87f49e2f089be9a288612d716784fd24ff22",
+      "crates/puyudb-crdt/examples/candidate_allocations.rs": "ecd07d1b8ac60d1472ccf6873226fd8f6de1d32eb8ba6474d2052b9337d329e6",
+      "crates/puyudb-crdt/examples/candidate_workloads.rs": "e10e1c4ae4bafc8b0e07b938b10ef1868c938f7657eba7de39a12bbaebec9c7b",
+      "crates/puyudb-crdt/examples/diamond_fit_artifacts.rs": "287744e4c1d6c407610b9d5ef78113761e6c63d4f63d16394ce36a8634f7bebd",
+      "crates/puyudb-crdt/examples/loro_fit_artifacts.rs": "85bd41c0f49c45ceae4983f6a8554e2f35cc9d593e18a48775bb100b61d3c2ec",
+      "crates/puyudb-crdt/examples/native_allocations.rs": "68762e90bb8561e35d411501bfccb6fd9217548cd41fd479245d32b46496e23b",
+      "crates/puyudb-crdt/examples/native_workloads.rs": "c2fbf5e826b3435f31811dd5bdd8f4bbd986118dbe7d336adb75302b7f5995d7",
+      "crates/puyudb-crdt/examples/support/candidates.rs": "8d9e5b0cba4391204cab37f38bbcafd1940c34f9f246a66446ae931dac59ae39",
+      "crates/puyudb-crdt/examples/support/workloads.rs": "6740cdd0d02a52c3f5bbf9500608099ec300fab03526e4c3bb61d8d0929e6db3",
+      "crates/puyudb-crdt/src/bin/native_seed_probe.rs": "efecb34f2cdb7b08f579a9da8909bb35d544693ec2fa241f75302faa7e2296db",
+      "crates/puyudb-crdt/src/experiment.rs": "7e1f4cd8c77d800a7e9e3d79b229295fcfbd4c5cebde270ac57013976b22027b",
+      "crates/puyudb-crdt/src/lib.rs": "bec03b02cfadda92470d61812bb74719434e74b445c3a43b80a838e52c516429",
+      "crates/puyudb-crdt/tests/adversarial.rs": "f7b48d6d1a513c0d19716324a1fa47a7458e28677cdaf24d12fef70ee628b419",
+      "crates/puyudb-crdt/tests/anchor_controls.rs": "26301fdc5af8ddd7c5554c9063c678fe537913451404e306140aea79ef7fa4ef",
+      "crates/puyudb-crdt/tests/candidate_workloads.rs": "80a08edd4ac0963f3868b7587f765a8cfd1ea350ec738167ff19a4dd6288cc70",
+      "crates/puyudb-crdt/tests/common/mod.rs": "40661b95cd3731276a7ccd1dff21871fe5b267ac3b5793041722939939254025",
+      "crates/puyudb-crdt/tests/comparison.rs": "84400a4177750aaf60990052c1a6fce3f8fbca77befecc32aec8ce73d836b68d",
+      "crates/puyudb-crdt/tests/diamond_anchors.rs": "838a7146466f49294471321a27148b0f17aed65ff324ea03955afef9b1455be5",
+      "crates/puyudb-crdt/tests/diamond_fit.rs": "da1db51e022cf8c84c471312752bcdccf09aa23fec7e87e1bbe6b59f4fb5694b",
+      "crates/puyudb-crdt/tests/diamond_wire.rs": "2ef07abe5036e1feaec3aa97a498730acc26fd1c4029f455ea3cf48e1542e07e",
+      "crates/puyudb-crdt/tests/fixtures/seed-empty.txt": "575ac1c2345556c4be445390ecb54941b961fcd8a9f778773ed0587f527c71c7",
+      "crates/puyudb-crdt/tests/fixtures/seed-unicode.txt": "79b2506ec3bbc470d3d34037f3896e0e625470dbdb35fd7f3f9a6d977fd7a9b9",
+      "crates/puyudb-crdt/tests/history.rs": "1684f9109cad498b53b7a552bbe6fc6a5e6f9291f6de3ed38eb2294a9e38a580",
+      "crates/puyudb-crdt/tests/loro_fit.rs": "96b16a84dbada20d632425b815533b0eccd79e2d381ec75a22768ca9b95f1297",
+      "crates/puyudb-crdt/tests/mixed_histories.rs": "efc4a030beab85c0eea38dfbdc78ec19a9ace68c523373c3721e884a9cc7e619",
+      "crates/puyudb-crdt/tests/native_wire.rs": "f5914e6d7036169695d615c320234bb54963675fd044fa2b769436ce5a6da229",
+      "crates/puyudb-crdt/tests/scope.rs": "d6d1acdc7dd9fb362325c83b7694aad373ee1df5c2c1ee954a5dc9a9652fa992",
+      "crates/puyudb-crdt/tests/seeds.rs": "7cc43ca59fb11508172497073c95fee41986ac590ee8f6267bd2381006ed6f5f",
+      "crates/puyudb-crdt/tests/support/diamond_bytes.rs": "1a9e29cd3cf8df8f44d38bacc42fffedbab0bffe26e5890cc0ab838b3c0a0749",
+      "crates/puyudb-crdt/tests/support/diamond_fit.rs": "6ee51efedb13da948fcfe6fa02ed798a81afe1badd33f9ce1614d6feb5b7a68c",
+      "crates/puyudb-crdt/tests/support/loro_fit.rs": "ec4d7735f565b8b0fc5f5aa24c4b85eed08764d6be0e7b1887f31075917fa0ca",
+      "crates/puyudb-crdt/tests/unicode.rs": "4869ebc95ee3db1d033880d39b52985d05bfb37aeb5c3d944510e0c76c2eb70a",
+      "crates/puyudb-local/Cargo.toml": "c2b3a0af1ef464b2e47f12d4ff071b58b58471238b938606ca870375e719887a",
+      "crates/puyudb-local/src/lib.rs": "93663b67d5fdb6e4d7f9312954ee84474fd1a04eb7901e8b13b38a78e10e792c",
+      "deny.toml": "7046d1296052ba3a971c86de4b723b90b30e605ef1af56a0341f8de7591d1a6c",
+      "docs/validation/I02-platform-runs.md": "640b074c5e53c52fb1c8ee315dc7a52542490a250f5239882fa04da2c029ec5b",
+      "rust-toolchain.toml": "f715f440167e20fd8ea9afa0498c3d1ab80174cfcb8cbc895f106a34d907a1e1",
+      "scripts/i02_baseline.py": "5630671a0d347dcfa6a61f38692b0899f0e1d020908c1be9a62aec2d068f2458",
+      "scripts/i02_candidates.py": "506b14416525051cde065fa6343a119c51b7f6dd5c05dc9ec033bc2d092cfe6c",
+      "scripts/i02_windows.py": "b1c93dbaf4eb9d1512528521bd4b68f688f6c3b775a58784f991641d047c7838",
+      "scripts/test_i02_baseline.py": "f2a6441f0cb0cb4b4e441e1b5124a0fb25560555d86b5cd6fb515b5786275968",
+      "scripts/test_i02_candidates.py": "664d404bb98f325427da998a851da193a0cbd4673e7ba6ca2957cc23b1734999"
+    },
+    "fingerprint": "bf435fa8b97f1f3a5fd4364593adbe7d954ab4ba6b70f6fb279958f012dd5447"
+  },
+  "cargo_lock_sha256": "a31fc17f20dda26b52772c23d3500842fdc372e8c691102987baf73db56851b4",
+  "files": {
+    "loro-control-metrics.csv": {
+      "bytes": 589,
+      "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+    },
+    "macos-metrics.csv": {
+      "bytes": 663,
+      "sha256": "1c8eb065d6bd5b6e416c2822ef8daa3efe0f7e383f4a4294eff9878560240348"
+    },
+    "seed.hex": {
+      "bytes": 20677,
+      "sha256": "582e5d6291fb7953e55677cc55f8f6a3d6ac625fa4a25ace4ad15e5dfd1d61ba"
+    },
+    "seeds.csv": {
+      "bytes": 1123,
+      "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+    },
+    "snapshot.hex": {
+      "bytes": 28779,
+      "sha256": "4adffe4c22e962219c72dccfaeba0d24ea7b95a7e53e3c03662702d85d1a3b8a"
+    },
+    "updates.csv": {
+      "bytes": 870397,
+      "sha256": "677777f516e610fa5c09b0c8ccdce5c24e8d03919fee055914872e43dd8ede03"
+    },
+    "windows-metrics.csv": {
+      "bytes": 663,
+      "sha256": "1c8eb065d6bd5b6e416c2822ef8daa3efe0f7e383f4a4294eff9878560240348"
+    },
+    "wsl2-metrics.csv": {
+      "bytes": 663,
+      "sha256": "1c8eb065d6bd5b6e416c2822ef8daa3efe0f7e383f4a4294eff9878560240348"
+    }
+  },
+  "platforms": {
+    "macos": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "release": "27.0.0",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1",
+      "steps": [
+        {
+          "step": "rustc",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "cargo",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "fmt",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "clippy",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "workspace",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "python",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "no-default",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "all-features",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "all-target-build",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "docs",
+          "exit_code": 0,
+          "explicit_environment": {
+            "RUSTDOCFLAGS": "-D warnings"
+          }
+        },
+        {
+          "step": "release-build",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-artifacts",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "loro-artifacts",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-0",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-1",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-2",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "allocator",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "long-mixed",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "long-workloads",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "deny",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "actionlint",
+          "exit_code": 0,
+          "explicit_environment": {}
+        }
+      ],
+      "raw_files": {
+        "actionlint.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "actionlint.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "all-features.stderr": {
+          "bytes": 1922,
+          "sha256": "853b5edc2313937e7a9744824130ec854107d9da665ef71f93e7854311f25b2c"
+        },
+        "all-features.stdout": {
+          "bytes": 12014,
+          "sha256": "9e05f67d911f17e0674d1465f6fd8e04b84c51e71577b85dca256c5db1cfa0ac"
+        },
+        "all-target-build.stderr": {
+          "bytes": 201,
+          "sha256": "a0cb782c59762204463668b7eec2de3d79c92285a8f16c6896e96d0a91845363"
+        },
+        "all-target-build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "allocator.stderr": {
+          "bytes": 316,
+          "sha256": "62c9d5d6fd07c13595c2a0371fa0543b191a7873e6ec980e925468889a5fb371"
+        },
+        "allocator.stdout": {
+          "bytes": 183,
+          "sha256": "d7d348df793b38827d9f8f855e6c6a405f380d6e25bfc95a1edc210307d7558c"
+        },
+        "cargo.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "cargo.stdout": {
+          "bytes": 36,
+          "sha256": "c35608815f43d0b8788a9b826fad2bb17384f49fb328dc4fe64da9db5f5ef4d6"
+        },
+        "clippy.stderr": {
+          "bytes": 438,
+          "sha256": "081b0685f7c3de1cddba4cc22278fa389ccbf3b5f847b4e8a14d2c48bfdb279a"
+        },
+        "clippy.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "deny.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "deny.stdout": {
+          "bytes": 48,
+          "sha256": "f1a0fca39d4280363937aabd77783990ea6480bd9ca257816de3b68fc8efa845"
+        },
+        "diamond-artifacts.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-artifacts.stdout": {
+          "bytes": 663,
+          "sha256": "1c8eb065d6bd5b6e416c2822ef8daa3efe0f7e383f4a4294eff9878560240348"
+        },
+        "diamond-originals/seed.native": {
+          "bytes": 10338,
+          "sha256": "82d9fb9d72b2bc2a965340fe3155e03d467b54f7c6fd6731f773d9b24dbf531f"
+        },
+        "diamond-originals/snapshot.native": {
+          "bytes": 14389,
+          "sha256": "2546cde97aedc1b051d30e816375c55dbf2b56ff82c3c38a66bfd92362f5cf36"
+        },
+        "diamond-originals/updates.csv": {
+          "bytes": 870397,
+          "sha256": "677777f516e610fa5c09b0c8ccdce5c24e8d03919fee055914872e43dd8ede03"
+        },
+        "diamond-seeds-0.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-0.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "diamond-seeds-1.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-1.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "diamond-seeds-2.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-2.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "docs.stderr": {
+          "bytes": 331,
+          "sha256": "9114776887f9c903fa03b1b1c4d50a9087e0f8cf0bc35f6357323c5325091129"
+        },
+        "docs.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "long-mixed.stderr": {
+          "bytes": 284,
+          "sha256": "25e5f85d9d3aa1a548cfd50893a0d0d2cf4da820b4678e236303ad3a7e190bce"
+        },
+        "long-mixed.stdout": {
+          "bytes": 183,
+          "sha256": "1502df48a924944b06020fe8829fe9dd2773cb055c0f43359cd644d37ae42f5a"
+        },
+        "long-workloads.stderr": {
+          "bytes": 309,
+          "sha256": "387f928352116429bcd9dade74d00841a81b7b75144dbf86abf3c37978611079"
+        },
+        "long-workloads.stdout": {
+          "bytes": 204,
+          "sha256": "0bfbc9dcccad3f9268bb50f678f5628ff7278643067f1a9ed4b08b9e137d68c6"
+        },
+        "loro-artifacts.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "loro-artifacts.stdout": {
+          "bytes": 589,
+          "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+        },
+        "loro-originals/seed.native": {
+          "bytes": 475,
+          "sha256": "d7e8ec92e717943b96889d848acd4a3b83ff5b506589d4c50e2f66f2c308b451"
+        },
+        "loro-originals/snapshot.native": {
+          "bytes": 7382,
+          "sha256": "7fd3f03d747860c3b2ebbdf4da197d6a652528d96e5704f54aefd64f634feded"
+        },
+        "loro-originals/updates.csv": {
+          "bytes": 836272,
+          "sha256": "60afeec89a82232b05058a82d637f4d77c4667dc81bd6395aa5b2e5c832e2528"
+        },
+        "no-default.stderr": {
+          "bytes": 1922,
+          "sha256": "853b5edc2313937e7a9744824130ec854107d9da665ef71f93e7854311f25b2c"
+        },
+        "no-default.stdout": {
+          "bytes": 12014,
+          "sha256": "964a3e53193659166f8c92bf47f8bbb8773cb51eb4e1830befb83f57e36580e3"
+        },
+        "python.stderr": {
+          "bytes": 120,
+          "sha256": "9c6dc8ae4c71b9e5d2e5a8f80f3cf0cf90714fafb76d8c4c32f5803c7168728d"
+        },
+        "python.stdout": {
+          "bytes": 14,
+          "sha256": "43d3d2e30a6dfc229df3ebfdf92c95c3ca011ce26da81b8ea3584e386cd502ee"
+        },
+        "release-build.stderr": {
+          "bytes": 429,
+          "sha256": "9579d21e6b0a9a446f0801f437cad97b1d1bb4f39ddae6b523edb6127ed86a02"
+        },
+        "release-build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stdout": {
+          "bytes": 192,
+          "sha256": "e003fd3d385fcd0de16bc6b049124efb20207831dd810fd4ab39ff079bbb12a5"
+        },
+        "workspace.stderr": {
+          "bytes": 2289,
+          "sha256": "352a41f04012d749b34395d31bf9de8c1350520ce273ae5396d836226d5710d1"
+        },
+        "workspace.stdout": {
+          "bytes": 12014,
+          "sha256": "c16b69be56b25b23ad3ea8bb344d4d842665a320b48f9bd6e02ad9f5e70feba8"
+        }
+      },
+      "raw_manifest_sha256": "508777b49a064d9ec7ed8901ac424758e4db2126efd07fd018f6454e23dd647b"
+    },
+    "windows": {
+      "system": "Windows",
+      "machine": "AMD64",
+      "release": "11",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1",
+      "steps": [
+        {
+          "step": "rustc",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "cargo",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "fmt",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "clippy",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "workspace",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "python",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "no-default",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "all-features",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "all-target-build",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "docs",
+          "exit_code": 0,
+          "explicit_environment": {
+            "RUSTDOCFLAGS": "-D warnings"
+          }
+        },
+        {
+          "step": "release-build",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-artifacts",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "loro-artifacts",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-0",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-1",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-2",
+          "exit_code": 0,
+          "explicit_environment": {}
+        }
+      ],
+      "raw_files": {
+        "all-features.stderr": {
+          "bytes": 3371,
+          "sha256": "0ec9c7b0de53a083be6e098cbf589836fbd7b41436edc2955836db614ccfca34"
+        },
+        "all-features.stdout": {
+          "bytes": 12015,
+          "sha256": "1c05609d27f6d2311e8f53625f97ef22795ab2862b613789b713f0a549b7c664"
+        },
+        "all-target-build.stderr": {
+          "bytes": 194,
+          "sha256": "17fdf328b934d3a2c73f0a9ba0cf8477a805795852a4ca0a4de191130c8f35bd"
+        },
+        "all-target-build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "cargo.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "cargo.stdout": {
+          "bytes": 36,
+          "sha256": "c35608815f43d0b8788a9b826fad2bb17384f49fb328dc4fe64da9db5f5ef4d6"
+        },
+        "clippy.stderr": {
+          "bytes": 555,
+          "sha256": "9071522b92ab5d04ee60a461f804c84d9b92ffd2b53e298aec8e86d23cc930d4"
+        },
+        "clippy.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-artifacts.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-artifacts.stdout": {
+          "bytes": 663,
+          "sha256": "1c8eb065d6bd5b6e416c2822ef8daa3efe0f7e383f4a4294eff9878560240348"
+        },
+        "diamond-originals/seed.native": {
+          "bytes": 10338,
+          "sha256": "82d9fb9d72b2bc2a965340fe3155e03d467b54f7c6fd6731f773d9b24dbf531f"
+        },
+        "diamond-originals/snapshot.native": {
+          "bytes": 14389,
+          "sha256": "2546cde97aedc1b051d30e816375c55dbf2b56ff82c3c38a66bfd92362f5cf36"
+        },
+        "diamond-originals/updates.csv": {
+          "bytes": 870397,
+          "sha256": "677777f516e610fa5c09b0c8ccdce5c24e8d03919fee055914872e43dd8ede03"
+        },
+        "diamond-seeds-0.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-0.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "diamond-seeds-1.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-1.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "diamond-seeds-2.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-2.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "docs.stderr": {
+          "bytes": 1297,
+          "sha256": "a90f41fb3a7f376009809fe306e75cd2ff667ce2db6e0d0ab0956dfc4f2eeb82"
+        },
+        "docs.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "loro-artifacts.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "loro-artifacts.stdout": {
+          "bytes": 589,
+          "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+        },
+        "loro-originals/seed.native": {
+          "bytes": 475,
+          "sha256": "d7e8ec92e717943b96889d848acd4a3b83ff5b506589d4c50e2f66f2c308b451"
+        },
+        "loro-originals/snapshot.native": {
+          "bytes": 7382,
+          "sha256": "7fd3f03d747860c3b2ebbdf4da197d6a652528d96e5704f54aefd64f634feded"
+        },
+        "loro-originals/updates.csv": {
+          "bytes": 836272,
+          "sha256": "60afeec89a82232b05058a82d637f4d77c4667dc81bd6395aa5b2e5c832e2528"
+        },
+        "no-default.stderr": {
+          "bytes": 3371,
+          "sha256": "1ea9ff0ccac31620f58a9f254945b85b0b25c27bd4a7944f5f980e21099ddeb3"
+        },
+        "no-default.stdout": {
+          "bytes": 12015,
+          "sha256": "88a0e32cc57fa3787461a88fcb2e46191c34549eba0e50b58e58e2051b5c136b"
+        },
+        "python.stderr": {
+          "bytes": 137,
+          "sha256": "2d427f8869ae8e87f88d94ac82bc02d30aa9d309245f3e6b976071bbbd74c937"
+        },
+        "python.stdout": {
+          "bytes": 15,
+          "sha256": "b07df6c35141a7dee6b877e20e00c7e8d391f7223510a7ef279eadbf6149374a"
+        },
+        "release-build.stderr": {
+          "bytes": 184,
+          "sha256": "195969e9ca0a962644547765a8c532fa1535786268aa2c31924172b423900ce6"
+        },
+        "release-build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stdout": {
+          "bytes": 194,
+          "sha256": "341fed434cf52bd9ba5ab2f3507dbd943a2062212028574e529fc3e7e5ecd7a8"
+        },
+        "workspace.stderr": {
+          "bytes": 3854,
+          "sha256": "a7bb2b4345dcc569a458b220e1d660955a40e32a26910a2c728d7eacfd51fe23"
+        },
+        "workspace.stdout": {
+          "bytes": 12015,
+          "sha256": "98a55a94d8c50383a57f8948102c826a3c01762b8f32a96b533e7dcc47c7e5de"
+        }
+      },
+      "raw_manifest_sha256": "ebac2befd39bb0623cefa29b55f5f289dfe649e8a432097f11d82927993d7cb4"
+    },
+    "wsl2": {
+      "system": "Linux",
+      "machine": "x86_64",
+      "release": "6.18.54.1-microsoft-standard-WSL2",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+      "steps": [
+        {
+          "step": "rustc",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "cargo",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "fmt",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "clippy",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "workspace",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "python",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "no-default",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "all-features",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "all-target-build",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "docs",
+          "exit_code": 0,
+          "explicit_environment": {
+            "RUSTDOCFLAGS": "-D warnings"
+          }
+        },
+        {
+          "step": "release-build",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-artifacts",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "loro-artifacts",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-0",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-1",
+          "exit_code": 0,
+          "explicit_environment": {}
+        },
+        {
+          "step": "diamond-seeds-2",
+          "exit_code": 0,
+          "explicit_environment": {}
+        }
+      ],
+      "raw_files": {
+        "all-features.stderr": {
+          "bytes": 3119,
+          "sha256": "538dac161108a7befece2f0021284e4db7a7ca3b13c5a106678f216db0fdafa5"
+        },
+        "all-features.stdout": {
+          "bytes": 12015,
+          "sha256": "f66ef4d0f87360aca1e4cabf8eb6643615bd9142d0ede4865166978f6f9c82e4"
+        },
+        "all-target-build.stderr": {
+          "bytes": 190,
+          "sha256": "4401c2c67d3ac36b02f0d3082a8c46c79e6b29d8b0562a456f773fd8249b810a"
+        },
+        "all-target-build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "cargo.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "cargo.stdout": {
+          "bytes": 36,
+          "sha256": "c35608815f43d0b8788a9b826fad2bb17384f49fb328dc4fe64da9db5f5ef4d6"
+        },
+        "clippy.stderr": {
+          "bytes": 538,
+          "sha256": "bc065cc289191470204b0cbd2c4642c8f4bd65930ba67be4402204fc214a7183"
+        },
+        "clippy.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-artifacts.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-artifacts.stdout": {
+          "bytes": 663,
+          "sha256": "1c8eb065d6bd5b6e416c2822ef8daa3efe0f7e383f4a4294eff9878560240348"
+        },
+        "diamond-originals/seed.native": {
+          "bytes": 10338,
+          "sha256": "82d9fb9d72b2bc2a965340fe3155e03d467b54f7c6fd6731f773d9b24dbf531f"
+        },
+        "diamond-originals/snapshot.native": {
+          "bytes": 14389,
+          "sha256": "2546cde97aedc1b051d30e816375c55dbf2b56ff82c3c38a66bfd92362f5cf36"
+        },
+        "diamond-originals/updates.csv": {
+          "bytes": 870397,
+          "sha256": "677777f516e610fa5c09b0c8ccdce5c24e8d03919fee055914872e43dd8ede03"
+        },
+        "diamond-seeds-0.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-0.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "diamond-seeds-1.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-1.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "diamond-seeds-2.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "diamond-seeds-2.stdout": {
+          "bytes": 1123,
+          "sha256": "fc2365be5b1bf7f4245e1875490eb2ef210c1c6664ca9576206a77f4662b0649"
+        },
+        "docs.stderr": {
+          "bytes": 1351,
+          "sha256": "7094459cc0f1ebf95145af2ad0c075d37d76a1795c9d34bfb56f80c3568aa4f9"
+        },
+        "docs.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "loro-artifacts.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "loro-artifacts.stdout": {
+          "bytes": 589,
+          "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+        },
+        "loro-originals/seed.native": {
+          "bytes": 475,
+          "sha256": "d7e8ec92e717943b96889d848acd4a3b83ff5b506589d4c50e2f66f2c308b451"
+        },
+        "loro-originals/snapshot.native": {
+          "bytes": 7382,
+          "sha256": "7fd3f03d747860c3b2ebbdf4da197d6a652528d96e5704f54aefd64f634feded"
+        },
+        "loro-originals/updates.csv": {
+          "bytes": 836272,
+          "sha256": "60afeec89a82232b05058a82d637f4d77c4667dc81bd6395aa5b2e5c832e2528"
+        },
+        "no-default.stderr": {
+          "bytes": 3119,
+          "sha256": "575a115b56b48897d084305ea815ff5e546ef8b7b0efc3d3bf221487ad1c3d68"
+        },
+        "no-default.stdout": {
+          "bytes": 12015,
+          "sha256": "9bf5154b5b69d54a1143762b6112f8ee90ce48b5bfb7c3386fd0c3e2cc4b2487"
+        },
+        "python.stderr": {
+          "bytes": 120,
+          "sha256": "e1bc8bbd4d2d04ee56678a405eece3cf3b962fb5e3fce8819d59dcdee146f82a"
+        },
+        "python.stdout": {
+          "bytes": 14,
+          "sha256": "43d3d2e30a6dfc229df3ebfdf92c95c3ca011ce26da81b8ea3584e386cd502ee"
+        },
+        "release-build.stderr": {
+          "bytes": 180,
+          "sha256": "ae8ce8fcc90c1ec4e5c5e4bcc0e6bd917e2be73a3bfb52f4e8cbba5d87d4646c"
+        },
+        "release-build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stdout": {
+          "bytes": 196,
+          "sha256": "f22d5e4e9ced367e774ce5bc140d9e6b1235c1882fec80d011044851f3ae6369"
+        },
+        "workspace.stderr": {
+          "bytes": 3585,
+          "sha256": "51b703508f9c30212b2e4018f3c75a3da6892c6d740cfba170b2bf8f750fe423"
+        },
+        "workspace.stdout": {
+          "bytes": 12015,
+          "sha256": "a550c6659b52cde97cd1049ce7f25eb80211528802c001380c34e04b9adc8bc3"
+        }
+      },
+      "raw_manifest_sha256": "51c58574d602e3b61c3977b164872d67c7ba083714639a64fd98294d20f17a40"
+    }
+  },
+  "decoded_native_artifacts": {
+    "seed.native": {
+      "bytes": 10338,
+      "sha256": "82d9fb9d72b2bc2a965340fe3155e03d467b54f7c6fd6731f773d9b24dbf531f"
+    },
+    "snapshot.native": {
+      "bytes": 14389,
+      "sha256": "2546cde97aedc1b051d30e816375c55dbf2b56ff82c3c38a66bfd92362f5cf36"
+    }
+  },
+  "raw_log_location": "target/diamond-fit-evidence/20261026T142650716518Z/{macos,windows,wsl2}; ignored, not included in files inventory"
+}

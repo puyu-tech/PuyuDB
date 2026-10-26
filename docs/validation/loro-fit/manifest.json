@@ -1,0 +1,540 @@
+{
+  "evidence_format": 1,
+  "profile": "loro-fit-i02-retained-updates-v1",
+  "run_id": "20261026T123635692980Z",
+  "source_archive_sha256": "458228297235007b1e81a21e1229c16a8543889a49a7b12bb3b067008e5a348a",
+  "source_manifest": {
+    "tool_report_format": 1,
+    "files": {
+      ".gitattributes": "efd42bc45e3e0c695c6b802028dad34d5870f8d2124972d0f4d6a86547f66795",
+      ".gitignore": "1674de402849d41be2473d82718ead8aff0a76885a65a45f3752ead48b6048ca",
+      "Cargo.lock": "a31fc17f20dda26b52772c23d3500842fdc372e8c691102987baf73db56851b4",
+      "Cargo.toml": "4f349ada3b5bf755940e1898d37be158afa2576972ba75363d2d51d84b687786",
+      "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "NOTICE": "7ebffd3864c4242a0f9d657bc36a2d158ac767775daa6ff2f95929fb06ef70e8",
+      "README.md": "54bb57b0f7864b0a30bb42f695a1af853023008d22aea598d79e3e0c1194624d",
+      "THIRD_PARTY_NOTICES.md": "dfe7404ca561b851265d081c646e560b31a97def9e7a88ad089dec35e0b111ab",
+      "apps/puyu-cli/Cargo.toml": "9d7c8c1beebb916ce37827571e27bf07616778499f5b6115741cbf9adfe822f4",
+      "apps/puyu-cli/src/main.rs": "3124ceaf225d18ebe815ff7ec3146b6eba4e4e855595b071db3a7159561b609f",
+      "apps/puyu-cli/tests/cli.rs": "00475657a4c6b88f0b12939f77f535e7bd352c7ef763f15acfc9f3ab6035f256",
+      "apps/puyu-cli/tests/snapshots/db-help.txt": "bb2e5733a0e5e96e9ac7d45110760d811571a076de5d32581d7ada1628309a1c",
+      "apps/puyu-cli/tests/snapshots/puyu-help.txt": "897f245c54a15418b2d280b3fd9641e8aa855b64f1ad73f6e5fb295d5d53fc51",
+      "crates/puyudb-core/Cargo.toml": "ba626c709206751e676a68d917441905a0f61a94fec3deb96d17160b31baec83",
+      "crates/puyudb-core/src/lib.rs": "5c14cb10f238e305b3463579043d0443be37a7b4f44bbb2d733c3d648d8954bb",
+      "crates/puyudb-crdt/Cargo.toml": "9c3c08b543551b8d69cdaa271f4f87f49e2f089be9a288612d716784fd24ff22",
+      "crates/puyudb-crdt/examples/candidate_allocations.rs": "ecd07d1b8ac60d1472ccf6873226fd8f6de1d32eb8ba6474d2052b9337d329e6",
+      "crates/puyudb-crdt/examples/candidate_workloads.rs": "e10e1c4ae4bafc8b0e07b938b10ef1868c938f7657eba7de39a12bbaebec9c7b",
+      "crates/puyudb-crdt/examples/loro_fit_artifacts.rs": "85bd41c0f49c45ceae4983f6a8554e2f35cc9d593e18a48775bb100b61d3c2ec",
+      "crates/puyudb-crdt/examples/native_allocations.rs": "68762e90bb8561e35d411501bfccb6fd9217548cd41fd479245d32b46496e23b",
+      "crates/puyudb-crdt/examples/native_workloads.rs": "c2fbf5e826b3435f31811dd5bdd8f4bbd986118dbe7d336adb75302b7f5995d7",
+      "crates/puyudb-crdt/examples/support/candidates.rs": "8d9e5b0cba4391204cab37f38bbcafd1940c34f9f246a66446ae931dac59ae39",
+      "crates/puyudb-crdt/examples/support/workloads.rs": "6740cdd0d02a52c3f5bbf9500608099ec300fab03526e4c3bb61d8d0929e6db3",
+      "crates/puyudb-crdt/src/bin/native_seed_probe.rs": "efecb34f2cdb7b08f579a9da8909bb35d544693ec2fa241f75302faa7e2296db",
+      "crates/puyudb-crdt/src/experiment.rs": "7e1f4cd8c77d800a7e9e3d79b229295fcfbd4c5cebde270ac57013976b22027b",
+      "crates/puyudb-crdt/src/lib.rs": "bec03b02cfadda92470d61812bb74719434e74b445c3a43b80a838e52c516429",
+      "crates/puyudb-crdt/tests/adversarial.rs": "f7b48d6d1a513c0d19716324a1fa47a7458e28677cdaf24d12fef70ee628b419",
+      "crates/puyudb-crdt/tests/candidate_workloads.rs": "80a08edd4ac0963f3868b7587f765a8cfd1ea350ec738167ff19a4dd6288cc70",
+      "crates/puyudb-crdt/tests/common/mod.rs": "40661b95cd3731276a7ccd1dff21871fe5b267ac3b5793041722939939254025",
+      "crates/puyudb-crdt/tests/comparison.rs": "84400a4177750aaf60990052c1a6fce3f8fbca77befecc32aec8ce73d836b68d",
+      "crates/puyudb-crdt/tests/fixtures/seed-empty.txt": "575ac1c2345556c4be445390ecb54941b961fcd8a9f778773ed0587f527c71c7",
+      "crates/puyudb-crdt/tests/fixtures/seed-unicode.txt": "79b2506ec3bbc470d3d34037f3896e0e625470dbdb35fd7f3f9a6d977fd7a9b9",
+      "crates/puyudb-crdt/tests/history.rs": "1684f9109cad498b53b7a552bbe6fc6a5e6f9291f6de3ed38eb2294a9e38a580",
+      "crates/puyudb-crdt/tests/loro_fit.rs": "de55c76e7c003abb3880e13066d983043478504346a24ee29b75dbd04667ac97",
+      "crates/puyudb-crdt/tests/mixed_histories.rs": "efc4a030beab85c0eea38dfbdc78ec19a9ace68c523373c3721e884a9cc7e619",
+      "crates/puyudb-crdt/tests/native_wire.rs": "f5914e6d7036169695d615c320234bb54963675fd044fa2b769436ce5a6da229",
+      "crates/puyudb-crdt/tests/scope.rs": "d6d1acdc7dd9fb362325c83b7694aad373ee1df5c2c1ee954a5dc9a9652fa992",
+      "crates/puyudb-crdt/tests/seeds.rs": "7cc43ca59fb11508172497073c95fee41986ac590ee8f6267bd2381006ed6f5f",
+      "crates/puyudb-crdt/tests/support/loro_fit.rs": "ec4d7735f565b8b0fc5f5aa24c4b85eed08764d6be0e7b1887f31075917fa0ca",
+      "crates/puyudb-crdt/tests/unicode.rs": "4869ebc95ee3db1d033880d39b52985d05bfb37aeb5c3d944510e0c76c2eb70a",
+      "crates/puyudb-local/Cargo.toml": "c2b3a0af1ef464b2e47f12d4ff071b58b58471238b938606ca870375e719887a",
+      "crates/puyudb-local/src/lib.rs": "93663b67d5fdb6e4d7f9312954ee84474fd1a04eb7901e8b13b38a78e10e792c",
+      "deny.toml": "7046d1296052ba3a971c86de4b723b90b30e605ef1af56a0341f8de7591d1a6c",
+      "docs/validation/I02-platform-runs.md": "640b074c5e53c52fb1c8ee315dc7a52542490a250f5239882fa04da2c029ec5b",
+      "rust-toolchain.toml": "f715f440167e20fd8ea9afa0498c3d1ab80174cfcb8cbc895f106a34d907a1e1",
+      "scripts/i02_baseline.py": "5630671a0d347dcfa6a61f38692b0899f0e1d020908c1be9a62aec2d068f2458",
+      "scripts/i02_candidates.py": "506b14416525051cde065fa6343a119c51b7f6dd5c05dc9ec033bc2d092cfe6c",
+      "scripts/i02_windows.py": "b1c93dbaf4eb9d1512528521bd4b68f688f6c3b775a58784f991641d047c7838",
+      "scripts/test_i02_baseline.py": "f2a6441f0cb0cb4b4e441e1b5124a0fb25560555d86b5cd6fb515b5786275968",
+      "scripts/test_i02_candidates.py": "664d404bb98f325427da998a851da193a0cbd4673e7ba6ca2957cc23b1734999"
+    },
+    "fingerprint": "b73e3d32a40c480e42fc2dfc2ea882a874b1f6eab713e317da8bd68ca7c1d973"
+  },
+  "cargo_lock_sha256": "a31fc17f20dda26b52772c23d3500842fdc372e8c691102987baf73db56851b4",
+  "files": {
+    "macos-metrics.csv": {
+      "bytes": 589,
+      "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+    },
+    "seed.hex": {
+      "bytes": 951,
+      "sha256": "81c4b397bccb4a0a95a6f88ebcd4758c763db3f792ceb8058ef26bbce9617be0"
+    },
+    "snapshot.hex": {
+      "bytes": 14765,
+      "sha256": "3ad4e68a0f0a8e561ccebd1aaad0d6c123fa91988f95bb3d0950d87d1b69098d"
+    },
+    "updates.csv": {
+      "bytes": 836272,
+      "sha256": "60afeec89a82232b05058a82d637f4d77c4667dc81bd6395aa5b2e5c832e2528"
+    },
+    "windows-metrics.csv": {
+      "bytes": 589,
+      "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+    },
+    "wsl2-metrics.csv": {
+      "bytes": 589,
+      "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+    }
+  },
+  "platforms": {
+    "windows": {
+      "system": "Windows",
+      "machine": "AMD64",
+      "release": "11",
+      "source_fingerprint": "b73e3d32a40c480e42fc2dfc2ea882a874b1f6eab713e317da8bd68ca7c1d973",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1",
+      "steps": [
+        {
+          "step": "rustc",
+          "exit_code": 0
+        },
+        {
+          "step": "cargo",
+          "exit_code": 0
+        },
+        {
+          "step": "fmt",
+          "exit_code": 0
+        },
+        {
+          "step": "clippy",
+          "exit_code": 0
+        },
+        {
+          "step": "workspace",
+          "exit_code": 0
+        },
+        {
+          "step": "python",
+          "exit_code": 0
+        },
+        {
+          "step": "no-default",
+          "exit_code": 0
+        },
+        {
+          "step": "all-features",
+          "exit_code": 0
+        },
+        {
+          "step": "release-build",
+          "exit_code": 0
+        },
+        {
+          "step": "artifacts",
+          "exit_code": 0
+        }
+      ],
+      "raw_files": {
+        "all-features.stderr": {
+          "bytes": 2745,
+          "sha256": "22c12d7a0cb5acbc59e61b4e21c803d7cd80f23df9da64641ff2abaedb94e6d8"
+        },
+        "all-features.stdout": {
+          "bytes": 8156,
+          "sha256": "f4c21ffb8001ec054b8d60a605229c7f845e868b7a8c3a86903ffe063738249a"
+        },
+        "artifacts.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "artifacts.stdout": {
+          "bytes": 589,
+          "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+        },
+        "cargo.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "cargo.stdout": {
+          "bytes": 36,
+          "sha256": "c35608815f43d0b8788a9b826fad2bb17384f49fb328dc4fe64da9db5f5ef4d6"
+        },
+        "clippy.stderr": {
+          "bytes": 6509,
+          "sha256": "7f8b8c40eca576d0b5dd4f49efac3e57fa50306af03d3edf9f62ce4f582a154d"
+        },
+        "clippy.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "no-default.stderr": {
+          "bytes": 2745,
+          "sha256": "375c02539e7e3f8db7f2115ef5cc648a70030dd42a27e1b24a8acad164797a49"
+        },
+        "no-default.stdout": {
+          "bytes": 8156,
+          "sha256": "0146374c61c44845d09087d24970a803ed5c42c03df13658669c3ec038a92196"
+        },
+        "originals/seed.native": {
+          "bytes": 475,
+          "sha256": "d7e8ec92e717943b96889d848acd4a3b83ff5b506589d4c50e2f66f2c308b451"
+        },
+        "originals/snapshot.native": {
+          "bytes": 7382,
+          "sha256": "7fd3f03d747860c3b2ebbdf4da197d6a652528d96e5704f54aefd64f634feded"
+        },
+        "originals/updates.csv": {
+          "bytes": 836272,
+          "sha256": "60afeec89a82232b05058a82d637f4d77c4667dc81bd6395aa5b2e5c832e2528"
+        },
+        "python.stderr": {
+          "bytes": 137,
+          "sha256": "c72dc722ee69a17e83771d821f6da2e632e45909ef593a7da99c7950a491a6f2"
+        },
+        "python.stdout": {
+          "bytes": 15,
+          "sha256": "b07df6c35141a7dee6b877e20e00c7e8d391f7223510a7ef279eadbf6149374a"
+        },
+        "release-build.stderr": {
+          "bytes": 4700,
+          "sha256": "fb59c090918e6684ea27f05ae4969f05bd261e7f064d23fe4cc041eaaf178a47"
+        },
+        "release-build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stdout": {
+          "bytes": 194,
+          "sha256": "341fed434cf52bd9ba5ab2f3507dbd943a2062212028574e529fc3e7e5ecd7a8"
+        },
+        "workspace.stderr": {
+          "bytes": 8413,
+          "sha256": "2da544bd66b6752426af28cfb0850c02bffcae051d888551a7daf047efee97ac"
+        },
+        "workspace.stdout": {
+          "bytes": 8156,
+          "sha256": "f76f7935fcffce6bf97ba39af0830d94ecd06a98988adb432c00c5d567ae1b48"
+        }
+      },
+      "raw_manifest_sha256": "340d2081bf426138a85f5baf52a5a6e434945a9316beb6342e4f0de234e6e9db"
+    },
+    "wsl2": {
+      "system": "Linux",
+      "machine": "x86_64",
+      "release": "6.18.54.1-microsoft-standard-WSL2",
+      "source_fingerprint": "b73e3d32a40c480e42fc2dfc2ea882a874b1f6eab713e317da8bd68ca7c1d973",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+      "steps": [
+        {
+          "step": "rustc",
+          "exit_code": 0
+        },
+        {
+          "step": "cargo",
+          "exit_code": 0
+        },
+        {
+          "step": "fmt",
+          "exit_code": 0
+        },
+        {
+          "step": "clippy",
+          "exit_code": 0
+        },
+        {
+          "step": "workspace",
+          "exit_code": 0
+        },
+        {
+          "step": "python",
+          "exit_code": 0
+        },
+        {
+          "step": "no-default",
+          "exit_code": 0
+        },
+        {
+          "step": "all-features",
+          "exit_code": 0
+        },
+        {
+          "step": "release-build",
+          "exit_code": 0
+        },
+        {
+          "step": "artifacts",
+          "exit_code": 0
+        }
+      ],
+      "raw_files": {
+        "all-features.stderr": {
+          "bytes": 2541,
+          "sha256": "4cffbe5483fbcca76407a534ac8ae6ce88a52acfbd7b8b3128235e4b44eb731b"
+        },
+        "all-features.stdout": {
+          "bytes": 8156,
+          "sha256": "ac956becde5a49f0d2defb3129d59420e8e5e75cdb0f07f6b7afe2bd8248c16d"
+        },
+        "artifacts.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "artifacts.stdout": {
+          "bytes": 589,
+          "sha256": "e3560222a2ce664e751fe7555c1f4fe77ac9caf481597ceaec7c11e240d36fb9"
+        },
+        "cargo.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "cargo.stdout": {
+          "bytes": 36,
+          "sha256": "c35608815f43d0b8788a9b826fad2bb17384f49fb328dc4fe64da9db5f5ef4d6"
+        },
+        "clippy.stderr": {
+          "bytes": 6427,
+          "sha256": "249242b37ba79868ee769de6b26cb1aaef31ede9ca4c25769d2a6698cb086b7a"
+        },
+        "clippy.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "no-default.stderr": {
+          "bytes": 2541,
+          "sha256": "4cffbe5483fbcca76407a534ac8ae6ce88a52acfbd7b8b3128235e4b44eb731b"
+        },
+        "no-default.stdout": {
+          "bytes": 8156,
+          "sha256": "c075ef1bd06efd362f4dc698ceadc361000666c864cc7ff2401cf1c65270d7cb"
+        },
+        "originals/seed.native": {
+          "bytes": 475,
+          "sha256": "d7e8ec92e717943b96889d848acd4a3b83ff5b506589d4c50e2f66f2c308b451"
+        },
+        "originals/snapshot.native": {
+          "bytes": 7382,
+          "sha256": "7fd3f03d747860c3b2ebbdf4da197d6a652528d96e5704f54aefd64f634feded"
+        },
+        "originals/updates.csv": {
+          "bytes": 836272,
+          "sha256": "60afeec89a82232b05058a82d637f4d77c4667dc81bd6395aa5b2e5c832e2528"
+        },
+        "python.stderr": {
+          "bytes": 120,
+          "sha256": "f5c095efc7d564611fb89f3424a3322ba337e0e25fa916701822f6291cbca36e"
+        },
+        "python.stdout": {
+          "bytes": 14,
+          "sha256": "43d3d2e30a6dfc229df3ebfdf92c95c3ca011ce26da81b8ea3584e386cd502ee"
+        },
+        "release-build.stderr": {
+          "bytes": 4630,
+          "sha256": "fa0125838b64d5ab0a1ed01e4c7d36355634f7cae8358f71ea0f764b00d5be5b"
+        },
+        "release-build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "rustc.stdout": {
+          "bytes": 196,
+          "sha256": "f22d5e4e9ced367e774ce5bc140d9e6b1235c1882fec80d011044851f3ae6369"
+        },
+        "workspace.stderr": {
+          "bytes": 8193,
+          "sha256": "28265ca86fa39c11ad686534f52a9ec5378e51e567d83657eda09b0aa6ad62b9"
+        },
+        "workspace.stdout": {
+          "bytes": 8156,
+          "sha256": "ba2f9e67aa876d96175325f860111c5613989d9b56bf0cdd38cd8893b2797833"
+        }
+      },
+      "raw_manifest_sha256": "55b7f2e68dd2879b2a4d54d6876965ac594cb9d245a272ede8d7cc190480422a"
+    },
+    "macos": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "release": "27.0.0",
+      "source_fingerprint": "b73e3d32a40c480e42fc2dfc2ea882a874b1f6eab713e317da8bd68ca7c1d973",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1",
+      "metrics_source": "macos-metrics.csv",
+      "native_artifacts_source": "macos-originals-v2",
+      "check_source_fingerprint": "a863e127bc6b2bb89f3858211671799d7322b6e9e2aa13143efead9c65ea24d2",
+      "source_differences_from_transferred_inventory": [
+        ".gitattributes"
+      ],
+      "steps": [
+        {
+          "step": "fmt",
+          "exit_code": 0
+        },
+        {
+          "step": "clippy",
+          "exit_code": 0
+        },
+        {
+          "step": "workspace",
+          "exit_code": 0
+        },
+        {
+          "step": "python",
+          "exit_code": 0
+        },
+        {
+          "step": "build",
+          "exit_code": 0
+        },
+        {
+          "step": "docs",
+          "exit_code": 0
+        },
+        {
+          "step": "long-mixed",
+          "exit_code": 0
+        },
+        {
+          "step": "long-workloads",
+          "exit_code": 0
+        },
+        {
+          "step": "allocator",
+          "exit_code": 0
+        },
+        {
+          "step": "deny",
+          "exit_code": 0
+        },
+        {
+          "step": "actionlint",
+          "exit_code": 0
+        }
+      ],
+      "raw_files": {
+        "actionlint.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "actionlint.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "allocator.stderr": {
+          "bytes": 316,
+          "sha256": "4f69c81ba8e11f43f7643fbbfd80982986d84ab3a683dd7061282b042d50de59"
+        },
+        "allocator.stdout": {
+          "bytes": 183,
+          "sha256": "d7d348df793b38827d9f8f855e6c6a405f380d6e25bfc95a1edc210307d7558c"
+        },
+        "build.stderr": {
+          "bytes": 201,
+          "sha256": "e92447edbe5aff780cea3d33affdfca8efcbfbf43a4b70e24852f47481f07a81"
+        },
+        "build.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "clippy.stderr": {
+          "bytes": 438,
+          "sha256": "2e38aa7ad29b56000a83f8bc902ca1682fe49a75d0ba866ddc51100377684e48"
+        },
+        "clippy.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "deny.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "deny.stdout": {
+          "bytes": 48,
+          "sha256": "f1a0fca39d4280363937aabd77783990ea6480bd9ca257816de3b68fc8efa845"
+        },
+        "docs.stderr": {
+          "bytes": 202,
+          "sha256": "b25d1f14bad86ef0aef271787da10769be2bfc8eb9b7594a6e1f2fa64bdd2c6c"
+        },
+        "docs.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fmt.stdout": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "long-mixed.stderr": {
+          "bytes": 522,
+          "sha256": "f1f9e483fb797894640bf1dd9005780b5e7099e7de083a5cf42fc04449767fdf"
+        },
+        "long-mixed.stdout": {
+          "bytes": 183,
+          "sha256": "44bbaed063d329e3ae9547a43d12330cefd67576a2aab3cdbfbc0a862614ce60"
+        },
+        "long-workloads.stderr": {
+          "bytes": 309,
+          "sha256": "9d0e59c3a2627719048666c06439acb612ec3bfc042757019371dfd4ae334977"
+        },
+        "long-workloads.stdout": {
+          "bytes": 204,
+          "sha256": "1a50cad444878b41326f61a7cb7d04b185f01c252f11289243b7cb3ffd1a971c"
+        },
+        "python.stderr": {
+          "bytes": 120,
+          "sha256": "09e6c60ab8ae307aa75407241500de803f33ad871b9ad49eca3e155f803c06dc"
+        },
+        "python.stdout": {
+          "bytes": 14,
+          "sha256": "43d3d2e30a6dfc229df3ebfdf92c95c3ca011ce26da81b8ea3584e386cd502ee"
+        },
+        "workspace.stderr": {
+          "bytes": 1939,
+          "sha256": "5c56e1387acf391a50ccfbc2c5b5f8eca4bbb2e5d66cec56fb5243ab19934c50"
+        },
+        "workspace.stdout": {
+          "bytes": 8155,
+          "sha256": "c82548c336b1443f5e83fe55628ff9ae9aba1ce0e81e21f2144c8550fb35cd7a"
+        }
+      },
+      "raw_manifest_sha256": "2e581948b78c818a42a3289f99159774ca7707de02f56fafe91b366e1686a9aa"
+    }
+  },
+  "decoded_native_artifacts": {
+    "seed.native": {
+      "bytes": 475,
+      "sha256": "d7e8ec92e717943b96889d848acd4a3b83ff5b506589d4c50e2f66f2c308b451"
+    },
+    "snapshot.native": {
+      "bytes": 7382,
+      "sha256": "7fd3f03d747860c3b2ebbdf4da197d6a652528d96e5704f54aefd64f634feded"
+    }
+  },
+  "raw_log_location": "target/loro-fit-evidence/20261026T123635692980Z/{macos,windows,wsl2}; ignored, not included in files inventory"
+}
