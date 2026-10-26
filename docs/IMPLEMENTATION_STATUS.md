@@ -1,10 +1,15 @@
 # Implementation status
 
-**Completed issue IDs: I01. Current issue: I02, common four-candidate baseline
-implemented; engine fit/selection and native-semantic stop-go remain open.**
+**Completed issue IDs: I01, I02. Current issue: I03, not started. I02 closed on
+2026-10-26: the maintainer definitively selected diamond-types (DT) with the
+small reviewed native patch set, on the completed common baseline, Loro/DT-fit
+experiments, native-interface spike and three-platform final comparison. The
+main workspace, dependency lock and DT pin are unchanged; the patch set is not
+yet promoted into a production binding, no native/PayuDB format is frozen, and
+I03 has not started.**
 Work is maintained on `i01-repository-foundations`. Local checkpoint commits
-record reviewed progress; they do not close I02, accept a native format, or
-constitute a release. No Git merge, push, publication, deployment, or GitHub
+record reviewed progress; they do not accept a native format or constitute a
+release. No Git merge, push, publication, deployment, or GitHub
 issue creation was performed. IDs below are implementation-plan IDs.
 
 ## I01 closure
@@ -74,12 +79,44 @@ raw measurements, independent-review findings and remaining acceptance gates.
   three W01 processes per engine. All cases passed. Native full seed artifacts
   repeat across three fresh processes on both platforms; raw CSVs, sanitized
   manifests, summaries and lossless seed bytes are retained in the repository.
+- The [bounded Loro-fit experiment](validation/I02-loro-fit.md) adds 18 passing
+  tests for exact-cut plain-text inspection, hidden operations, full fixture
+  identity/epoch checks, replay and original-byte/boundary limitations. All pass
+  on macOS, native Windows and WSL2. A separate 1,000-update byte probe retains
+  375,708 original payload bytes plus 32,000 digest-value bytes; its 7,382-byte
+  native snapshot is not total storage or an original-artifact archive.
+  Empty seeds and peer width need an explicit binding amendment. No production
+  registry, authenticated admission, bounded decoder or durable batch is delivered.
+- The [executed DT-fit follow-up](validation/I02-diamond-types-assessment.md)
+  adds 41 default tests, including three new Loro controls. Full-digest identity,
+  exact-cut authoring, original-target projection and external byte retention
+  have bounded positive evidence. Two tested adapter assumptions fail: deleted
+  anchors can resolve as 3 versus 1 by import order, and equivalent native
+  updates can differ in agent-name serialization order. Green characterization
+  tests preserve these failures; DT native text still converges.
+- The [final bounded DT–Loro comparison](validation/I02-dt-loro-final.md)
+  executed the complete validation-path flow (author, strict inspection,
+  publish, anchors, historical read, save/load) for both engines across the
+  seven primary cells plus one supplemental cell, three processes each, on
+  macOS, native Windows and WSL2 under one frozen source fingerprint. DT was
+  faster in every paired completed cell on all three platforms (4.02×–29.72×);
+  Loro remains markedly faster at native cursor creation and retains the
+  smaller native snapshot. The original 1 MiB combined-replacement cell is
+  kept as a Loro fixture-profile failure. 1,984 malformed-input screening
+  trials per platform found no panic, crash, timeout or control violation,
+  and an independent audit verified all sealed evidence hashes, re-derived
+  summaries and cross-platform consistency.
 
-**GO:** continue I02 candidate-fit validation. **NO-GO:** engine selection,
-I03/native-format freeze. Common cost observations do not supply equivalent
+**DECIDED (2026-10-26):** the maintainer selected DT with the small maintained
+patch set; I02 is closed on the completed [DT/Loro fit evidence](validation/I02-diamond-types-assessment.md#decisive-fit-gates)
+and [final bounded comparison](validation/I02-dt-loro-final.md). The accepted
+[engine decision](adr/01-native-text-evidence.md) records the cursor policy,
+empty-seed contract, span/publication association and patch ownership.
+**NO-GO:** starting I03 without an explicit maintainer go-ahead, or freezing a
+native format. The patch set stays experimental until I03. Common cost observations do not supply equivalent
 operation-scope, ownership, original per-update byte or transaction-boundary
-validation. Prioritize a bounded Loro-fit experiment while retaining AM as the
-deepest fidelity/reference path; no alternative is declared rejected.
+validation. The Loro-fit follow-up narrows some gaps but does not eliminate them.
+Retain AM as the deepest fidelity/reference path; no alternative is declared rejected.
 The AM counter clarification is conditional on selecting its binding, not
 a rule imposed on other engines. WSL2 is approved; independent native Linux
 is deferred, not a current hardware-procurement blocker.
@@ -97,7 +134,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-**51 default integration tests pass:** 45 native research tests and 6 CLI process
+**110 default integration tests pass:** 104 native research tests and 6 CLI process
 tests. Two long fixtures are intentionally ignored by the default runner and
 have passed explicitly in release mode: the mixed-history delivery gate and
 the all-candidate paste/delete/restore workload fixture. Allocator calibration
@@ -168,6 +205,84 @@ Independent numerical review verified all 64 retained raw CSVs, 96 W01 summary
 values, 64 W02 summary values, 88 saved-cut hashes and 12 seed payloads against
 72 original artifacts. No discrepancy or blocking unsupported claim remained.
 
+The subsequent Loro-fit slice passes all 69 integration tests, formatting,
+Clippy, frozen feature checks and the byte probe on macOS, native Windows and
+WSL2 with source fingerprint
+`b73e3d32a40c480e42fc2dfc2ea882a874b1f6eab713e317da8bd68ca7c1d973`.
+Python again passes 21 tests on macOS/WSL2 and 20 plus one skip on Windows.
+Both long release fixtures, frozen all-target build/docs, allocator calibration,
+cargo-deny and actionlint were rerun successfully on macOS only.
+Independent static follow-up review confirms the backward-delete, capture
+side-effect and epoch-test findings addressed; it did not rerun the commands.
+The retained 1,000-update corpus, seed and snapshot match byte-for-byte across
+all three platforms. No new common performance measurement is claimed.
+Independent evidence review verified the corpus, hashes, source inventories,
+saved platform logs and test counts without a discrepancy; its exact verification
+limits are recorded in the [fit report](validation/I02-loro-fit.md).
+
+The earlier initial-AM engine/binding proposal changed documentation only. Independent
+read-only review found no actionable issue in its rationale or acceptance scope
+and verified all 16 cost-table cells against retained evidence, including original
+resource logs. Local formatting, Clippy and all 69 default integration tests
+were rerun successfully; at that point Rust/Python sources, Cargo configuration
+and lockfile still matched the verified fit inventory. That slice claimed no new benchmark or remote run,
+and review approval is not maintainer acceptance of the proposal.
+
+The maintainer's subsequent long-term-choice clarification puts that recommendation
+on hold. Two read-only DT source investigations cover binding APIs and format/
+maintenance obligations. That initial assessment separated source directions from
+then-unexecuted fit cases. The proposal also displayed DT's retained costs;
+all 24 numeric cells were checked against existing evidence. That source-assessment
+slice changed docs only, not Rust/build inputs, and claimed no new experiments.
+Independent read-only review found no actionable issue in the revised scope or
+source claims; all 24 table cells, three copied DT figures and 54 local links
+were verified. It did not run the proposed DT experiments or audit all upstream
+decoder safety.
+
+The subsequent executed DT-fit slice passes all 110 default integration tests,
+formatting, Clippy, frozen feature/all-target checks, warning-denied rustdoc and
+both byte probes on macOS, native Windows and WSL2 with source fingerprint
+`bf435fa8b97f1f3a5fd4364593adbe7d954ab4ba6b70f6fb279958f012dd5447`.
+All 16 remote/21 macOS recorded steps exit zero; macOS extras include both long
+release fixtures, allocator calibration, cargo-deny and actionlint.
+Python passes 21 tests on macOS/WSL2; Windows passes 20 with one Unix-only skip.
+Three fresh DT seed processes per platform repeat all three cases. All 1,000 DT
+original payloads, seed and snapshot match across platforms; fresh Loro control
+artifacts match the earlier retained corpus. DT retained payload/digest components
+are 370,770 / 32,000 bytes, separate from its 14,389-byte native snapshot.
+Independent code review executed and confirmed the anchor and same-cut inspection
+counterexamples, including equal native text/IDs or logical history. This is
+completed feasibility research, not passing every fit gate or selecting an engine.
+Independent evidence review verified both original-byte corpora, source/archive
+inventories, raw hashes, seed repetition, recorded commands and platform counts
+without a discrepancy. Its confidence applies to retained evidence, not general
+decoder safety or production performance.
+
+The [native-interface spike](validation/I02-dt-interface-spike.md) adds 150 native
+lines/removes 18 across five files, reusing the existing merger and decoder.
+Seven anchor and 16 strict-input tests pass in debug/release on macOS, native
+Windows and WSL2, with 15 unchanged native byte observations and four Python
+extraction contracts. Actual LZ4 compatibility passes on Unix defaults and on
+Windows's LZ4-only text profile; unchanged upstream Unix-only storage fails
+native Windows defaults and is not ported. Independent review found and confirmed
+the fix for a borrowed-metadata lifetime regression; no remaining blocking native
+seam finding was reported. Main Cargo inputs and the original 110-test workspace
+remain unchanged; the new tests use a separate generated harness, not a production
+fork or a fifth permanent workspace package.
+
+The [final bounded comparison](validation/I02-dt-loro-final.md) ran 48 attempted
+measurement processes per platform (45 complete; three retained original Loro
+`churn1m` profile rejections exiting 101), plus correctness, debug/release tests,
+formatting, Clippy and 1,984 screening trials per platform, all green on macOS
+ARM64, native Windows x86-64 and Debian WSL2 with frozen source fingerprint
+`635e469d530f331e7fba951108fa0b0e292a0cb664ce642ee2a01b28eb3689f3`. An independent
+audit verified every sealed evidence file hash, re-derived each platform summary
+from the raw benchmark rows with an exact match, and confirmed identical text
+signatures, retained byte components and source fingerprints across platforms.
+The main workspace, dependency lock and DT pin remain unchanged; the experiment
+used a separate generated harness. The 2026-10-26 I02 closure (DT selected)
+changed documentation only; no Rust/build inputs changed after the audited runs.
+
 ## Limits and next action
 
 CI is configured for Linux x86-64/ARM64, macOS x86-64/ARM64 and Windows x86-64
@@ -177,12 +292,25 @@ checks have **not run**. No supported release, staffed security process,
 distribution/legal audit, or production durability/recovery/performance
 guarantee exists.
 
-Continue **I02**, not I03: evaluate the strongest challenger's PuyuDB-fit gates,
-then present an evidence-backed engine/binding and cost decision. The previous
-AM-only cost proposal is not selection against the other libraries.
-Exact canonical syntax, widths, profile versions and fixed limits remain I03
-deliverables after that gate. Independent native Linux must be revisited when
-available and before Linux production support/performance claims/I36.
-Remote tests used the maintainer's authorized existing Windows/WSL machine;
-no remote infrastructure was provisioned. Scheduled CI is configuration, not
-executed platform evidence.
+**I02 is closed (2026-10-26):** the maintainer definitively selected DT with the
+small maintained patch set. The earlier initial-AM recommendation remains on
+hold, not accepted. The [completed maintainability spike](validation/I02-dt-interface-spike.md)
+supports DT with a small native patch set rather than a separately developed
+CRDT, and the [completed final comparison](validation/I02-dt-loro-final.md) shows DT's
+complete tested binding flow faster on all three measured platforms while Loro
+keeps markedly faster native cursor creation and a smaller native snapshot.
+Accepted with the selection: native identity-boundary cursor semantics,
+external epoch-owned empty seeds, original operation-span/outer-batch binding,
+and patch/dependency/notice ownership. Loro remains a documented alternative
+with unresolved offline peer allocation/collisions; AM remains the conformance
+reference, not an automatic fallback choice. An unpublished upstream pin is a
+risk to resolve (patch rebase/notice obligations), not a rejected choice. No
+transparent engine migration is promised.
+**I03 has not started** and this closure does not authorize it: the maintainer
+explicitly deferred I03. When I03 starts, its deliverables are exact canonical
+syntax, widths, profile versions, fixed limits, and promotion of the reviewed
+patch set into the production binding. Independent native Linux must be
+revisited when available and before Linux production support/performance
+claims/I36. Remote tests used the maintainer's authorized existing
+Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
+configuration, not executed platform evidence.

@@ -1,0 +1,44 @@
+diff --git a/src/listmerge/merge.rs b/src/listmerge/merge.rs
+--- a/src/listmerge/merge.rs
++++ b/src/listmerge/merge.rs
+@@ -851,7 +851,40 @@ pub fn reverse_str(s: &str) -> SmartString {
+     result.extend(s.chars().rev());
+     result
+ }
+ 
++impl ListOpLog {
++    /// Return insertion spans in native CRDT order at a retained frontier.
++    ///
++    /// Each pair is a local insertion-ID range and whether that range is visible.
++    /// Deleted insertions remain in the order; delete-operation IDs are absent.
++    /// Only insertions born in `frontier`'s causal closure are included. Span
++    /// boundaries and local IDs are replica-local: use agent assignment to
++    /// convert them to remote IDs before persisting or comparing replicas.
++    ///
++    /// This read-only query rebuilds the existing merge tracker from root, with
++    /// fast-forward disabled so identities and tombstones are not discarded.
++    /// Cost is a full native merge of the queried closure plus a linear span
++    /// scan, with memory for the plan, tracker and returned spans. It is not
++    /// suitable for per-keystroke use on large histories without further work.
++    ///
++    /// # Panics
++    /// As with checkout, the frontier must be valid and its history retained.
++    #[must_use]
++    pub fn insertion_spans_at(&self, frontier: &[LV]) -> Vec<(DTRange, bool)> {
++        let (plan, _common) = self.cg.graph.make_m1_plan(
++            Some(&self.operations), &[], frontier, false,
++        );
++        let mut iter = TransformedOpsIterRaw::from_plan(
++            &self.cg.agent_assignment, &self.operation_ctx, &self.operations, plan,
++        );
++        for _ in iter.by_ref() {}
++        iter.tracker.range_tree.iter()
++            .filter(|span| !span.is_underwater())
++            .map(|span| (span.id, !span.end_state_ever_deleted))
++            .collect()
++    }
++}
++
+ impl TextInfo {
+     pub(crate) fn get_xf_operations_full<'a>(&'a self, subgraph: &'a Graph, aa: &'a AgentAssignment, from: &[LV], merging: &[LV]) -> TransformedOpsIterRaw<'a> {
+         TransformedOpsIterRaw::new(subgraph, aa, &self.ctx, &self.ops, from, merging)

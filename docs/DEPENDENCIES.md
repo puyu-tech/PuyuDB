@@ -15,19 +15,24 @@ direct selections and license/maintenance-sensitive transitive dependencies.
 `cargo metadata --locked --format-version 1` provides the complete per-package
 version, license, source, and declared Rust-version inventory.
 
+Engine selection is closed (2026-10-26): diamond-types is the selected native
+text engine with the small reviewed patch set; Loro, Yrs and Automerge remain
+dev-only comparison/conformance dependencies. See
+[ADR-01](adr/01-native-text-evidence.md).
+
 | Crate | Locked version | Relationship / purpose | Upstream license | Declared MSRV |
 | --- | --- | --- | --- | --- |
 | [clap](https://crates.io/crates/clap/4.6.7) | 4.6.7 | Direct; CLI argument parsing and help | MIT OR Apache-2.0 | 1.85 |
 | [clap_builder](https://crates.io/crates/clap_builder/4.6.7) | 4.6.7 | Transitive; command definitions and rendering | MIT OR Apache-2.0 | 1.85 |
 | [clap_lex](https://crates.io/crates/clap_lex/1.1.1) | 1.1.1 | Transitive; argument lexing | MIT OR Apache-2.0 | 1.85 |
 | [anstyle](https://crates.io/crates/anstyle/1.0.14) | 1.0.14 | Transitive; help style representation, even without colored output | MIT OR Apache-2.0 | 1.66.0 |
-| [automerge](https://crates.io/crates/automerge/0.12.0) | 0.12.0 | Direct in CRDT experiment; selected native candidate | MIT | 1.90.0 |
+| [automerge](https://crates.io/crates/automerge/0.12.0) | 0.12.0 | Direct in CRDT experiment; conformance reference, not selected | MIT | 1.90.0 |
 | [sha2](https://crates.io/crates/sha2/0.11.1) | 0.11.1 | Direct; specified actor namespace derivation | MIT OR Apache-2.0 | 1.88 |
 | [thiserror](https://crates.io/crates/thiserror/2.0.21) | 2.0.21 | Direct; experimental error types | MIT OR Apache-2.0 | 1.77 |
 | [proptest](https://crates.io/crates/proptest/1.12.0) | 1.12.0 | Dev only; deterministic generated native histories | MIT OR Apache-2.0 | 1.88 |
-| [yrs](https://crates.io/crates/yrs/0.28.0) | 0.28.0 | Dev only; challenger trace | MIT | Undeclared |
-| [loro](https://crates.io/crates/loro/1.17.1) | 1.17.1 | Dev only; challenger trace | MIT | Undeclared |
-| [diamond-types upstream](https://github.com/josephg/diamond-types/tree/89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922) | Git manifest 2.0.0, not a published stable release | Dev only; no-LZ4 comparison, exact revision `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` | ISC | 1.96.0 |
+| [yrs](https://crates.io/crates/yrs/0.28.0) | 0.28.0 | Dev only; challenger trace, not selected | MIT | Undeclared |
+| [loro](https://crates.io/crates/loro/1.17.1) | 1.17.1 | Dev only; challenger trace, not selected 2026-10-26 | MIT | Undeclared |
+| [diamond-types upstream](https://github.com/josephg/diamond-types/tree/89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922) | Git manifest 2.0.0, not a published stable release | Dev only; **selected engine** (I02 closed 2026-10-26); no-LZ4 comparison, exact revision `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` | ISC | 1.96.0 |
 | rle | Git manifest 0.2.0, same revision | DT transitive path dependency | ISC OR Apache-2.0 | See upstream manifest |
 | [rand](https://crates.io/crates/rand/0.10.3) | 0.10.3 | Dev only; pinned seeded schedule generation | MIT OR Apache-2.0 | 1.85 |
 | [stats_alloc](https://crates.io/crates/stats_alloc/0.1.10) | 0.1.10 | Dev only; measurement allocator and calibration | MIT | Undeclared |

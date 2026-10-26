@@ -209,18 +209,33 @@ or original per-change byte retention.
 | New shared Unicode edits and delete-only cuts after reload | Observed pass | Observed pass, UTF-16 | Observed pass | Observed pass |
 | Common W01/W02, 11 cuts including deleted intervals | Observed pass | Observed pass | Observed pass | Observed pass |
 | Native full seed byte repetition, fresh processes | Observed pass | Observed pass | Observed pass | Observed pass |
-| Epoch-seed binding feasibility and original-change golden corpus | AM-specific experimental evidence | Not tested | Not tested | Not tested |
+| Epoch-seed binding feasibility and original-change golden corpus | AM-specific experimental evidence | Not tested | Follow-up fixture binding; empty seed needs outer epoch descriptor | Follow-up full-digest fixture names and repeated seeds; empty seed needs outer descriptor |
 | Larger mixed-observation convergence corpus | Existing AM-specific evidence | Not tested equivalently | Not tested equivalently | Not tested equivalently |
-| Unicode/historical anchors | Broad AM-specific evidence | UTF-16 fixture passes; byte profile fails | Existing fixture passes | Equivalent gate not tested |
-| Original per-change bytes retained through save/load | Existing small AM corpus passes | Not tested | Not tested | Not tested |
-| Operation-scope/metadata/dependency inspection negatives | Experimental AM corpus | Not tested | Source-supported APIs; validator not tested | Source-supported APIs; validator not tested |
+| Unicode/historical anchors | Broad AM-specific evidence | UTF-16 fixture passes; byte profile fails | Existing fixture and new native deleted-cursor controls pass | Target-ID projection passes; tested cursor fails deleted-gap import-order stability |
+| Original per-change bytes retained through save/load | Existing small AM corpus passes | Not tested | Follow-up externally retained corpus passes; native snapshot alone is not an envelope archive | 1,000 externally retained updates replay; bounded re-export requires external context and reconstructed upper cut |
+| Operation-scope/metadata/dependency inspection negatives | Experimental AM corpus | Not tested | Narrow profile and same-cut opposite-order control pass; not hardened admission | Narrow negatives pass, but equivalent same-cut updates can falsely fail byte reconstruction; general admission not established |
 | Outer immutable batches, authenticated writers, durable admission | Not delivered | Not delivered | Not delivered | Not delivered |
 
 A native full save proving old text is not proof of original update bytes or
-application transaction boundaries. Yrs aggregates updates; Loro's change merging
-is disabled here; DT run-length-encodes operations and has no equivalent outer
-batch ledger. Candidate-native client/peer widths and provenance/binding costs
-need explicit designs, not forced Automerge identity types.
+application transaction boundaries. Yrs aggregates updates; Loro's local change
+merging is disabled here, but export/import can still merge changes; DT
+run-length-encodes operations and has no equivalent outer batch ledger.
+Candidate-native client/peer widths and provenance/binding costs need explicit
+designs, not forced Automerge identity types.
+
+The Loro cells include the later [bounded fit experiment](I02-loro-fit.md),
+not additional revision-2 benchmark work. Its 18 tests and separate original-byte
+probe pass on macOS, Windows and WSL2. It records native counterexamples for
+coalescing, known equivocation and envelope retention; it does not select an engine
+or turn the common native-only cost figures into admission/storage measurements.
+The later [DT-fit report](I02-diamond-types-assessment.md) adds executed identity,
+wire and anchor experiments, three Loro controls and byte-component observations,
+not a new common W01/W02 run. It preserves two unmet DT adapter gates rather than
+relabeling all green characterization tests as successful binding validation.
+The later [native-interface spike](I02-dt-interface-spike.md) demonstrates small
+DT extensions for those gaps without changing the main dependency or rerunning
+these native performance measurements. Its new cursor policy and maintenance
+obligations remain an explicit owner decision.
 
 ## Recompute from retained data
 
@@ -270,12 +285,19 @@ substantially costlier than its tiny W01 edits. That is not a whole-product verd
 Automerge remains the deepest tested fidelity/reference path, not an automatically
 selected winner. No upstream algorithm is independently proved by these tests.
 
-Before accepting an engine, prioritize a bounded **Loro PuyuDB-fit experiment**:
-operation-scope inspection with hidden-operation negatives, identity/epoch binding
-feasibility, and exact original-update/transaction-boundary retention/cost.
-Keep Automerge as the reference candidate; DT's unpublished Git/notice/maintenance
-risks remain, and Yrs's GC/anchor/history-profile observations remain explicit.
-Any engine substitution needs an evidence-backed ADR, not a benchmark-only switch.
+The subsequent [Loro PuyuDB-fit experiment](I02-loro-fit.md) now supplies bounded
+operation-scope negatives, fixture identity/epoch checks and original-byte cost
+components, with explicit remaining gaps. The
+[engine/binding proposal](../adr/01-native-text-evidence.md) is now under
+reconsideration: the maintainer wants a long-term choice before format freeze,
+not an initial engine selected on implementation convenience. The
+[diamond-types experiments](I02-diamond-types-assessment.md#decisive-fit-gates)
+are now complete; native anchor/strict-inspection seams and Loro's ownership
+design remain explicit decision obligations.
+Keep Automerge as the reference candidate; DT's
+unpublished Git/notice/maintenance risks remain, and Yrs's GC/anchor/history-profile
+observations remain explicit. Any engine substitution needs an evidence-backed
+ADR and maintainer acceptance, not a benchmark-only switch.
 
 I02 stays open for that fit/decision work. The proposed Automerge counter
 clarification is conditional on selecting that binding; it must not be imposed

@@ -95,6 +95,41 @@ This notice gap, smartstring's MPL/source obligations and maintenance advisory,
 and a prerelease smallvec 2 transitive require review before any distribution.
 The experiment is not approval to ship that dependency.
 
+The later [DT-fit report](I02-diamond-types-assessment.md) executes additional
+public-API identity/target projection, narrow input inspection and original-byte
+retention experiments. It preserves an order-dependent cursor-adapter counterexample
+and a same-cut byte-reconstruction false rejection; neither is relabeled as a
+native text convergence failure. The wire fixtures are independently constructed
+from the pinned source layout (not the drifted `BINARY.md`): a small empty
+envelope, unassigned chunks and standard-vector-checked CRC-32C arithmetic.
+No upstream test/decoder implementation is copied. The missing-content panic
+fixture uses public encoder output and deliberately isolates one caught checkout
+panic; it is not arbitrary-input fuzzing, an exploit or a resource-safety result.
+
+The separate [DT native-interface spike](I02-dt-interface-spike.md) stores two
+reviewable patches and new test drivers, not a vendored source tree. Four
+historical byte vectors are explicitly quoted from the pinned upstream encoding
+fixtures for compatibility, with attribution; no upstream test implementation is
+copied. This is distinct from the newly authored original I02 corpora above.
+The patches target upstream-declared ISC code; contribution/distribution terms
+and the missing notices remain unapproved for publication.
+
+## Final bounded DT–Loro comparison experiment
+
+The [final comparison report](I02-dt-loro-final.md) reuses the pinned DT Git
+revision above and the published **Loro 1.17.1** registry archive already used
+by the Loro-fit slice, both through a separate generated harness under
+`experiments/dt-loro-final/`. The harness applies the two reviewed
+native-interface patches from the [spike](I02-dt-interface-spike.md) to a
+disposable DT checkout; the main workspace, dependency lock and DT pin are
+unchanged. Measurement inputs are generated deterministically from recorded
+seeds; the frozen source fingerprint
+`635e469d530f331e7fba951108fa0b0e292a0cb664ce642ee2a01b28eb3689f3` is identical
+across the macOS, native Windows and WSL2 runs. No upstream source is vendored
+into the repository, and no new merger, decoder or native format is introduced.
+On 2026-10-26 the maintainer selected DT on this evidence; the patch set
+remains experimental pending I03 promotion.
+
 ## Negative native-wire fixtures
 
 `tests/native_wire.rs` constructs small malformed or extended chunks independently
