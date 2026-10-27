@@ -1,17 +1,17 @@
 # Implementation status
 
-**Completed issue IDs: I01, I02. Current issue: I03, T1–T2 complete; T3–T6 not
-authorized. I02 closed on
+**Completed issue IDs: I01, I02. Current issue: I03, T1/T2/T4 complete and T3
+half done (crypto dependency only; the DT production pin is open). I02 closed on
 2026-10-26: the maintainer definitively selected diamond-types (DT) with the
 small reviewed native patch set, on the completed common baseline, Loro/DT-fit
 experiments, native-interface spike and three-platform final comparison. On
-2026-10-27 the maintainer authorized **only I03 T1 and T2** — the ADR-01
-amendment, the frozen [canonical profile specification](spec/canonical-profile-v1.md)
-and its golden vectors plus independent Python validator — and confirmed the
-later promotion route as a pinned fork revision with recorded provenance. No
-codec, dependency, binding, storage or protocol exists: the identity/batch
-profile is frozen as a document plus fixtures only, no native encoding is
-canonicalized, and the patch set is not promoted into a production binding.**
+2026-10-27 the maintainer authorized I03 from T1 onward through the codec and
+confirmed the later promotion route as a pinned fork revision with recorded
+provenance. The profile is frozen as a specification plus fixtures, and
+`puyudb-core` now implements the codec that reproduces them byte-for-byte.
+There is still no storage, durable publication, protocol, daemon or CLI surface,
+no native encoding is canonicalized, and the DT patch set is still dev-only
+because a pinned fork needs a fork revision to pin.**
 Work is maintained on `i03-identity-batch-profile`. Local checkpoint commits
 record reviewed progress; they do not accept a native format or constitute a
 release. No Git merge, push, publication, deployment, or GitHub
@@ -33,7 +33,7 @@ now 1.99.1**, the verified latest stable release; older compiler support is drop
 
 | Package | Current behavior |
 | --- | --- |
-| `puyudb-core` | Documented domain/publication boundary only; no database |
+| `puyudb-core` | Frozen identity/profile codec: typed IDs, canonical CBOR subset, records and digests, strict validation, path rules, DT actor/seed derivations, Ed25519 preimages, writer-stream checks; no database, storage or publication |
 | `puyudb-crdt` | Experimental AM inspection seam, shared candidate workload adapters and research tests; no accepted format or stable SDK |
 | `puyudb-local` | Documented local boundary only; no Git/filesystem operations |
 | `puyu-cli` | `puyu` help/version and `puyu db` help only |
@@ -118,7 +118,7 @@ and [final bounded comparison](validation/I02-dt-loro-final.md). The accepted
 [engine decision](adr/01-native-text-evidence.md) records the cursor policy,
 empty-seed contract, span/publication association and patch ownership.
 **NO-GO:** starting I03 without an explicit maintainer go-ahead, or freezing a
-native format. The 2026-10-27 restricted go-ahead ([I03 T1–T2](#i03-t1t2-frozen-identity-and-batch-profile-2026-10-27))
+native format. The 2026-10-27 restricted go-ahead ([I03 T1–T4](#i03-t1t4-frozen-identity-and-batch-profile-2026-10-27))
 supersedes this for T1/T2 only. The patch set stays experimental until I03 T3
 promotes it. Common cost observations do not supply equivalent
 operation-scope, ownership, original per-update byte or transaction-boundary
@@ -131,12 +131,11 @@ See [the proposed addendum](adr/01-native-text-evidence.md) and
 [fixture provenance](validation/I02-sources.md). Production admission hardening,
 storage, public anchor statuses and protocol simulation are not implemented here.
 
-## I03 T1–T2: frozen identity and batch profile (2026-10-27)
+## I03 T1–T4: frozen identity and batch profile (2026-10-27)
 
-Documentation and Python fixtures only; no Rust, Cargo or dependency input
-changed. Authorized scope was T1 and T2 of
-[the I03 plan](plans/I03-identity-and-batch-profile.md) — no T3 dependency
-promotion, T4 codec, T5 integration or T6 closure.
+Authorized scope was T1 through T4 of
+[the I03 plan](plans/I03-identity-and-batch-profile.md); T3 is only half done and
+T5/T6 are open. T1/T2 changed documentation and Python fixtures only.
 
 - [ADR-01 amendment 1](adr/01-native-text-evidence.md#amendment-1-2026-10-27-engine-bound-canonical-profile-for-diamond-types)
   re-specifies the four engine-bound semantics: `dt-text-v1` bound to DT
@@ -162,13 +161,40 @@ promotion, T4 codec, T5 integration or T6 closure.
   self-checks the Ed25519 implementation against RFC 8032 §7.1 TEST 1/2, so the
   signature vectors are anchored to something external.
 
-Nothing is implemented and nothing was measured: no Rust codec, binding or
-storage exists. The DT re-encoding and deleted-gap cursor limitations remain
-accepted, unfixed findings. The existing 110-test Rust workspace, formatting,
-Clippy, frozen builds and dependency checks were not rerun because no Rust/build
-input changed. Python suites pass locally: 23 new i03 tests and the existing
-21 i02 contract tests; fixture regeneration is byte-identical, and local links
-and anchors were re-checked. Starting T3–T6 still needs an explicit go-ahead.
+- T3a wires only the dependencies the codec needs: `ed25519-dalek 3.0.0` (exact
+  pin, default features off, `verify_strict`), `sha2`/`thiserror` as direct core
+  dependencies, and `serde_json` as a dev-only fixture reader that was already in
+  the graph. Its BSD-3-Clause license is an explicit global `deny.toml` allow with
+  the notice-reproduction obligation recorded in `THIRD_PARTY_NOTICES.md`; the
+  ledger now lists eight affected rows (227 registry versions, no duplicates).
+  **The reviewed DT patch set is still not promoted**: the confirmed pinned-fork
+  route needs a fork revision to pin, and no dependency moved out of dev-only.
+- T4 implements the codec: `canon` (strict CBOR subset with minimal-length and
+  no-map/no-tag/no-float rules), `identity` (typed IDs and strict presentation
+  parsing), and `profile` (records, domain-separated digests, strict validation
+  with the frozen stable codes, path rules, `dt-text-v1` actor and seed
+  derivations, Ed25519 preimages with strict verification, writer-stream and
+  equivocation checks). The integration test consumes the committed corpus:
+  every vector must decode, validate and re-encode to identical bytes; every
+  digest is re-derived; every negative case must fail with its declared code; the
+  two signature vectors must equal the Python-produced signatures byte-for-byte;
+  and the 45-byte actor names must match literals baked in both languages.
+- T4 immediately found a real defect in the T2 validator: its base64url helper was
+  shifted by one group, so every derived actor name was wrong while all 23 Python
+  tests stayed green (it only ever compared its own names). Fixed in `43119c8`;
+  no fixture body or digest changed.
+
+Nothing is measured: this is a codec and its conformance corpus, not durability,
+storage, replication or performance evidence. The DT re-encoding and deleted-gap
+cursor limitations remain accepted, unfixed findings.
+
+Local verification of this slice on macOS ARM64 with Rust 1.99.1: **132 workspace
+tests pass** (104 native research, 9 canonical-profile integration, 13 core unit,
+6 CLI), 44 Python tests pass, and `cargo fmt --check`, clippy `-D warnings`, the
+frozen all-target build, the no-default-features and all-features test runs,
+warning-denied rustdoc, `cargo fetch --locked` and `cargo-deny --locked check`
+are green. The two long ignored release fixtures were not rerun because no
+`puyudb-crdt` source changed; hosted CI was not run.
 
 ## Current verification
 
@@ -180,8 +206,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-**110 default integration tests pass:** 104 native research tests and 6 CLI process
-tests. Two long fixtures are intentionally ignored by the default runner and
+**132 workspace tests pass:** 104 native research tests, 9 canonical-profile
+integration tests, 13 core unit tests and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
 have passed explicitly in release mode: the mixed-history delivery gate and
 the all-candidate paste/delete/restore workload fixture. Allocator calibration
 also passes as a separate example test.
@@ -352,14 +378,12 @@ with unresolved offline peer allocation/collisions; AM remains the conformance
 reference, not an automatic fallback choice. An unpublished upstream pin is a
 risk to resolve (patch rebase/notice obligations), not a rejected choice. No
 transparent engine migration is promised.
-**I03 is open with T1–T2 complete.** The maintainer authorized the frozen
-profile document, the amended decision and the fixture/validator slice, not the
-rest of the issue. Remaining
-I03 deliverables are promotion of the reviewed patch set into a pinned
-production binding with
-lock/deny/notice updates (T3), the `puyudb-core` `identity`/`canon`/`profile`
-codec and tests (T4), Rust↔vector integration and full CI (T5), closure docs
-(T6), and the audit phase. Independent native Linux must be
+**I03 is open with T1, T2 and T4 done and T3 half done.** What remains: promote
+the reviewed DT patch set into a pinned production binding with lock/deny/notice
+updates (T3), which needs the fork revision the maintainer's route implies; run
+the full CI matrix (T5) — the Rust↔golden-vector cross-tests already run inside
+the workspace suite, but hosted CI has not executed this slice; closure docs
+(T6); and the audit phase. Independent native Linux must be
 revisited when available and before Linux production support/performance
 claims/I36. Remote tests used the maintainer's authorized existing
 Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
