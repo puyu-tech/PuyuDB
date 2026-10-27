@@ -5,11 +5,12 @@ not freeze formats or assert that their validation has passed. I01 implements th
 four-package foundation of ADR-10 and the original-code licensing policy of
 ADR-12 only. ADR-01's native-semantic direction is accepted (2026-10-26: DT
 selected, I02 closed); ADR-01 also has an accepted, I02-only measurement-platform
-amendment. The remaining directions are proposed, not implemented contracts.
+amendment and the 2026-10-27 engine-bound profile amendment for I03 T1. The
+remaining directions are proposed, not implemented contracts.
 
 | ID | Proposed direction | Validation / implementation gate |
 | --- | --- | --- |
-| ADR-01 | Reuse native text convergence within PuyuDB-owned history | [DT direction accepted 2026-10-26](01-native-text-evidence.md); two native seams prototyped/reviewed in isolation; final bounded DT–Loro comparison executed on macOS/Windows/WSL2; [I02 WSL2 scope accepted](01-wsl2-validation-scope.md); I02 closed; no format frozen; I03 not started |
+| ADR-01 | Reuse native text convergence within PuyuDB-owned history | [DT direction accepted 2026-10-26](01-native-text-evidence.md); two native seams prototyped/reviewed in isolation; final bounded DT–Loro comparison executed on macOS/Windows/WSL2; [I02 WSL2 scope accepted](01-wsl2-validation-scope.md); I02 closed; [engine-bound profile frozen 2026-10-27](01-native-text-evidence.md#amendment-1-2026-10-27-engine-bound-canonical-profile-for-diamond-types) as the [canonical profile spec](../spec/canonical-profile-v1.md), I03 T1 only, nothing implemented; no native format canonicalized |
 | ADR-02 | Patched SQLite, WAL/FULL, one owning writer | I04 publication and failure tests; no binding selected in I01 |
 | ADR-03 | Immutable logical history separate from rebuildable caches | I03/I04/I08 closed-history fixtures |
 | ADR-04 | System Git mutations; tested read-only library plumbing | I07/I14 real-Git fixtures, explicit effects |

@@ -1,13 +1,17 @@
 # Implementation status
 
-**Completed issue IDs: I01, I02. Current issue: I03, not started. I02 closed on
+**Completed issue IDs: I01, I02. Current issue: I03, T1 complete; T2–T6 not
+authorized. I02 closed on
 2026-10-26: the maintainer definitively selected diamond-types (DT) with the
 small reviewed native patch set, on the completed common baseline, Loro/DT-fit
-experiments, native-interface spike and three-platform final comparison. The
-main workspace, dependency lock and DT pin are unchanged; the patch set is not
-yet promoted into a production binding, no native/PayuDB format is frozen, and
-I03 has not started.**
-Work is maintained on `i01-repository-foundations`. Local checkpoint commits
+experiments, native-interface spike and three-platform final comparison. On
+2026-10-27 the maintainer authorized **only I03 T1** — the ADR-01 amendment and
+the frozen [canonical profile specification](spec/canonical-profile-v1.md) — and
+confirmed the later promotion route as a pinned fork revision with recorded
+provenance. No codec, dependency, binding, storage or protocol exists: the
+identity/batch profile is frozen as a document only, no native encoding is
+canonicalized, and the patch set is not promoted into a production binding.**
+Work is maintained on `i03-identity-batch-profile`. Local checkpoint commits
 record reviewed progress; they do not accept a native format or constitute a
 release. No Git merge, push, publication, deployment, or GitHub
 issue creation was performed. IDs below are implementation-plan IDs.
@@ -113,7 +117,9 @@ and [final bounded comparison](validation/I02-dt-loro-final.md). The accepted
 [engine decision](adr/01-native-text-evidence.md) records the cursor policy,
 empty-seed contract, span/publication association and patch ownership.
 **NO-GO:** starting I03 without an explicit maintainer go-ahead, or freezing a
-native format. The patch set stays experimental until I03. Common cost observations do not supply equivalent
+native format. The 2026-10-27 restricted go-ahead ([I03 T1](#i03-t1-frozen-identity-and-batch-profile-2026-10-27))
+supersedes this for T1 only. The patch set stays experimental until I03 T3
+promotes it. Common cost observations do not supply equivalent
 operation-scope, ownership, original per-update byte or transaction-boundary
 validation. The Loro-fit follow-up narrows some gaps but does not eliminate them.
 Retain AM as the deepest fidelity/reference path; no alternative is declared rejected.
@@ -123,6 +129,34 @@ is deferred, not a current hardware-procurement blocker.
 See [the proposed addendum](adr/01-native-text-evidence.md) and
 [fixture provenance](validation/I02-sources.md). Production admission hardening,
 storage, public anchor statuses and protocol simulation are not implemented here.
+
+## I03 T1: frozen identity and batch profile (2026-10-27)
+
+Documentation only; no Rust, Cargo, workflow or fixture input changed. Authorized
+scope was T1 of [the I03 plan](plans/I03-identity-and-batch-profile.md) — no T2
+vectors, T3 dependency promotion, T4 codec, T5 integration or T6 closure.
+
+- [ADR-01 amendment 1](adr/01-native-text-evidence.md#amendment-1-2026-10-27-engine-bound-canonical-profile-for-diamond-types)
+  re-specifies the four engine-bound semantics: `dt-text-v1` bound to DT
+  `89ae3a0…` with the reviewed patch set, `puyudb/dt-seed-actor/v1` and
+  `puyudb/dt-actor/v1` replacing the `am-*` drafts with the `s:`/`w:` textual
+  namespace tags (DT interns actor **names** under 50 bytes, not byte actors),
+  the blueprint `am-*` references superseded for v1, and the DT lazy-seed profile
+  re-frozen on the accepted zero-length empty-seed contract.
+- [Canonical profile v1](spec/canonical-profile-v1.md) freezes record layouts,
+  domain separators, typed-ID widths and presentation, tag registries, paths,
+  writer-stream/lamport/parent rules, frontier normalization, `causal_fork`,
+  chunk/artifact framing, declared limits, and the DT actor/seed derivations.
+  It also records what a replica may not do: no re-encoding claimed as a
+  producer's artifact, no last-arrival equivocation winner, no persisted
+  numeric DT `AgentId`.
+
+Nothing was executed to prove the profile: no golden vector, independent
+validator, negative corpus or cross-process seed fixture exists yet, and the DT
+re-encoding and deleted-gap cursor limitations remain accepted, unfixed findings.
+The existing 110-test workspace, formatting, Clippy, frozen builds and
+dependency checks were not rerun because no Rust/build input changed; document
+links were re-checked. Starting T2–T6 still needs an explicit go-ahead.
 
 ## Current verification
 
@@ -306,10 +340,13 @@ with unresolved offline peer allocation/collisions; AM remains the conformance
 reference, not an automatic fallback choice. An unpublished upstream pin is a
 risk to resolve (patch rebase/notice obligations), not a rejected choice. No
 transparent engine migration is promised.
-**I03 has not started** and this closure does not authorize it: the maintainer
-explicitly deferred I03. When I03 starts, its deliverables are exact canonical
-syntax, widths, profile versions, fixed limits, and promotion of the reviewed
-patch set into the production binding. Independent native Linux must be
+**I03 is open with T1 complete only.** The maintainer authorized the frozen
+profile document and the amended decision, not the rest of the issue. Remaining
+I03 deliverables are the golden vectors plus independent Python validator (T2),
+promotion of the reviewed patch set into a pinned production binding with
+lock/deny/notice updates (T3), the `puyudb-core` `identity`/`canon`/`profile`
+codec and tests (T4), Rust↔vector integration and full CI (T5), closure docs
+(T6), and the audit phase. Independent native Linux must be
 revisited when available and before Linux production support/performance
 claims/I36. Remote tests used the maintainer's authorized existing
 Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
