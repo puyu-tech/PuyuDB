@@ -149,6 +149,12 @@ identifier!(
     "file1"
 );
 identifier!(
+    /// Repository binding inside one space; never derived from a Git remote URL.
+    RepositoryId,
+    16,
+    "repo1"
+);
+identifier!(
     /// One writer-stream incarnation in one branch.
     WriterEpoch,
     16,
@@ -248,6 +254,7 @@ mod tests {
         assert_eq!(text, format!("space1:{}", "ab".repeat(16)));
         assert_eq!(SpaceId::from_str(&text).expect("parse"), space);
         let epoch = EpochId::from_array([0x01; 32]);
+        assert!(RepositoryId::from_str(&format!("repo1:{}", "cd".repeat(16))).is_ok());
         assert!(epoch.to_string().ends_with(&"01".repeat(32)));
     }
 

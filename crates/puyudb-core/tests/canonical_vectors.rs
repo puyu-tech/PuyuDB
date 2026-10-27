@@ -73,9 +73,9 @@ fn profile_sha256(bytes: &[u8]) -> [u8; 32] {
 }
 
 /// Total number of positive records the frozen profile requires vectors for.
-const EXPECTED_VECTOR_COUNT: usize = 20;
+const EXPECTED_VECTOR_COUNT: usize = 21;
 /// Lower bounds so a generator regression cannot silently shrink the corpus.
-const MIN_NEGATIVE_CASES: usize = 45;
+const MIN_NEGATIVE_CASES: usize = 50;
 const MIN_PATH_CASES: usize = 15;
 
 #[test]
@@ -175,7 +175,7 @@ fn digests_rederive_from_the_frozen_layouts() {
         }
     }
     assert_eq!(
-        checked, 14,
+        checked, 15,
         "expected every digest-bearing vector to be checked"
     );
 }
@@ -400,6 +400,91 @@ fn artifact_ids_bind_the_epoch_even_for_empty_payloads() {
     assert_ne!(
         profile::seed_actor_name(&first.epoch),
         profile::seed_actor_name(&second.epoch)
+    );
+}
+
+#[test]
+fn fork_start_batches_may_declare_parents() {
+    let space = SpaceId::from_array([1; 16]);
+    let branch = BranchId::from_array([2; 16]);
+    let parent = puyudb_core::identity::BatchId::from_array([3; 32]);
+    let fork_start = profile::BatchBody {
+        space,
+        branch,
+        public_key: [4; 32],
+        writer_epoch: WriterEpoch::from_array([5; 16]),
+        sequence: 1,
+        previous: None,
+        parents: vec![parent],
+        lamport: 2,
+        native_artifacts: Vec::new(),
+        metadata: ArtifactId::from_array([6; 32]),
+    };
+    profile::validate_record(
+        profile::Record::BatchBody,
+        &fork_start.encode().expect("encode"),
+    )
+    .expect("a stream's first batch may declare the intent-base cut");
+
+    let mut no_lamport = fork_start.clone();
+    no_lamport.lamport = 1;
+    let error = profile::validate_record(
+        profile::Record::BatchBody,
+        &no_lamport.encode().expect("encode"),
+    )
+    .expect_err("parents require lamport >= 2");
+    assert_eq!(error.code(), "invalid_encoding");
+
+    let mut late_sequence = fork_start.clone();
+    late_sequence.sequence = 4;
+    assert!(
+        profile::validate_record(
+            profile::Record::BatchBody,
+            &late_sequence.encode().expect("encode")
+        )
+        .is_err()
+    );
+
+    let mut first_with_previous = fork_start;
+    first_with_previous.previous = Some(parent);
+    assert!(
+        profile::validate_record(
+            profile::Record::BatchBody,
+            &first_with_previous.encode().expect("encode")
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn stream_errors_map_to_stable_codes() {
+    use puyudb_core::profile::StreamError;
+    assert_eq!(StreamError::Equivocation.code(), "writer_equivocation");
+    assert_eq!(StreamError::Sequence.code(), "invalid_encoding");
+    assert_eq!(StreamError::Previous.code(), "invalid_encoding");
+    assert_eq!(StreamError::Lamport.code(), "invalid_encoding");
+    assert_eq!(StreamError::ContextChanged.code(), "invalid_encoding");
+}
+
+#[test]
+fn text_baselines_respect_the_text_epoch_cap() {
+    let payload = vec![b'a'; profile::MAX_TEXT_EPOCH_BYTES + 1];
+    let oversized = profile::ArtifactManifest::for_payload("text-baseline-v1", &payload)
+        .expect("manifest framing is length-independent up to 1 GiB");
+    let error = profile::validate_record(
+        profile::Record::ArtifactManifest,
+        &oversized.encode().expect("encode"),
+    )
+    .expect_err("the declared text-epoch cap must be enforced");
+    assert_eq!(error.code(), "invalid_encoding");
+    let allowed = profile::ArtifactManifest::for_payload("text-baseline-v1", &payload[..64])
+        .expect("small baseline");
+    assert!(
+        profile::validate_record(
+            profile::Record::ArtifactManifest,
+            &allowed.encode().expect("encode")
+        )
+        .is_ok()
     );
 }
 

@@ -184,12 +184,42 @@ T5/T6 are open. T1/T2 changed documentation and Python fixtures only.
   tests stayed green (it only ever compared its own names). Fixed in `43119c8`;
   no fixture body or digest changed.
 
+- A **fresh-context spec-conformance audit** (blueprint §5/§22 against both
+  implementations, no shared context with the author) ran on this slice and found
+  14 issues, one of them blocking. All are resolved here; the corpus grew to
+  21 positive vectors and 52 negatives.
+  - **F01 (blocker):** both validators rejected `previous = null` with non-empty
+    parents, a rule with no spec line that contradicts §13.1 — a fork or branch
+    start must declare the intent-base cut as its parents, so a conforming
+    producer's first batch was rejected by the frozen codec and corpus. The bad
+    rule is gone from both implementations, a positive
+    `batch/fork-first-batch` vector exists, and §13 now states the rule.
+  - **F02:** `lamport = 1` with non-empty parents was accepted although
+    `lamport = 1 + max(parent lamport)` makes 2 the minimum. Both validators now
+    enforce it; negative added.
+  - **F10:** `sequence = 1` with a `previous` batch was accepted; now `sequence
+    >= 2` whenever `previous` is present, with a negative.
+  - **F03/F04:** `relation_tag` (operations 6 and 9) is declared the one
+    deliberately opaque v1 field, and `RepositoryId` is now a defined 16-byte
+    identifier instead of an anonymous `repository16`.
+  - **F05:** the declared 8 MiB text-epoch cap was unenforced; `text-baseline-v1`
+    manifests above it are now rejected, with a negative.
+  - **F06:** the native artifact record drops two §22.1 (Automerge) fields, not
+    one; both deviations and their reasons are now written down.
+  - **F07/F08/F11/F12/F13/F14:** `nonce1`/`repo1`/`conflict1` presentation
+    prefixes added to the spec, frontier normalization marked as producer-side
+    construction with decoder rejection, the `modes` addition to the semantic
+    manifest acknowledged, equivocation scope and its stable code mapping stated
+    (plus `StreamError::code`), the implied batch-body cap annotated, and
+    operation encoding no longer masks an epoch-descriptor error as
+    `invalid_encoding`.
+
 Nothing is measured: this is a codec and its conformance corpus, not durability,
 storage, replication or performance evidence. The DT re-encoding and deleted-gap
 cursor limitations remain accepted, unfixed findings.
 
-Local verification of this slice on macOS ARM64 with Rust 1.99.1: **132 workspace
-tests pass** (104 native research, 9 canonical-profile integration, 13 core unit,
+Local verification of this slice on macOS ARM64 with Rust 1.99.1: **135 workspace
+tests pass** (104 native research, 12 canonical-profile integration, 13 core unit,
 6 CLI), 44 Python tests pass, and `cargo fmt --check`, clippy `-D warnings`, the
 frozen all-target build, the no-default-features and all-features test runs,
 warning-denied rustdoc, `cargo fetch --locked` and `cargo-deny --locked check`
@@ -206,7 +236,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-**132 workspace tests pass:** 104 native research tests, 9 canonical-profile
+**135 workspace tests pass:** 104 native research tests, 12 canonical-profile
 integration tests, 13 core unit tests and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
 have passed explicitly in release mode: the mixed-history delivery gate and
 the all-candidate paste/delete/restore workload fixture. Allocator calibration
@@ -383,7 +413,8 @@ the reviewed DT patch set into a pinned production binding with lock/deny/notice
 updates (T3), which needs the fork revision the maintainer's route implies; run
 the full CI matrix (T5) — the Rust↔golden-vector cross-tests already run inside
 the workspace suite, but hosted CI has not executed this slice; closure docs
-(T6); and the audit phase. Independent native Linux must be
+(T6); and the security audit and the dependency/provenance audit (the latter only after T3
+is completed). Independent native Linux must be
 revisited when available and before Linux production support/performance
 claims/I36. Remote tests used the maintainer's authorized existing
 Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
