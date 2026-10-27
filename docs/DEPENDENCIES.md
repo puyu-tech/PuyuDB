@@ -8,7 +8,7 @@ authorized dev-only diamond-types exception uses a full upstream Git revision.
 Rust 1.99.1 is the current compiler/floor. Exact pins make selections reproducible;
 they do not mean Cargo fetches moving latest versions on every build.
 
-The resolved metadata graph contains **220 registry package versions and two
+The resolved metadata graph contains **227 registry package versions and two
 same-revision Git packages**, including development, build, and target-specific
 dependencies. The ledger below records
 direct selections and license/maintenance-sensitive transitive dependencies.
@@ -28,6 +28,14 @@ dev-only comparison/conformance dependencies. See
 | [anstyle](https://crates.io/crates/anstyle/1.0.14) | 1.0.14 | Transitive; help style representation, even without colored output | MIT OR Apache-2.0 | 1.66.0 |
 | [automerge](https://crates.io/crates/automerge/0.12.0) | 0.12.0 | Direct in CRDT experiment; conformance reference, not selected | MIT | 1.90.0 |
 | [sha2](https://crates.io/crates/sha2/0.11.1) | 0.11.1 | Direct; specified actor namespace derivation | MIT OR Apache-2.0 | 1.88 |
+| [ed25519-dalek](https://crates.io/crates/ed25519-dalek/3.0.0) | 3.0.0 | Direct in core; strict Ed25519 verification and deterministic fixture signing for canonical records | BSD-3-Clause | 1.85 |
+| [curve25519-dalek](https://crates.io/crates/curve25519-dalek/5.0.0) | 5.0.0 | Transitive of ed25519-dalek; Ed25519 group arithmetic | BSD-3-Clause | 1.85.0 |
+| [subtle](https://crates.io/crates/subtle/2.6.1) | 2.6.1 | Transitive of curve25519-dalek; constant-time primitives | BSD-3-Clause | Undeclared |
+| [ed25519](https://crates.io/crates/ed25519/3.0.0) | 3.0.0 | Transitive of ed25519-dalek; key and signature types | Apache-2.0 OR MIT | 1.85 |
+| [signature](https://crates.io/crates/signature/3.0.0) | 3.0.0 | Transitive of ed25519-dalek; signing/verification traits | Apache-2.0 OR MIT | 1.85 |
+| [fiat-crypto](https://crates.io/crates/fiat-crypto/0.3.0) | 0.3.0 | Transitive of curve25519-dalek; generated field arithmetic | MIT OR Apache-2.0 OR BSD-1-Clause | 1.83.0 |
+| [curve25519-dalek-derive](https://crates.io/crates/curve25519-dalek-derive/0.1.1) | 0.1.1 | Build/proc-macro transitive; selects field arithmetic backends | MIT/Apache-2.0 | Undeclared |
+| [serde_json](https://crates.io/crates/serde_json/1.0.154) | 1.0.154 | Dev only in core; reads the committed canonical-profile fixtures | MIT OR Apache-2.0 | 1.71 |
 | [thiserror](https://crates.io/crates/thiserror/2.0.21) | 2.0.21 | Direct; experimental error types | MIT OR Apache-2.0 | 1.77 |
 | [proptest](https://crates.io/crates/proptest/1.12.0) | 1.12.0 | Dev only; deterministic generated native histories | MIT OR Apache-2.0 | 1.88 |
 | [yrs](https://crates.io/crates/yrs/0.28.0) | 0.28.0 | Dev only; challenger trace, not selected | MIT | Undeclared |
@@ -44,6 +52,12 @@ dev-only comparison/conformance dependencies. See
 | [sized-chunks](https://crates.io/crates/sized-chunks/0.6.5) | 0.6.5 | Loro dev transitive; scoped license and maintenance exception | MPL-2.0+ | Undeclared |
 | [xxhash-rust](https://crates.io/crates/xxhash-rust/0.8.19) | 0.8.19 | Loro dev transitive; Boost license exception | BSL-1.0 | Undeclared |
 | [lz4_flex](https://crates.io/crates/lz4_flex/0.11.6) | 0.11.6 | Loro dev transitive; patched resolution, not 0.11.5 | MIT | 1.81 |
+
+The only BSD-3-Clause components in the graph are the Ed25519 binding and its
+arithmetic/constant-time transitives listed above; the license is allowed
+globally in `deny.toml` with a notice obligation recorded in
+[third-party notices](../THIRD_PARTY_NOTICES.md). `serde_json` was already present
+as a transitive development dependency before it became a direct one.
 
 All other packages resolve from crates.io. The sole Git source is allowlisted by
 repository; both direct full revision and expected manifest version are constrained.

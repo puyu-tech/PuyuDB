@@ -20,6 +20,21 @@ met its obligations. Dependency license texts are not reproduced here at this
 scaffolding stage; required texts and notices must be assembled before distributing
 binaries.
 
+## I03 canonical-profile crypto dependency
+
+The canonical profile binds Ed25519 signatures, so `puyudb-core` links
+`ed25519-dalek 3.0.0`. It and its transitives `curve25519-dalek 5.0.0` and
+`subtle 2.6.1` are **BSD-3-Clause**. No BSD source is vendored in this
+repository.
+
+BSD-3-Clause obliges a distributor of compiled binaries to reproduce the
+upstream copyright notice, the license conditions and the disclaimer with the
+distribution. Assemble those texts from the crates.io packages of the exact
+locked versions before distributing any binary that contains them; this file is
+not a substitute for them. The remaining transitive components of that binding
+(`ed25519 3.0.0`, `signature 3.0.0`, `fiat-crypto 0.3.0`,
+`curve25519-dalek-derive 0.1.1`) are Apache-2.0/MIT.
+
 ## I02 research dependency obligations
 
 Original PuyuDB files remain Apache-2.0. The dev-only Loro comparison links
