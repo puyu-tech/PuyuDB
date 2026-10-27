@@ -30,8 +30,8 @@ RFC8032 = (
 )
 
 # Frozen textual form of the DT actor names for the fixture context.
-EXPECTED_SEED_NAME = "s:AHP2L2F1tfH0NiIm7JPwbalTSLInJnIXoJ2Jcq_5sv-"
-EXPECTED_WRITER_NAME = "w:AJ7QApJJXPQ9Pzw6MynQOn4mJJTVzjgyk53cFfZIFbk"
+EXPECTED_SEED_NAME = "s:c_YvYXW18fQ2Iibsk_BtqVNIsicmchegnYlyr_my_5Y"
+EXPECTED_WRITER_NAME = "w:ntACkklc9D0_PDozKdA6fiYklNXOODKTndwV9kgVuTk"
 
 LOWER_HEX = set("0123456789abcdef")
 

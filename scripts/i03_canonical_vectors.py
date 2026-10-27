@@ -13,6 +13,7 @@ signing vectors; strict verification hardening belongs to ed25519-dalek in T4.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -437,10 +438,12 @@ _B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
 
 def base64url_unpadded_43(digest: bytes) -> str:
+    """RFC 4648 section 5 alphabet, no padding, exactly 43 characters for 32 bytes."""
     if len(digest) != 32:
         raise ProfileError("invalid_encoding", "actor name digest must be 32 bytes")
-    bits = int.from_bytes(digest, "big")
-    return "".join(_B64URL[(bits >> (258 - 6 * index)) & 63] for index in range(43))
+    encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    assert len(encoded) == 43 and set(encoded) <= set(_B64URL)
+    return encoded
 
 
 def seed_actor_name(epoch: bytes) -> str:
