@@ -365,6 +365,9 @@ SemanticManifestId = SHA256("puyudb/semantic-manifest/v1" || 0x00 || canonical_b
   release-blocking bug, not a display difference.
 - Register maxima and conflict derivation are computed by I05; this record only
   fixes their canonical output shape and ordering.
+- Every `paths` entry must satisfy §11. A manifest carrying a path that no
+  path operation could have produced is an encoding error, not a
+  materialization problem.
 
 ## 8. Epoch, Git object and branch descriptor
 

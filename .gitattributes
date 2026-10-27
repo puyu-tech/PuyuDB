@@ -1,6 +1,8 @@
 # CLI output uses LF on every platform; preserve exact byte snapshots on checkout.
 apps/puyu-cli/tests/snapshots/*.txt text eol=lf
 crates/puyudb-crdt/tests/fixtures/*.txt text eol=lf
+# Canonical-profile fixtures are compared byte-for-byte with their generator.
+tests/fixtures/canonical-v1/** text eol=lf
 docs/validation/**/*.csv text eol=lf
 docs/validation/loro-fit/*.hex text eol=lf
 docs/validation/diamond-fit/*.hex text eol=lf
