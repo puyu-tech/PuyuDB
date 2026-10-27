@@ -15,7 +15,11 @@ ignore = [
 ]
 
 [licenses]
-allow = ["Apache-2.0", "MIT", "Unicode-3.0", "Zlib"]
+# BSD-3-Clause is required only by the Ed25519 binding selected in ADR-01:
+# ed25519-dalek 3.0.0, curve25519-dalek 5.0.0 and subtle are BSD-3-Clause.
+# It is a permissive OSI license, Apache-2.0-compatible, and carries a
+# notice-reproduction obligation recorded in THIRD_PARTY_NOTICES.md.
+allow = ["Apache-2.0", "BSD-3-Clause", "MIT", "Unicode-3.0", "Zlib"]
 confidence-threshold = 0.93
 include-dev = true
 
