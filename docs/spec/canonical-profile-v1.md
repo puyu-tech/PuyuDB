@@ -60,6 +60,7 @@ forms rather than normalizing them.
 | `SpaceId` | 16 bytes | Sharing, authorization, replication unit |
 | `BranchId` | 16 bytes | Branch view inside one space |
 | `FileId` | 16 bytes | Stable logical file identity |
+| `RepositoryId` | 16 bytes | Repository binding inside one space; **not** a `SpaceId` and never derived from a Git remote URL |
 | `WriterEpoch` | 16 bytes | One writer stream incarnation in one branch |
 | `FileGenerationNonce` | 16 bytes | Epoch descriptor discriminator |
 | `EpochId` | 32 bytes | Content lineage digest |
@@ -70,8 +71,8 @@ forms rather than normalizing them.
 | `PublicKey` | 32 bytes | Ed25519 verifying key |
 | `GitOid` | record | Typed Git object identity (§8.1) |
 
-Random-width IDs (space, branch, file, writer epoch, generation nonce) are
-generated from the operating system CSPRNG. They are never derived, and never
+Random-width IDs (space, branch, file, repository, writer epoch, generation
+nonce) are generated from the operating system CSPRNG. They are never derived, and never
 copied between independently writable devices.
 
 ### 2.1 Domain separators
@@ -116,11 +117,14 @@ no record stores a presented string.
 | `branch1` | `BranchId` | 32 |
 | `file1` | `FileId` | 32 |
 | `writer1` | `WriterEpoch` | 32 |
+| `repo1` | `RepositoryId` | 32 |
+| `nonce1` | `FileGenerationNonce` | 32 |
 | `epoch1` | `EpochId` | 64 |
 | `batch1` | `BatchId` | 64 |
 | `artifact1` | `ArtifactId` | 64 |
 | `chunk1` | `ChunkId` | 64 |
 | `version1` | `VersionId` | 64 |
+| `conflict1` | `ConflictId` | 64 |
 | `gitoid1` | `GitOid` | `sha1:` + 40 / `sha256:` + 64 |
 
 Chunk IDs are an internal addressing detail; presenting them is allowed but they
@@ -191,14 +195,18 @@ FrontierV1 = [1, space: bytes16, heads: array(bytes32)]   ; sorted unique, <= 65
 VersionId  = SHA256("puyudb/frontier/v1" || 0x00 || canonical_frontier_bytes)
 ```
 
-Normalization is pure and order-independent:
+Normalization is pure and order-independent, and the three steps below are a
+**producer-side construction**, not a decoder repair:
 
 1. Deduplicate heads.
 2. Drop every head that is an ancestor of another head (ancestor dominance
    computed over the batch DAG, not over arrival order or lamport values).
 3. Sort ascending by unsigned lexicographic bytes.
 
-Only a normalized frontier may be hashed, stored, transmitted, or compared. An
+A decoder never runs these steps on received bytes: it validates that the list is
+already deduplicated and sorted, and rejects a redundant head wherever it can
+prove dominance from the history it holds. Only a normalized frontier may be
+hashed, stored, transmitted, or compared. An
 unnormalized or redundant head list is `invalid_encoding`, never silently fixed,
 because silently normalizing would let two replicas disagree on a version's
 identity.
@@ -271,10 +279,19 @@ rejects anything outside it.
 One native artifact per `(epoch, batch)`; all of that batch's edits to one epoch
 are grouped in it, in the batch's edit order.
 
-The blueprint's AM row for this payload also carries an explicit native
-dependency hash array. That shape is AM-specific and is not part of
-`dt-text-v1`, for the reason above: DT's wire already carries its own parents,
-and the outer cut is the authoritative declaration.
+The blueprint's AM row (`[1, epoch32, "am-text-v1", native_hash_bytes,
+native_dependency_hashes_array, native_change_bytes]`) differs from this record in
+**two** fields, both deliberate:
+
+- `native_dependency_hashes_array` is absent because DT's wire already carries its
+  own parents and the outer cut is the authoritative declaration; a second copy
+  could disagree with it.
+- `native_hash_bytes` is absent because DT has no single change hash: portable
+  identity is `(agent name, operation index)`, and identity of the artifact as a
+  whole comes from the manifest over the exact exported bytes (§6.4). A per-change
+  hash would be a PuyuDB invention, not a native identifier.
+
+Both deviations are AM-specific shape, not dropped information.
 
 ### 6.4 Native artifact identity versus re-encoding
 
@@ -325,7 +342,11 @@ unit of supersession, conflict participation and provenance.
 | 9 | `[9, source_batches: array(bytes32), relation_tag, detail_artifact: bytes32 / null]` | Provenance assertion; never rewrites native IDs |
 
 Tags 10 and above are unassigned; a v1 decoder rejects them as
-`unsupported_capability`. Mode tags: 0 regular non-executable, 1 regular
+`unsupported_capability`. `relation_tag` in tags 6 and 9 is the one field whose
+values are **deliberately opaque in v1**: the registry is owned by I05 (Git and
+filesystem association) and I07 (import provenance), so a decoder validates the
+uint width only and must not interpret or reject a value. Every other registry in
+this document has assigned values and rejects the rest. Mode tags: 0 regular non-executable, 1 regular
 executable, 2 symlink entry — no other value. Epoch kind tags: 0 text UTF-8,
 1 opaque bytes, 2 inert symlink target. Context schema tags: 0 subject
 assertion, 1 conversation/thread descriptor, 2 message revision, 3 comment/reply,
@@ -365,6 +386,10 @@ SemanticManifestId = SHA256("puyudb/semantic-manifest/v1" || 0x00 || canonical_b
   release-blocking bug, not a display difference.
 - Register maxima and conflict derivation are computed by I05; this record only
   fixes their canonical output shape and ordering.
+- `modes` is an addition to §22.1's manifest description (which lists live/path/
+  epoch alternatives, content IDs and conflict IDs). It is required: without it a
+  mode-only divergence between two replicas would hash identically, and mode is a
+  destructive/type decision (§5.6), not presentation.
 - Every `paths` entry must satisfy §11. A manifest carrying a path that no
   path operation could have produced is an encoding error, not a
   materialization problem.
@@ -475,7 +500,7 @@ measurement or a deployment quota. Each is checked before allocation.
 | Constant | Value | Applies to |
 | --- | ---: | --- |
 | `PROFILE_VERSION` | 1 | every record's first element |
-| `MAX_BATCH_BODY_BYTES` | 1,048,576 | canonical body bytes |
+| `MAX_BATCH_BODY_BYTES` | 1,048,576 | canonical body bytes; implied by the parent and artifact caps, kept as a decode guard |
 | `MAX_BATCH_PARENTS` | 128 | `parents` |
 | `MAX_BATCH_NATIVE_ARTIFACTS` | 4,096 | `native_artifact_ids` |
 | `MAX_FRONTIER_HEADS` | 65,536 | `heads` |
@@ -488,7 +513,7 @@ measurement or a deployment quota. Each is checked before allocation.
 | `MAX_CONTEXT_EVENT_BYTES` | 65,536 | operation tag 5 `event_bytes` |
 | `MAX_PATH_BYTES` | 4,096 | one logical path |
 | `MAX_PATH_COMPONENT_BYTES` | 255 | one path component |
-| `MAX_TEXT_EPOCH_BYTES` | 8,388,608 | kind-0 baseline and resulting text |
+| `MAX_TEXT_EPOCH_BYTES` | 8,388,608 | `text-baseline-v1` manifests; the resulting text of a kind-0 epoch |
 | `MAX_OPERATION_INDEX` | 65,535 | write identity index |
 
 ## 11. Paths
@@ -634,9 +659,17 @@ metadata, publication and durability.
   restoring a writable backup allocates a fresh `writer_epoch`.
 - `sequence` starts at 1 and increases by exactly 1 per stream. `previous` is the
   stream's preceding batch and must be present in the parent closure (not
-  necessarily as a direct parent).
-- `lamport = 1 + max(parent.lamport)` with checked arithmetic; a batch with no
-  parents has `lamport = 1`. Wall-clock time is optional untrusted display
+  necessarily as a direct parent). A batch with `previous = null` is the first of
+  its stream and has `sequence = 1`; any later batch has `sequence >= 2`.
+- **A stream's first batch may declare parents.** It is not a genesis batch in the
+  DAG sense: it declares the intent-base cut (§13.1) as its `parents`, which is
+  non-empty for every fork, every branch start from a captured frontier (§5.3) and
+  every writer-epoch restart after a `causal_fork`. Parent-free batches exist only
+  for the very first batch of a space.
+- `lamport = 1 + max(parent.lamport)` with checked arithmetic. Therefore a batch
+  with no parents has `lamport = 1`, and any batch with parents has
+  `lamport >= 2`. Both directions are locally checkable without history and are
+  enforced by every decoder. Wall-clock time is optional untrusted display
   metadata and never determines causality.
 - `parents` are sorted unique, minimal (no parent is an ancestor of another),
   at most 128. A larger frontier is reduced by explicit no-content join batches;
@@ -679,6 +712,11 @@ previously resident authoritative content. Loss of required text/native data is
 corruption; loss of resident opaque bytes is degraded integrity, not a
 reclassification as intentional omission.
 
+Writer-stream violations map to the same stable codes: `writer_equivocation` for
+one `(stream, sequence)` claimed by two different batches, and `invalid_encoding`
+for a changed stream context, a skipped sequence, a wrong `previous`, or a
+non-advancing lamport. A receiver must not invent a second spelling.
+
 Failure codes used by this profile are the assigned stable strings
 `invalid_encoding`, `unsupported_version`, `unsupported_capability`,
 `hash_mismatch`, `invalid_signature`, `writer_equivocation`, `missing_dependency`,
@@ -702,10 +740,13 @@ Before I03 can close, all of the following exist in the repository:
    indefinite lengths, wrong widths, unknown tags and versions, duplicate or
    unsorted parents, non-minimal or unsorted frontier heads, oversized
    `raw_length` before allocation, tampered manifests, unknown kind text,
-   unknown epoch kind, `(stream, sequence)` equivocation, path-rule violations,
-   and a wrong-key signature.
+   unknown epoch kind, path-rule violations, and a wrong-key signature. Record-level
+   negatives are fixtures; `(stream, sequence)` equivocation needs two bodies and
+   history, so it is covered by the protocol/stream layer and its unit tests, not
+   by the single-record corpus.
 4. N/N-1 behaviour: a decoder for profile v1 rejects unknown versions and unknown
-   registry tags explicitly, and does not ignore unknown required fields.
+   values of every **assigned** registry, and does not ignore unknown required
+   fields. The single deliberately opaque field is `relation_tag` (§7.1).
 
 Fixture provenance rules: vectors are generated from the frozen layouts, then
 independently re-derived by the validator; a vector that either side cannot

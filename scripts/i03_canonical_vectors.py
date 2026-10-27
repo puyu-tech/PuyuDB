@@ -759,16 +759,21 @@ def validate_batch_body(item) -> None:
         if sequence != 1:
             raise ProfileError("invalid_encoding",
                                "a stream's first batch has sequence 1")
-        if parents:
+    else:
+        if sequence < 2:
             raise ProfileError("invalid_encoding",
-                               "a genesis batch cannot declare parents")
-    elif not parents:
+                               "a batch with a previous batch has sequence >= 2")
+        if not parents:
+            raise ProfileError("invalid_encoding",
+                               "previous must be inside the declared parent closure")
+    # A stream's first batch may declare the intent-base cut as parents; only a
+    # batch with no parents at all is the space's first and has lamport 1.
+    if parents and lamport < 2:
         raise ProfileError("invalid_encoding",
-                           "previous must be inside the declared parent closure")
+                           "a batch with parents has lamport >= 2")
     if not parents and lamport != 1:
-        raise ProfileError("invalid_encoding", "a genesis batch has lamport 1")
-    if lamport < 1:
-        raise ProfileError("invalid_encoding", "lamport is at least 1")
+        raise ProfileError("invalid_encoding",
+                           "a batch without parents has lamport 1")
     artifacts = record[9]
     if not isinstance(artifacts, list):
         raise ProfileError("invalid_encoding", "native artifacts is not an array")
@@ -816,6 +821,9 @@ def validate_artifact_manifest(item) -> None:
     if raw_length > MAX_ARTIFACT_RAW_BYTES:
         raise ProfileError("invalid_encoding",
                            "raw_length exceeds the profile cap")
+    if kind == "text-baseline-v1" and raw_length > MAX_TEXT_EPOCH_BYTES:
+        raise ProfileError("invalid_encoding",
+                           "text baselines exceed the text-epoch cap")
     _bytes(record[3], 32, "raw digest")
     chunks = record[4]
     if not isinstance(chunks, list):
@@ -1042,6 +1050,11 @@ def build_vectors() -> dict:
                          artifact_id(metadata))
     chained = batch_body(SPACE, BRANCH, PUBLIC_KEY, WRITER_EPOCH, 8, batch_id(body),
                          [batch_id(body)], 13, [], artifact_id(metadata))
+    # A fresh writer epoch starting a fork: no previous batch in this stream, but
+    # the intent-base cut is declared as parents and lamport follows it.
+    fork_start = batch_body(SPACE, BRANCH, PUBLIC_KEY,
+                            _fixture_bytes("writer-epoch-fork", 16), 1, None,
+                            PARENTS, 2, [], artifact_id(metadata))
     heads = sorted([_fixture_bytes("head-a", 32), _fixture_bytes("head-b", 32)])
     frontier_body = frontier(SPACE, heads)
     branch_body = branch_descriptor(SPACE, BRANCH, version_id(frontier_body),
@@ -1086,6 +1099,8 @@ def build_vectors() -> dict:
                   {"batch_id": batch_id(body)}),
             entry("batch/chained", "batch_body", chained,
                   {"batch_id": batch_id(chained)}),
+            entry("batch/fork-first-batch", "batch_body", fork_start,
+                  {"batch_id": batch_id(fork_start)}),
             entry("batch/signature", "batch_signature",
                   batch_signature(PUBLIC_KEY, batch_signature_value), None,
                   preimage_hex=signature_preimage(SPACE, batch_id(body)).hex(),
@@ -1198,9 +1213,12 @@ def build_negative_corpus() -> dict:
              "invalid_encoding", "a stream's first batch has sequence 1"),
         case("shape/batch-genesis-lamport", "batch_body", genesis(lamport=5),
              "invalid_encoding", "a genesis batch has lamport 1"),
-        case("shape/batch-genesis-parents", "batch_body",
-             genesis(parents=[PARENT_A], lamport=2),
-             "invalid_encoding", "a genesis batch cannot declare parents"),
+        case("shape/batch-lamport-below-parents", "batch_body",
+             genesis(parents=PARENTS, lamport=1),
+             "invalid_encoding", "a batch with parents has lamport >= 2"),
+        case("shape/batch-sequence-one-with-previous", "batch_body",
+             genesis(sequence=1, previous=batch_id(body), parents=PARENTS, lamport=2),
+             "invalid_encoding", "a batch with a previous batch has sequence >= 2"),
         case("shape/batch-previous-without-parents", "batch_body",
              genesis(sequence=2, previous=PARENT_A),
              "invalid_encoding", "previous must be inside the parent closure"),
@@ -1238,6 +1256,11 @@ def build_negative_corpus() -> dict:
              array([uint(PROFILE_VERSION), text("text-baseline-v1"), uint(1),
                     byt(b"\x00" * 32), array([])]),
              "hash_mismatch", "non-empty length with an empty chunk list"),
+        case("shape/manifest-text-over-epoch-cap", "artifact_manifest",
+             array([uint(PROFILE_VERSION), text("text-baseline-v1"),
+                    uint(MAX_TEXT_EPOCH_BYTES + 1), byt(b"\x00" * 32),
+                    array([byt(b"\x01" * 32)] * 33)]),
+             "invalid_encoding", "text baselines exceed the text-epoch cap"),
         case("shape/manifest-raw-length-over-cap", "artifact_manifest",
              array([uint(PROFILE_VERSION), text("opaque-baseline-v1"),
                     uint(MAX_ARTIFACT_RAW_BYTES + 1), byt(b"\x00" * 32),

@@ -19,7 +19,7 @@ use thiserror::Error;
 use crate::canon::{self, Item};
 use crate::identity::{
     ArtifactId, BatchId, BranchId, ChunkId, ConflictId, EpochId, FileId, GenerationNonce, GitOid,
-    SpaceId, VersionId, WriterEpoch,
+    RepositoryId, SpaceId, VersionId, WriterEpoch,
 };
 
 /// Frozen profile version; the first element of every record.
@@ -401,24 +401,23 @@ pub fn verify_batch_signature(
 // Records: encoders
 // --------------------------------------------------------------------------
 
-fn wrap(write: impl FnOnce(&mut Vec<u8>) -> Result<(), canon::Error>) -> Result<Vec<u8>, Error> {
+fn wrap(write: impl FnOnce(&mut Vec<u8>) -> Result<(), Error>) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
     write(&mut out)?;
     Ok(out)
 }
 
-fn push_bytes(out: &mut Vec<u8>, value: &[u8]) -> Result<(), canon::Error> {
-    canon::write_bytes(out, value)
+fn push_bytes(out: &mut Vec<u8>, value: &[u8]) -> Result<(), Error> {
+    canon::write_bytes(out, value)?;
+    Ok(())
 }
 
-fn push_text(out: &mut Vec<u8>, value: &str) -> Result<(), canon::Error> {
-    canon::write_text(out, value)
+fn push_text(out: &mut Vec<u8>, value: &str) -> Result<(), Error> {
+    canon::write_text(out, value)?;
+    Ok(())
 }
 
-fn push_uints(
-    out: &mut Vec<u8>,
-    values: impl ExactSizeIterator<Item = u64>,
-) -> Result<(), canon::Error> {
+fn push_uints(out: &mut Vec<u8>, values: impl ExactSizeIterator<Item = u64>) -> Result<(), Error> {
     canon::write_array_header(out, values.len())?;
     for value in values {
         canon::write_uint(out, value)?;
@@ -793,7 +792,7 @@ impl EpochDescriptor {
     }
 }
 
-fn push_git_oid(out: &mut Vec<u8>, oid: &GitOid) -> Result<(), canon::Error> {
+fn push_git_oid(out: &mut Vec<u8>, oid: &GitOid) -> Result<(), Error> {
     canon::write_array_header(out, 3)?;
     canon::write_uint(out, PROFILE_VERSION)?;
     canon::write_uint(out, oid.algorithm_tag())?;
@@ -1066,7 +1065,7 @@ pub enum Operation {
     /// Create a fresh `FileId`.
     Create {
         /// Repository binding.
-        repository: [u8; 16],
+        repository: RepositoryId,
         /// New file identity.
         file: FileId,
         /// Initial path.
@@ -1118,7 +1117,7 @@ pub enum Operation {
     /// Git association assertion.
     Git {
         /// Repository binding.
-        repository: [u8; 16],
+        repository: RepositoryId,
         /// Git object.
         oid: GitOid,
         /// Associated version.
@@ -1157,10 +1156,12 @@ impl Operation {
     /// # Errors
     /// Returns [`Error::Encoding`] or [`Error::Capability`] for invalid input.
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
-        wrap(|out| self.write(out))
+        let mut out = Vec::new();
+        self.write(&mut out)?;
+        Ok(out)
     }
 
-    fn write(&self, out: &mut Vec<u8>) -> Result<(), canon::Error> {
+    fn write(&self, out: &mut Vec<u8>) -> Result<(), Error> {
         match self {
             Self::Create {
                 repository,
@@ -1171,11 +1172,11 @@ impl Operation {
             } => {
                 canon::write_array_header(out, 6)?;
                 canon::write_uint(out, 0)?;
-                push_bytes(out, repository)?;
+                push_bytes(out, repository.as_bytes())?;
                 push_bytes(out, file.as_bytes())?;
                 push_text(out, path.as_str())?;
                 canon::write_uint(out, mode.tag())?;
-                out.extend_from_slice(&epoch.encode().map_err(|_| canon::Error::Truncated)?);
+                out.extend_from_slice(&epoch.encode()?);
                 Ok(())
             }
             Self::Path { file, path } => {
@@ -1188,7 +1189,7 @@ impl Operation {
                 canon::write_array_header(out, 3)?;
                 canon::write_uint(out, 2)?;
                 push_bytes(out, file.as_bytes())?;
-                canon::write_uint(out, live.tag())
+                Ok(canon::write_uint(out, live.tag())?)
             }
             Self::Epoch { file, epoch } => {
                 canon::write_array_header(out, 3)?;
@@ -1227,16 +1228,16 @@ impl Operation {
             } => {
                 canon::write_array_header(out, 5)?;
                 canon::write_uint(out, 6)?;
-                push_bytes(out, repository)?;
+                push_bytes(out, repository.as_bytes())?;
                 push_git_oid(out, oid)?;
                 push_bytes(out, version.as_bytes())?;
-                canon::write_uint(out, *relation)
+                Ok(canon::write_uint(out, *relation)?)
             }
             Self::Mode { file, mode } => {
                 canon::write_array_header(out, 3)?;
                 canon::write_uint(out, 7)?;
                 push_bytes(out, file.as_bytes())?;
-                canon::write_uint(out, mode.tag())
+                Ok(canon::write_uint(out, mode.tag())?)
             }
             Self::Resolution {
                 conflict,
@@ -1666,24 +1667,27 @@ fn validate_batch_body(item: &Item) -> Result<(), Error> {
         return Err(Error::encoding("sequences start at 1"));
     }
     if has_previous {
+        if sequence < 2 {
+            return Err(Error::encoding(
+                "a batch with a previous batch has sequence >= 2",
+            ));
+        }
         if parents.is_empty() {
             return Err(Error::encoding(
                 "previous must be inside the declared parent closure",
             ));
         }
-    } else {
-        if sequence != 1 {
-            return Err(Error::encoding("a stream's first batch has sequence 1"));
-        }
-        if !parents.is_empty() {
-            return Err(Error::encoding("a genesis batch cannot declare parents"));
-        }
+    } else if sequence != 1 {
+        return Err(Error::encoding("a stream's first batch has sequence 1"));
     }
-    if parents.is_empty() && lamport != 1 {
-        return Err(Error::encoding("a genesis batch has lamport 1"));
-    }
-    if lamport < 1 {
-        return Err(Error::encoding("lamport is at least 1"));
+    // A stream's first batch may declare the intent-base cut as parents; only a
+    // batch with no parents at all is the space's first and has lamport 1.
+    if parents.is_empty() {
+        if lamport != 1 {
+            return Err(Error::encoding("a batch without parents has lamport 1"));
+        }
+    } else if lamport < 2 {
+        return Err(Error::encoding("a batch with parents has lamport >= 2"));
     }
     bytes32_list(&record[9], "native artifacts", MAX_BATCH_NATIVE_ARTIFACTS)?;
     as_bytes(&record[10], 32, "metadata artifact")?;
@@ -1712,6 +1716,9 @@ fn validate_artifact_manifest(item: &Item) -> Result<(), Error> {
         return Err(Error::Capability("unassigned artifact kind".to_owned()));
     }
     let raw_length = as_uint(&record[2], "raw length", MAX_ARTIFACT_RAW_BYTES)?;
+    if kind == "text-baseline-v1" && raw_length > MAX_TEXT_EPOCH_BYTES as u64 {
+        return Err(Error::encoding("text baselines exceed the text-epoch cap"));
+    }
     as_bytes(&record[3], 32, "raw digest")?;
     let chunks = as_array(&record[4], "chunk list")?;
     if chunks.len() > MAX_ARTIFACT_CHUNKS {
@@ -1927,6 +1934,19 @@ pub enum StreamError {
     /// Two different batches claim one `(stream, sequence)`.
     #[error("writer equivocation")]
     Equivocation,
+}
+
+impl StreamError {
+    /// Stable public code for this failure, matching §14.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Equivocation => "writer_equivocation",
+            Self::ContextChanged | Self::Sequence | Self::Previous | Self::Lamport => {
+                "invalid_encoding"
+            }
+        }
+    }
 }
 
 fn same_stream(left: &BatchBody, right: &BatchBody) -> bool {
