@@ -3,19 +3,28 @@ all-features = true
 
 [advisories]
 db-urls = ["https://github.com/RustSec/advisory-db"]
-# Research-only comparator dependencies; never waive a known vulnerability.
-# Revisit/remove these maintenance exceptions before adopting either comparator.
+# Loro/Yrs ignores are research-only comparators. Never waive a known vulnerability.
+# RUSTSEC-2026-0249 is different: smartstring is now a production transitive of the
+# pinned diamond-types fork. It is an unmaintained-crate advisory, not a
+# vulnerability. Acceptable for v1 because the fork uses it only as a string
+# type, no vulnerability is ignored, and replacing it would fork jumprope/DT.
+# Exit: drop this ignore when the fork no longer pulls smartstring, or when the
+# advisory is updated to report a vulnerability or is withdrawn.
 ignore = [
     { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0247", reason = "bitmaps is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0248", reason = "im is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0251", reason = "sized-chunks is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0215", reason = "smallstr is an unmaintained transitive of dev-only Yrs comparison" },
-    { id = "RUSTSEC-2026-0249", reason = "smartstring is an unmaintained transitive of the dev-only pinned diamond-types comparison" },
+    { id = "RUSTSEC-2026-0249", reason = "unmaintained advisory only, not a vulnerability waiver; v1 accepts it as a string type inside the pinned DT fork; drop when that fork no longer pulls smartstring or the advisory changes" },
 ]
 
 [licenses]
-allow = ["Apache-2.0", "MIT", "Unicode-3.0", "Zlib"]
+# BSD-3-Clause is required only by the Ed25519 binding selected in ADR-01:
+# ed25519-dalek 3.0.0, curve25519-dalek 5.0.0 and subtle are BSD-3-Clause.
+# It is a permissive OSI license, Apache-2.0-compatible, and carries a
+# notice-reproduction obligation recorded in THIRD_PARTY_NOTICES.md.
+allow = ["Apache-2.0", "BSD-3-Clause", "MIT", "Unicode-3.0", "Zlib"]
 confidence-threshold = 0.93
 include-dev = true
 
@@ -55,11 +64,19 @@ allow = ["MPL-2.0"]
 multiple-versions = "deny"
 wildcards = "deny"
 # Current Automerge's tracing macros require syn 2; current serde/thiserror use 3.
-skip = [{ name = "syn", version = "=2.0.119" }]
+# diamond-types' jumprope still requires rand 0.8 / rand_core 0.6 / getrandom 0.2.
+# Those versions were already in the lock through the dev pin. Promoting DT makes
+# them visible on the normal graph; unifying them means forking jumprope.
+skip = [
+    { name = "syn", version = "=2.0.119" },
+    { name = "rand", version = "=0.8.8" },
+    { name = "rand_core", version = "=0.6.4" },
+    { name = "getrandom", version = "=0.2.17" },
+]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Only the reviewed, full-revision-pinned dev comparator (and same-source rle).
-allow-git = ["https://github.com/josephg/diamond-types"]
+# Pinned puyu-tech fork of diamond-types, including same-source rle. Not upstream.
+allow-git = ["https://github.com/puyu-tech/diamond-types"]

@@ -1,7 +1,13 @@
 # ADR-01 proposal: long-term native text binding
 
 **Status: Accepted 2026-10-26 — DT selected with the small maintained patch
-set; I02 closed; I03 not started; no native/PayuDB format frozen.**
+set; I02 closed. Amended 2026-10-27 by
+[amendment 1](#amendment-1-2026-10-27-engine-bound-canonical-profile-for-diamond-types)
+for I03 T1: the engine-bound profile is frozen as a specification in
+[docs/spec/canonical-profile-v1.md](../spec/canonical-profile-v1.md). I03 closed
+2026-10-28: the codec exists and the production binding is the pinned fork in
+[the closure record](../I03-closure.md). No storage format is implemented or
+released, and no native encoding is canonicalized.**
 The maintainer prioritizes one long-term engine choice before format freeze,
 not the easiest initial implementation followed by a planned engine migration.
 The earlier initial-AM recommendation remains on hold. A separate reviewed
@@ -253,8 +259,81 @@ It does not change merge rules or the native format, and it fixes the tested
 counterexamples in a separate harness. The old unmodified-pin characterization
 results remain valid.
 
-**I03 has not started.** The maintainer explicitly deferred it; starting I03
-requires an explicit go-ahead. Exact syntax/widths/versions and promotion of
-the patch set into the production binding remain I03 work. No end-to-end
+**As of this 2026-10-26 decision, I03 had not started.** The maintainer had
+deferred it. That deferral was later lifted; I03 closed on 2026-10-28. No end-to-end
 performance, hostile-input security, upstream acceptance or distribution
 guarantee follows from the prototype or this decision.
+
+## Amendment 1 (2026-10-27): engine-bound canonical profile for diamond-types
+
+**Scope: I03 T1 only.** The maintainer authorized starting I03 with a restricted
+scope — this amendment plus the frozen specification — and confirmed the
+promotion route for later T3: a pinned fork revision with recorded provenance
+(the plan's default), not a pending upstream PR. T2–T6 and the audit phase remain
+unauthorized. This amendment changes no Rust source, dependency, lockfile or
+workflow.
+
+The blueprint still names Automerge in the profile vocabulary (`am-text-v1`,
+`puyudb/am-seed-actor/v1`, `puyudb/am-actor/v1`, §5.1/§5.4/§22.1/§22.2). DT is
+selected, so four engine-bound choices are decided here and frozen in the
+[canonical profile specification](../spec/canonical-profile-v1.md):
+
+1. **Frozen kind and profile tag.** The v1 native text kind/profile is
+   `dt-text-v1`, bound to DT revision
+   `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` (dialect `DMNDTYPS` protocol
+   version 0, no LZ4) plus the reviewed patch set as the production binding.
+   Any other revision, dialect or feature set is a different profile string and
+   needs its own fixtures.
+2. **Engine-bound seed and writer namespaces.** `puyudb/dt-seed-actor/v1` and
+   `puyudb/dt-actor/v1` replace the `am-*` drafts, and the §22.2 ownership rules
+   are unchanged: a seed is an immutable epoch-owned baseline dependency, never
+   owned by the first editing batch, and non-seed native changes must use the
+   enclosing writer's derived actor. The mechanism is engine-bound because DT
+   interns actors as **names**, not byte actors: DT agent names are strings under
+   50 UTF-8 bytes, its numeric `AgentId` is replica-local interning, and a full
+   256-bit binding therefore has to fit a textual form. The blueprint's leading
+   `0x00`/`0x01` namespace tag is realized as the leading `s:`/`w:` name tag over
+   the same domain-separated digests, so seed and writer namespaces still cannot
+   overlap.
+3. **Blueprint references superseded for v1.** Blueprint `am-*` names describe
+   the conformance reference only. The specification is normative for v1 and says
+   so; a blueprint rev 0.3 note recording this is applied by the maintainer,
+   because the blueprint lives outside this repository.
+4. **Re-frozen lazy-seed profile.** The §5.4 lazy-seed stop/go gate was written
+   for AM. For DT it is re-frozen on the accepted empty-seed contract: the seed
+   is an epoch-owned native artifact whose payload binds `epoch32`; an empty
+   baseline yields a **zero-length** native payload with no sentinel insert and
+   no hidden eager seeding, and the artifact stays epoch-specific because its
+   payload binds the epoch rather than only the bytes. Golden cross-process seed
+   fixtures and an independent validator are owed by T2, not asserted here.
+   I02's cross-process DT seed repetition is the starting evidence, not a frozen
+   profile.
+
+Also decided with this amendment, without changing an accepted direction:
+
+- Native artifact identity is over the exact bytes a producer exported. DT's
+  native encoder leaks local import order into agent-name serialization, so a
+  replica must never re-encode a history and claim the producer's `ArtifactId`,
+  and admission inspects logical content against the declared cut instead of
+  reconstructing bytes across replicas.
+- The accepted identity-bound cursor policy stands, including its tested
+  post-deletion gap limitation. No replacement merger, actor-order override or
+  tombstone workaround is authorized.
+
+Still not claimed: a canonical native encoding, a hostile-input-hardened decoder,
+upstream acceptance of the patch set, production authentication, storage,
+replication, or any end-to-end performance guarantee. AM remains the conformance
+reference; Loro remains a documented alternative with unimplemented offline
+peer-allocation and empty-seed amendments. Promoting the patch set into the
+production dependency graph is T3 work and is not part of this amendment.
+
+**T3b pin (2026-10-28).** The production dependency is the puyu-tech fork
+`puyudb/dt-text-v1` at `0d5008bc89b6a2470474711fabe3c8f8b3136e9e`, which is
+upstream `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` plus the two reviewed patches
+and no other source change.
+
+**I03 closure (2026-10-28).** I03 is closed. The pin, the dependency audit, and
+hosted CI on `5266c65` are in [the closure record](../I03-closure.md). Closure
+does not change the frozen profile, claim a canonical native encoding, or
+authorize I04. It supersedes this amendment's statement that T2–T6 were still
+unauthorized; that sentence described only the amendment's own scope.
