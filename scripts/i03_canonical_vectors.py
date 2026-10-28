@@ -834,6 +834,8 @@ def validate_artifact_manifest(item) -> None:
         _bytes(chunk, 32, "chunk id")
     expected_chunks = -(-raw_length // CHUNK_RAW_BYTES) if raw_length else 0
     if len(chunks) != expected_chunks:
+        # The code names a digest disagreement, but only the chunk count is
+        # checked here; raw digest verification happens at hydration.
         raise ProfileError("hash_mismatch",
                            "declared length disagrees with the chunk list")
 
