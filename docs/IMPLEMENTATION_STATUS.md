@@ -212,7 +212,11 @@ T5/T6 are open. T1/T2 changed documentation and Python fixtures only.
     manifest acknowledged, equivocation scope and its stable code mapping stated
     (plus `StreamError::code`), the implied batch-body cap annotated, and
     operation encoding no longer masks an epoch-descriptor error as
-    `invalid_encoding`.
+    `invalid_encoding`. The first pass fixed only the create operation (tag 0);
+    the epoch-selection operation (tag 3) still mapped the descriptor error to
+    `canon::Error::Truncated`. That line is now the same `?` as tag 0, and a unit
+    test encodes a non-`dt-text-v1` profile through both operations and requires
+    `unsupported_capability`.
 
 - A **fresh-context security audit** then attacked the codec with constructed
   inputs, in debug and release. Three findings, all fixed:
@@ -236,8 +240,8 @@ Nothing is measured: this is a codec and its conformance corpus, not durability,
 storage, replication or performance evidence. The DT re-encoding and deleted-gap
 cursor limitations remain accepted, unfixed findings.
 
-Local verification of this slice on macOS ARM64 with Rust 1.99.1: **136 workspace
-tests pass** (104 native research, 12 canonical-profile integration, 14 core unit,
+Local verification of this slice on macOS ARM64 with Rust 1.99.1: **137 workspace
+tests pass** (104 native research, 12 canonical-profile integration, 15 core unit,
 6 CLI), 44 Python tests pass, and `cargo fmt --check`, clippy `-D warnings`, the
 frozen all-target build, the no-default-features and all-features test runs,
 warning-denied rustdoc, `cargo fetch --locked` and `cargo-deny --locked check`
@@ -254,8 +258,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-**136 workspace tests pass:** 104 native research tests, 12 canonical-profile
-integration tests, 14 core unit tests and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
+**137 workspace tests pass:** 104 native research tests, 12 canonical-profile
+integration tests, 15 core unit tests and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
 have passed explicitly in release mode: the mixed-history delivery gate and
 the all-candidate paste/delete/restore workload fixture. Allocator calibration
 also passes as a separate example test.

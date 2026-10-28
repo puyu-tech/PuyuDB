@@ -1203,7 +1203,7 @@ impl Operation {
                 canon::write_array_header(out, 3)?;
                 canon::write_uint(out, 3)?;
                 push_bytes(out, file.as_bytes())?;
-                out.extend_from_slice(&epoch.encode().map_err(|_| canon::Error::Truncated)?);
+                out.extend_from_slice(&epoch.encode()?);
                 Ok(())
             }
             Self::Opaque {
@@ -1901,6 +1901,9 @@ pub fn validate_record(record: Record, body: &[u8]) -> Result<(), Error> {
 
 /// Validate a batch signature record against its declared preimage.
 ///
+/// This does not see the batch body, so it cannot check that the signature key
+/// equals the body's writer key. Admission must call [`verify_batch`].
+///
 /// # Errors
 /// Returns [`Error::Signature`] when verification fails.
 pub fn validate_batch_signature_record(body: &[u8], preimage: &[u8]) -> Result<(), Error> {
@@ -2261,6 +2264,38 @@ mod tests {
         assert_eq!(
             validate_stream_step(&lamport_only, &next),
             Err(StreamError::Lamport)
+        );
+    }
+
+    #[test]
+    fn epoch_operation_keeps_the_descriptor_error_code() {
+        let epoch = EpochDescriptor {
+            file: FileId::from_array([1; 16]),
+            nonce: GenerationNonce::from_array([2; 16]),
+            kind: EpochKind::Text,
+            baseline: ArtifactId::from_array([3; 32]),
+            seed_profile: Some("am-text-v1".to_owned()),
+            git_oid: None,
+        };
+        let file = FileId::from_array([1; 16]);
+        let select = Operation::Epoch {
+            file,
+            epoch: epoch.clone(),
+        };
+        assert_eq!(
+            select.encode().expect_err("wrong profile").code(),
+            "unsupported_capability"
+        );
+        let create = Operation::Create {
+            repository: RepositoryId::from_array([4; 16]),
+            file,
+            path: Path::new("a.md").expect("path"),
+            mode: ModeTag::Regular,
+            epoch,
+        };
+        assert_eq!(
+            create.encode().expect_err("wrong profile").code(),
+            "unsupported_capability"
         );
     }
 }
