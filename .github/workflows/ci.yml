@@ -25,7 +25,7 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: python3 -m unittest discover -s scripts -p 'test_i02*.py'
+      - run: python3 -m unittest discover -s scripts -p 'test_i0*.py'
 
   test:
     name: Test Rust ${{ matrix.rust }} on ${{ matrix.os }}
