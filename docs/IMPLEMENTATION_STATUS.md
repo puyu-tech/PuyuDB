@@ -1,7 +1,7 @@
 # Implementation status
 
-**Completed issue IDs: I01, I02. Current issue: I03, T1–T4 and T3b pinned; T6
-not done, so I03 is not closed. I02 closed on
+**Completed issue IDs: I01, I02, I03. I03 closed 2026-10-28; evidence is
+[the closure record](I03-closure.md). I02 closed on
 2026-10-26: the maintainer definitively selected diamond-types (DT) with the
 small reviewed native patch set, on the completed common baseline, Loro/DT-fit
 experiments, native-interface spike and three-platform final comparison. On
@@ -13,11 +13,14 @@ There is still no storage, durable publication, protocol, daemon or CLI surface,
 no native encoding is canonicalized. T3b pins diamond-types to the puyu-tech
 fork `puyudb/dt-text-v1` at `0d5008bc89b6a2470474711fabe3c8f8b3136e9e`
 (upstream `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` plus the two reviewed
-patches). That pin is not I03 closure.**
-Work is maintained on `i03-identity-batch-profile`. Local checkpoint commits
-record reviewed progress; they do not accept a native format or constitute a
-release. No Git merge, push, publication, deployment, or GitHub
-issue creation was performed. IDs below are implementation-plan IDs.
+patches). Closure does not add storage, a protocol, or a canonical native
+encoding.**
+Work is maintained on `i03-identity-batch-profile`. Commit `5266c65` was pushed
+to that branch. [PR #1](https://github.com/puyu-tech/PuyuDB/pull/1) is open and
+unmerged. Local checkpoint commits record reviewed progress; they do not accept
+a native format or constitute a release. No merge to `main`, publication,
+deployment, or GitHub issue creation was performed. IDs below are
+implementation-plan IDs.
 
 ## I01 closure
 
@@ -441,9 +444,13 @@ with unresolved offline peer allocation/collisions; AM remains the conformance
 reference, not an automatic fallback choice. An unpublished upstream pin is a
 risk to resolve (patch rebase/notice obligations), not a rejected choice. No
 transparent engine migration is promised.
-**I03 is open with T1–T4 and T3b pinned.** What remains is T6 closure docs.
-Hosted CI was green on `72d7ed7`; this pin is a later commit and is not claimed
-as a hosted run until that run exists. Independent native Linux must be
+**I03 is closed.** The dependency/provenance audit and hosted CI on pin commit
+`5266c65` are recorded in [the closure record](I03-closure.md). Both the push
+run `40783464094` and the pull_request run `40783471199` completed with every
+job successful. The closure commit itself is later and its hosted CI is not
+claimed. Accepted v1 limits, including the non-canonical native encoding, the
+deleted-gap cursor, opaque relation tags, and the unmaintained `smartstring`
+advisory, are in that record. Independent native Linux must be
 revisited when available and before Linux production support/performance
 claims/I36. Remote tests used the maintainer's authorized existing
 Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
