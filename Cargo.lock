@@ -392,7 +392,7 @@ dependencies = [
 [[package]]
 name = "diamond-types"
 version = "2.0.0"
-source = "git+https://github.com/josephg/diamond-types?rev=89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922#89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922"
+source = "git+https://github.com/puyu-tech/diamond-types?rev=0d5008bc89b6a2470474711fabe3c8f8b3136e9e#0d5008bc89b6a2470474711fabe3c8f8b3136e9e"
 dependencies = [
  "bumpalo",
  "crc",
@@ -1513,7 +1513,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "rle"
 version = "0.2.0"
-source = "git+https://github.com/josephg/diamond-types?rev=89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922#89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922"
+source = "git+https://github.com/puyu-tech/diamond-types?rev=0d5008bc89b6a2470474711fabe3c8f8b3136e9e#0d5008bc89b6a2470474711fabe3c8f8b3136e9e"
 dependencies = [
  "smallvec 2.0.0-beta.3",
 ]

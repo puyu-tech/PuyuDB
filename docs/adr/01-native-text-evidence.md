@@ -326,3 +326,8 @@ replication, or any end-to-end performance guarantee. AM remains the conformance
 reference; Loro remains a documented alternative with unimplemented offline
 peer-allocation and empty-seed amendments. Promoting the patch set into the
 production dependency graph is T3 work and is not part of this amendment.
+
+**T3b pin (2026-10-27).** The production dependency is the puyu-tech fork
+`puyudb/dt-text-v1` at `0d5008bc89b6a2470474711fabe3c8f8b3136e9e`, which is
+upstream `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` plus the two reviewed patches
+and no other source change. I03 is not closed by that pin.

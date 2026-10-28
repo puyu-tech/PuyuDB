@@ -11,7 +11,7 @@ ignore = [
     { id = "RUSTSEC-2026-0248", reason = "im is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0251", reason = "sized-chunks is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0215", reason = "smallstr is an unmaintained transitive of dev-only Yrs comparison" },
-    { id = "RUSTSEC-2026-0249", reason = "smartstring is an unmaintained transitive of the dev-only pinned diamond-types comparison" },
+    { id = "RUSTSEC-2026-0249", reason = "smartstring is an unmaintained transitive of the pinned diamond-types fork; not a vulnerability waiver" },
 ]
 
 [licenses]
@@ -59,11 +59,19 @@ allow = ["MPL-2.0"]
 multiple-versions = "deny"
 wildcards = "deny"
 # Current Automerge's tracing macros require syn 2; current serde/thiserror use 3.
-skip = [{ name = "syn", version = "=2.0.119" }]
+# diamond-types' jumprope still requires rand 0.8 / rand_core 0.6 / getrandom 0.2.
+# Those versions were already in the lock through the dev pin. Promoting DT makes
+# them visible on the normal graph; unifying them means forking jumprope.
+skip = [
+    { name = "syn", version = "=2.0.119" },
+    { name = "rand", version = "=0.8.8" },
+    { name = "rand_core", version = "=0.6.4" },
+    { name = "getrandom", version = "=0.2.17" },
+]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Only the reviewed, full-revision-pinned dev comparator (and same-source rle).
-allow-git = ["https://github.com/josephg/diamond-types"]
+# Pinned puyu-tech fork of diamond-types, including same-source rle. Not upstream.
+allow-git = ["https://github.com/puyu-tech/diamond-types"]
