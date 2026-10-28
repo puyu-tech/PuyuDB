@@ -3,8 +3,8 @@
 ## Locked application graph
 
 `Cargo.lock` is the source of exact registry versions and checksums. Released direct
-pins were checked against latest stable versions during I02; the explicitly
-authorized dev-only diamond-types exception uses a full upstream Git revision.
+pins were checked against latest stable versions during I02. diamond-types is
+pinned to an exact revision of the puyu-tech fork, not a moving branch.
 Rust 1.99.1 is the current compiler/floor. Exact pins make selections reproducible;
 they do not mean Cargo fetches moving latest versions on every build.
 
@@ -40,11 +40,11 @@ dev-only comparison/conformance dependencies. See
 | [proptest](https://crates.io/crates/proptest/1.12.0) | 1.12.0 | Dev only; deterministic generated native histories | MIT OR Apache-2.0 | 1.88 |
 | [yrs](https://crates.io/crates/yrs/0.28.0) | 0.28.0 | Dev only; challenger trace, not selected | MIT | Undeclared |
 | [loro](https://crates.io/crates/loro/1.17.1) | 1.17.1 | Dev only; challenger trace, not selected 2026-10-26 | MIT | Undeclared |
-| [diamond-types upstream](https://github.com/josephg/diamond-types/tree/89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922) | Git manifest 2.0.0, not a published stable release | Dev only; **selected engine** (I02 closed 2026-10-26); no-LZ4 comparison, exact revision `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` | ISC | 1.96.0 |
-| rle | Git manifest 0.2.0, same revision | DT transitive path dependency | ISC OR Apache-2.0 | See upstream manifest |
+| [diamond-types fork](https://github.com/puyu-tech/diamond-types/tree/0d5008bc89b6a2470474711fabe3c8f8b3136e9e) | Git manifest 2.0.0, not a published stable release | Direct in `puyudb-crdt`; selected engine; no-LZ4; fork `puyudb/dt-text-v1` @ `0d5008bc89b6a2470474711fabe3c8f8b3136e9e` | ISC | 1.96.0 |
+| rle | Git manifest 0.2.0, same fork revision | DT transitive path dependency | ISC OR Apache-2.0 | See upstream manifest |
 | [rand](https://crates.io/crates/rand/0.10.3) | 0.10.3 | Dev only; pinned seeded schedule generation | MIT OR Apache-2.0 | 1.85 |
 | [stats_alloc](https://crates.io/crates/stats_alloc/0.1.10) | 0.1.10 | Dev only; measurement allocator and calibration | MIT | Undeclared |
-| [smartstring](https://crates.io/crates/smartstring/1.0.1) | 1.0.1 | DT dev transitive; scoped license/maintenance exception | MPL-2.0+ | 1.57 |
+| [smartstring](https://crates.io/crates/smartstring/1.0.1) | 1.0.1 | DT fork transitive; scoped license/maintenance exception | MPL-2.0+ | 1.57 |
 | [unicode-ident](https://crates.io/crates/unicode-ident/1.0.27) | 1.0.27 | Build/proc-macro transitive; Unicode data license required as well | (MIT OR Apache-2.0) AND Unicode-3.0 | 1.71 |
 | [zlib-rs](https://crates.io/crates/zlib-rs/0.6.8) | 0.6.8 | Automerge compression transitive | Zlib | 1.75 |
 | [bitmaps](https://crates.io/crates/bitmaps/2.1.0) | 2.1.0 | Loro dev transitive; scoped license and maintenance exception | MPL-2.0+ | Undeclared |
@@ -52,6 +52,12 @@ dev-only comparison/conformance dependencies. See
 | [sized-chunks](https://crates.io/crates/sized-chunks/0.6.5) | 0.6.5 | Loro dev transitive; scoped license and maintenance exception | MPL-2.0+ | Undeclared |
 | [xxhash-rust](https://crates.io/crates/xxhash-rust/0.8.19) | 0.8.19 | Loro dev transitive; Boost license exception | BSL-1.0 | Undeclared |
 | [lz4_flex](https://crates.io/crates/lz4_flex/0.11.6) | 0.11.6 | Loro dev transitive; patched resolution, not 0.11.5 | MIT | 1.81 |
+
+Promoting the fork onto the normal `puyudb-crdt` graph makes `rand 0.8.8`,
+`rand_core 0.6.4` and `getrandom 0.2.17` duplicate the newer versions already
+pulled by Automerge and the workspace `rand 0.10.3` pin. Those older versions
+come from diamond-types' `jumprope` dependency and were already locked. `deny.toml`
+skips them rather than forking `jumprope`. They are not vulnerability waivers.
 
 The only BSD-3-Clause components in the graph are the Ed25519 binding and its
 arithmetic/constant-time transitives listed above; the license is allowed

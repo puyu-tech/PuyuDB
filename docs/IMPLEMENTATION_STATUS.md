@@ -1,7 +1,7 @@
 # Implementation status
 
-**Completed issue IDs: I01, I02. Current issue: I03, T1/T2/T4 complete and T3
-half done (crypto dependency only; the DT production pin is open). I02 closed on
+**Completed issue IDs: I01, I02. Current issue: I03, T1–T4 and T3b pinned; T6
+not done, so I03 is not closed. I02 closed on
 2026-10-26: the maintainer definitively selected diamond-types (DT) with the
 small reviewed native patch set, on the completed common baseline, Loro/DT-fit
 experiments, native-interface spike and three-platform final comparison. On
@@ -10,8 +10,10 @@ confirmed the later promotion route as a pinned fork revision with recorded
 provenance. The profile is frozen as a specification plus fixtures, and
 `puyudb-core` now implements the codec that reproduces them byte-for-byte.
 There is still no storage, durable publication, protocol, daemon or CLI surface,
-no native encoding is canonicalized, and the DT patch set is still dev-only
-because a pinned fork needs a fork revision to pin.**
+no native encoding is canonicalized. T3b pins diamond-types to the puyu-tech
+fork `puyudb/dt-text-v1` at `0d5008bc89b6a2470474711fabe3c8f8b3136e9e`
+(upstream `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` plus the two reviewed
+patches). That pin is not I03 closure.**
 Work is maintained on `i03-identity-batch-profile`. Local checkpoint commits
 record reviewed progress; they do not accept a native format or constitute a
 release. No Git merge, push, publication, deployment, or GitHub
@@ -34,7 +36,7 @@ now 1.99.1**, the verified latest stable release; older compiler support is drop
 | Package | Current behavior |
 | --- | --- |
 | `puyudb-core` | Frozen identity/profile codec: typed IDs, canonical CBOR subset, records and digests, strict validation, path rules, DT actor/seed derivations, Ed25519 preimages, writer-stream checks; no database, storage or publication |
-| `puyudb-crdt` | Experimental AM inspection seam, shared candidate workload adapters and research tests; no accepted format or stable SDK |
+| `puyudb-crdt` | Pinned patched diamond-types fork plus experimental AM/Loro/Yrs comparison code; no accepted native format or stable SDK |
 | `puyudb-local` | Documented local boundary only; no Git/filesystem operations |
 | `puyu-cli` | `puyu` help/version and `puyu db` help only |
 
@@ -167,8 +169,17 @@ T5/T6 are open. T1/T2 changed documentation and Python fixtures only.
   the graph. Its BSD-3-Clause license is an explicit global `deny.toml` allow with
   the notice-reproduction obligation recorded in `THIRD_PARTY_NOTICES.md`; the
   ledger now lists eight affected rows (227 registry versions, no duplicates).
-  **The reviewed DT patch set is still not promoted**: the confirmed pinned-fork
-  route needs a fork revision to pin, and no dependency moved out of dev-only.
+  **T3b promotes that patch set.** `puyudb-crdt` depends on
+  `https://github.com/puyu-tech/diamond-types` revision
+  `0d5008bc89b6a2470474711fabe3c8f8b3136e9e`, default features off. The fork
+  branch `puyudb/dt-text-v1` is upstream `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922`
+  plus `anchors.patch` commit `41b89d3bc61ac8af63f18bff5b222c664dbc97b6` (blob
+  `8f8545480978e54a281bf863deaa343a6fd56b37`) and `strict.patch` commit
+  `0d5008bc89b6a2470474711fabe3c8f8b3136e9e` (blob
+  `bf6611ffc1162d2ca42430bdb6044336193d6f20`). No other upstream source changed.
+  Local fmt, clippy, the workspace suite, 44 Python tests and cargo-deny passed
+  on this pin. Hosted CI for the pin commit is not claimed until that run exists.
+  This is not I03 closure.
 - T4 implements the codec: `canon` (strict CBOR subset with minimal-length and
   no-map/no-tag/no-float rules), `identity` (typed IDs and strict presentation
   parsing), and `profile` (records, domain-separated digests, strict validation
@@ -430,12 +441,9 @@ with unresolved offline peer allocation/collisions; AM remains the conformance
 reference, not an automatic fallback choice. An unpublished upstream pin is a
 risk to resolve (patch rebase/notice obligations), not a rejected choice. No
 transparent engine migration is promised.
-**I03 is open with T1, T2 and T4 done and T3 half done.** What remains: promote
-the reviewed DT patch set into a pinned production binding with lock/deny/notice
-updates (T3), which needs the fork revision the maintainer's route implies; run
-the full CI matrix (T5) — the Rust↔golden-vector cross-tests already run inside
-the workspace suite, but hosted CI has not executed this slice; closure docs
-(T6); and the dependency/provenance audit, which waits for T3. Independent native Linux must be
+**I03 is open with T1–T4 and T3b pinned.** What remains is T6 closure docs.
+Hosted CI was green on `72d7ed7`; this pin is a later commit and is not claimed
+as a hosted run until that run exists. Independent native Linux must be
 revisited when available and before Linux production support/performance
 claims/I36. Remote tests used the maintainer's authorized existing
 Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
