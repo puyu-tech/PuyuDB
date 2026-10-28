@@ -166,7 +166,10 @@ BatchSignatureV1 = [1, public_key: bytes32, signature: bytes64]
 The Ed25519 signature is over `"puyudb/signature/v1" || 0x00 || space16 || batch32`
 (§2.1) and is verified with strict verification (reject low-order keys and
 non-canonical `S`). A v1 batch carries exactly one signature, whose `public_key`
-must equal the body's `public_key`. Multiple signers and cosignatures are a
+must equal the body's `public_key`. The binding is enforced by one function,
+`verify_batch`, which compares the two keys **before** verifying the signature;
+verifying the signature and the body independently and then trusting the body's
+key would let one signer attest a batch that names a different writer. Multiple signers and cosignatures are a
 later profile, not an implicit extension of this one.
 
 The preimage deliberately binds only the space and the body digest: branch,
@@ -183,6 +186,15 @@ A receiver validates in this order and stops at the first failure:
 4. Signature verification.
 5. Writer-stream and dependency checks (§13) against the declared parent cut.
 6. Native artifact and metadata scope inspection (§12.5, §7) against that cut.
+
+`validate_record` is not admission. Before a batch may be applied, a caller
+must additionally: bound the input buffer before decoding, recompute `BatchId`,
+call `verify_batch` (key equality and strict verification together), check the
+parent closure and minimal frontier, check `lamport` against the actual parent
+lamports, check the `(stream, sequence)` ledger for equivocation, check native
+scope against the declared cut, and track hydration separately from the
+manifest. A missing dependency stays pending; `Stored` implies neither `Applied`
+nor `Hydrated`.
 
 No semantic effect is produced by a batch that fails any step. A missing
 dependency is a pending/Want condition (`missing_dependency`), not a permanent
@@ -235,6 +247,10 @@ RawDigest  = SHA256("puyudb/content/v1" || 0x00 || kind_text || 0x00 || raw_payl
   `4,096 × 256 KiB`. The 1 GiB figure is a declared profile constant, not a quota
   system; a deployment may enforce a smaller configured limit downward.
 - `kind` is assigned ASCII, at most 64 bytes (`MAX_KIND_TEXT_BYTES`).
+- A mismatch between `raw_length` and the chunk count is reported as
+  `hash_mismatch`, but that code here means only "the count disagrees"; the raw
+  digest is **not** compared at this stage. Comparing it, and verifying that
+  resident chunks hash to the listed IDs, happens at hydration.
 - Manifest integrity is checked before any payload work: `ArtifactId` must match
   the ID committed by signed history, and it binds kind, length, raw digest and
   every chunk ID. Hydration then verifies each chunk, streams the full
@@ -657,7 +673,9 @@ metadata, publication and durability.
 - A stream is `(public_key, branch, writer_epoch)` and is **branch-specific**.
   Never copy a stream between independently writable devices or forked handles;
   restoring a writable backup allocates a fresh `writer_epoch`.
-- `sequence` starts at 1 and increases by exactly 1 per stream. `previous` is the
+- `sequence` starts at 1 and increases by exactly 1 per stream, with checked
+  arithmetic: a stream whose next sequence would exceed `u64::MAX` is
+  `invalid_encoding`, not a wrap back to 0. `previous` is the
   stream's preceding batch and must be present in the parent closure (not
   necessarily as a direct parent). A batch with `previous = null` is the first of
   its stream and has `sequence = 1`; any later batch has `sequence >= 2`.
@@ -666,7 +684,9 @@ metadata, publication and durability.
   non-empty for every fork, every branch start from a captured frontier (§5.3) and
   every writer-epoch restart after a `causal_fork`. Parent-free batches exist only
   for the very first batch of a space.
-- `lamport = 1 + max(parent.lamport)` with checked arithmetic. Therefore a batch
+- `lamport = 1 + max(parent.lamport)` with **checked** arithmetic: a step that
+  would overflow `u64` is `invalid_encoding`, never a wrap and never a panic, in
+  debug and release alike. Therefore a batch
   with no parents has `lamport = 1`, and any batch with parents has
   `lamport >= 2`. Both directions are locally checkable without history and are
   enforced by every decoder. Wall-clock time is optional untrusted display

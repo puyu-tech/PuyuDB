@@ -378,18 +378,26 @@ fn verify_strict(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) ->
 /// # Errors
 /// Returns [`Error::Signature`] when the key or signature is malformed or the
 /// signature does not verify.
-pub fn verify_batch_signature(
-    public_key: &[u8; 32],
-    space: &SpaceId,
-    batch: &BatchId,
+pub fn verify_batch(
+    body: &BatchBody,
+    signature_key: &[u8; 32],
     signature: &[u8; 64],
-) -> Result<(), Error> {
+) -> Result<BatchId, Error> {
+    // §4.2: the signature key must equal the body's writer key. Verifying the
+    // signature and the body separately would let one signer attest a batch that
+    // names a different writer.
+    if signature_key != &body.public_key {
+        return Err(Error::Signature(
+            "signature key does not match the batch body's writer key".to_owned(),
+        ));
+    }
+    let batch = body.id()?;
     if verify_strict(
-        public_key,
-        &batch_signature_preimage(space, batch),
+        signature_key,
+        &batch_signature_preimage(&body.space, &batch),
         signature,
     ) {
-        Ok(())
+        Ok(batch)
     } else {
         Err(Error::Signature(
             "signature does not verify for the batch preimage".to_owned(),
@@ -1729,6 +1737,8 @@ fn validate_artifact_manifest(item: &Item) -> Result<(), Error> {
     }
     let expected = raw_length.div_ceil(CHUNK_RAW_BYTES as u64);
     if chunks.len() as u64 != expected {
+        // Code names a digest disagreement; only the chunk count is checked
+        // here. Raw digest verification happens at hydration, not admission.
         return Err(Error::HashMismatch(
             "declared length disagrees with the chunk list".to_owned(),
         ));
@@ -1966,14 +1976,20 @@ pub fn validate_stream_step(previous: &BatchBody, next: &BatchBody) -> Result<()
     if !same_stream(previous, next) {
         return Err(StreamError::ContextChanged);
     }
-    if next.sequence != previous.sequence + 1 {
+    let Some(expected_sequence) = previous.sequence.checked_add(1) else {
+        return Err(StreamError::Sequence);
+    };
+    if next.sequence != expected_sequence {
         return Err(StreamError::Sequence);
     }
     let previous_id = previous.id().map_err(|_| StreamError::Sequence)?;
     if next.previous != Some(previous_id) {
         return Err(StreamError::Previous);
     }
-    if next.lamport < previous.lamport + 1 {
+    let Some(minimum_lamport) = previous.lamport.checked_add(1) else {
+        return Err(StreamError::Lamport);
+    };
+    if next.lamport < minimum_lamport {
         return Err(StreamError::Lamport);
     }
     Ok(())
@@ -2161,25 +2177,90 @@ mod tests {
     }
 
     #[test]
-    fn signatures_are_strict_and_preimage_bound() {
+    fn signatures_bind_the_body_key_before_verification() {
         let seed = [11u8; 32];
-        let key = public_key(&seed);
-        let (space, _, _) = ids();
-        let batch = BatchId::from_array([12; 32]);
+        let (space, branch, _) = ids();
+        let body = BatchBody {
+            space,
+            branch,
+            public_key: public_key(&seed),
+            writer_epoch: WriterEpoch::from_array([5; 16]),
+            sequence: 1,
+            previous: None,
+            parents: Vec::new(),
+            lamport: 1,
+            native_artifacts: Vec::new(),
+            metadata: ArtifactId::from_array([6; 32]),
+        };
+        let batch = body.id().expect("id");
         let signature = sign_batch(&seed, &space, &batch);
-        assert!(verify_batch_signature(&key, &space, &batch, &signature).is_ok());
-        assert!(
-            verify_batch_signature(&key, &space, &BatchId::from_array([13; 32]), &signature)
-                .is_err()
+        assert_eq!(
+            verify_batch(&body, &body.public_key, &signature).unwrap(),
+            batch
         );
+
         let mut tampered = signature;
         tampered[0] ^= 1;
-        assert!(verify_batch_signature(&key, &space, &batch, &tampered).is_err());
+        assert!(verify_batch(&body, &body.public_key, &tampered).is_err());
+
         let mut non_canonical_s = signature;
         non_canonical_s[32..].copy_from_slice(&[0xff; 32]);
-        assert!(
-            verify_batch_signature(&key, &space, &batch, &non_canonical_s).is_err(),
-            "S at or above the group order must be rejected"
+        assert!(verify_batch(&body, &body.public_key, &non_canonical_s).is_err());
+
+        let other = sign_batch(&[12u8; 32], &space, &batch);
+        let error = verify_batch(&body, &public_key(&[12u8; 32]), &other)
+            .expect_err("signature key must match the body's writer key");
+        assert_eq!(error.code(), "invalid_signature");
+    }
+
+    #[test]
+    fn stream_steps_reject_overflow_instead_of_wrapping() {
+        let (space, branch, _) = ids();
+        let previous = BatchBody {
+            space,
+            branch,
+            public_key: [4; 32],
+            writer_epoch: WriterEpoch::from_array([5; 16]),
+            sequence: u64::MAX,
+            previous: None,
+            parents: Vec::new(),
+            lamport: u64::MAX,
+            native_artifacts: Vec::new(),
+            metadata: ArtifactId::from_array([6; 32]),
+        };
+        let mut next = previous.clone();
+        next.sequence = 0;
+        next.previous = Some(previous.id().expect("id"));
+        next.parents = vec![previous.id().expect("id")];
+        assert_eq!(
+            validate_stream_step(&previous, &next),
+            Err(StreamError::Sequence)
+        );
+
+        let mut sequence_only = previous.clone();
+        sequence_only.sequence = u64::MAX - 1;
+        sequence_only.lamport = 1;
+        let mut wrapped = sequence_only.clone();
+        wrapped.sequence = 0;
+        wrapped.lamport = 2;
+        wrapped.previous = Some(sequence_only.id().expect("id"));
+        wrapped.parents = vec![sequence_only.id().expect("id")];
+        assert_eq!(
+            validate_stream_step(&sequence_only, &wrapped),
+            Err(StreamError::Sequence)
+        );
+
+        let mut lamport_only = previous.clone();
+        lamport_only.sequence = 1;
+        lamport_only.lamport = u64::MAX;
+        let mut next = lamport_only.clone();
+        next.sequence = 2;
+        next.lamport = 2;
+        next.previous = Some(lamport_only.id().expect("id"));
+        next.parents = vec![lamport_only.id().expect("id")];
+        assert_eq!(
+            validate_stream_step(&lamport_only, &next),
+            Err(StreamError::Lamport)
         );
     }
 }

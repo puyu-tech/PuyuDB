@@ -214,12 +214,30 @@ T5/T6 are open. T1/T2 changed documentation and Python fixtures only.
     operation encoding no longer masks an epoch-descriptor error as
     `invalid_encoding`.
 
+- A **fresh-context security audit** then attacked the codec with constructed
+  inputs, in debug and release. Three findings, all fixed:
+  - **S01 (blocker):** `validate_stream_step` used `previous.sequence + 1` and
+    `previous.lamport + 1`, which panics in debug and wraps in release when the
+    value is `u64::MAX`. Both are now `checked_add`, and a unit test covers the
+    overflow in either build.
+  - **S02:** `validate_record` and the signature verifier were independent, so a
+    body naming key B with a valid signature from key A passed both checks.
+    §4.2 requires the keys to be equal; `verify_batch` now compares them before
+    verifying, and the spec names that function as the one that enforces it.
+  - **S03:** a chunk-count mismatch was reported as `hash_mismatch` although no
+    digest is compared there. The code is unchanged (it is the assigned code),
+    but §6.1 now says it means only "the count disagrees" and that digest
+    verification happens at hydration.
+  - The audit's caller-obligation list (what I04 must add before a validated
+    batch is admissible) is now written into §4.3, so "validated" cannot be read
+    as "safe to apply".
+
 Nothing is measured: this is a codec and its conformance corpus, not durability,
 storage, replication or performance evidence. The DT re-encoding and deleted-gap
 cursor limitations remain accepted, unfixed findings.
 
-Local verification of this slice on macOS ARM64 with Rust 1.99.1: **135 workspace
-tests pass** (104 native research, 12 canonical-profile integration, 13 core unit,
+Local verification of this slice on macOS ARM64 with Rust 1.99.1: **136 workspace
+tests pass** (104 native research, 12 canonical-profile integration, 14 core unit,
 6 CLI), 44 Python tests pass, and `cargo fmt --check`, clippy `-D warnings`, the
 frozen all-target build, the no-default-features and all-features test runs,
 warning-denied rustdoc, `cargo fetch --locked` and `cargo-deny --locked check`
@@ -236,8 +254,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-**135 workspace tests pass:** 104 native research tests, 12 canonical-profile
-integration tests, 13 core unit tests and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
+**136 workspace tests pass:** 104 native research tests, 12 canonical-profile
+integration tests, 14 core unit tests and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
 have passed explicitly in release mode: the mixed-history delivery gate and
 the all-candidate paste/delete/restore workload fixture. Allocator calibration
 also passes as a separate example test.
@@ -413,8 +431,7 @@ the reviewed DT patch set into a pinned production binding with lock/deny/notice
 updates (T3), which needs the fork revision the maintainer's route implies; run
 the full CI matrix (T5) — the Rust↔golden-vector cross-tests already run inside
 the workspace suite, but hosted CI has not executed this slice; closure docs
-(T6); and the security audit and the dependency/provenance audit (the latter only after T3
-is completed). Independent native Linux must be
+(T6); and the dependency/provenance audit, which waits for T3. Independent native Linux must be
 revisited when available and before Linux production support/performance
 claims/I36. Remote tests used the maintainer's authorized existing
 Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
