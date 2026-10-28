@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = [
+    "protocol",
+    "engines/rusqlite",
+    "engines/ffi",
+    "engines/libsql",
+    "engines/redb",
+    "engines/fjall",
+    "engines/heed",
+]
+
+# Isolated from the PuyuDB workspace. libsql-ffi and libsqlite3-sys both export
+# sqlite3 symbols, so the engines are separate packages with one lockfile.

@@ -1,0 +1,11 @@
+[package]
+name = "adr02-ffi"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+adr02-protocol = { path = "../../protocol" }
+libsqlite3-sys = { version = "=0.39.1", features = ["bundled"] }
