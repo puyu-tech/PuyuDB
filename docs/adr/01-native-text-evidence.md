@@ -4,9 +4,10 @@
 set; I02 closed. Amended 2026-10-27 by
 [amendment 1](#amendment-1-2026-10-27-engine-bound-canonical-profile-for-diamond-types)
 for I03 T1: the engine-bound profile is frozen as a specification in
-[docs/spec/canonical-profile-v1.md](../spec/canonical-profile-v1.md). I03 is open
-and only its T1 slice is authorized; nothing is implemented, no binding is
-promoted, and no native/PuyuDB format is implemented or released.**
+[docs/spec/canonical-profile-v1.md](../spec/canonical-profile-v1.md). I03 closed
+2026-10-28: the codec exists and the production binding is the pinned fork in
+[the closure record](../I03-closure.md). No storage format is implemented or
+released, and no native encoding is canonicalized.**
 The maintainer prioritizes one long-term engine choice before format freeze,
 not the easiest initial implementation followed by a planned engine migration.
 The earlier initial-AM recommendation remains on hold. A separate reviewed
@@ -258,9 +259,8 @@ It does not change merge rules or the native format, and it fixes the tested
 counterexamples in a separate harness. The old unmodified-pin characterization
 results remain valid.
 
-**I03 has not started.** The maintainer explicitly deferred it; starting I03
-requires an explicit go-ahead. Exact syntax/widths/versions and promotion of
-the patch set into the production binding remain I03 work. No end-to-end
+**As of this 2026-10-26 decision, I03 had not started.** The maintainer had
+deferred it. That deferral was later lifted; I03 closed on 2026-10-28. No end-to-end
 performance, hostile-input security, upstream acceptance or distribution
 guarantee follows from the prototype or this decision.
 
@@ -327,7 +327,13 @@ reference; Loro remains a documented alternative with unimplemented offline
 peer-allocation and empty-seed amendments. Promoting the patch set into the
 production dependency graph is T3 work and is not part of this amendment.
 
-**T3b pin (2026-10-27).** The production dependency is the puyu-tech fork
+**T3b pin (2026-10-28).** The production dependency is the puyu-tech fork
 `puyudb/dt-text-v1` at `0d5008bc89b6a2470474711fabe3c8f8b3136e9e`, which is
 upstream `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` plus the two reviewed patches
-and no other source change. I03 is not closed by that pin.
+and no other source change.
+
+**I03 closure (2026-10-28).** I03 is closed. The pin, the dependency audit, and
+hosted CI on `5266c65` are in [the closure record](../I03-closure.md). Closure
+does not change the frozen profile, claim a canonical native encoding, or
+authorize I04. It supersedes this amendment's statement that T2–T6 were still
+unauthorized; that sentence described only the amendment's own scope.

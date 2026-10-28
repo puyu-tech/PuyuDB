@@ -3,15 +3,20 @@ all-features = true
 
 [advisories]
 db-urls = ["https://github.com/RustSec/advisory-db"]
-# Research-only comparator dependencies; never waive a known vulnerability.
-# Revisit/remove these maintenance exceptions before adopting either comparator.
+# Loro/Yrs ignores are research-only comparators. Never waive a known vulnerability.
+# RUSTSEC-2026-0249 is different: smartstring is now a production transitive of the
+# pinned diamond-types fork. It is an unmaintained-crate advisory, not a
+# vulnerability. Acceptable for v1 because the fork uses it only as a string
+# type, no vulnerability is ignored, and replacing it would fork jumprope/DT.
+# Exit: drop this ignore when the fork no longer pulls smartstring, or when the
+# advisory is updated to report a vulnerability or is withdrawn.
 ignore = [
     { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0247", reason = "bitmaps is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0248", reason = "im is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0251", reason = "sized-chunks is an unmaintained transitive of dev-only Loro comparison" },
     { id = "RUSTSEC-2026-0215", reason = "smallstr is an unmaintained transitive of dev-only Yrs comparison" },
-    { id = "RUSTSEC-2026-0249", reason = "smartstring is an unmaintained transitive of the pinned diamond-types fork; not a vulnerability waiver" },
+    { id = "RUSTSEC-2026-0249", reason = "unmaintained advisory only, not a vulnerability waiver; v1 accepts it as a string type inside the pinned DT fork; drop when that fork no longer pulls smartstring or the advisory changes" },
 ]
 
 [licenses]
