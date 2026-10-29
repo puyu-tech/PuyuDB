@@ -67,11 +67,14 @@ wildcards = "deny"
 # diamond-types' jumprope still requires rand 0.8 / rand_core 0.6 / getrandom 0.2.
 # Those versions were already in the lock through the dev pin. Promoting DT makes
 # them visible on the normal graph; unifying them means forking jumprope.
+# rusqlite 0.41.1 uses smallvec 1.16.4. The pinned diamond-types fork uses
+# smallvec 2.0.0-beta.3. Unifying them means forking one of those crates.
 skip = [
     { name = "syn", version = "=2.0.119" },
     { name = "rand", version = "=0.8.8" },
     { name = "rand_core", version = "=0.6.4" },
     { name = "getrandom", version = "=0.2.17" },
+    { name = "smallvec", version = "=1.16.4" },
 ]
 
 [sources]

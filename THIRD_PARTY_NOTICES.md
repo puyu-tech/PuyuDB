@@ -50,6 +50,14 @@ binary that contains this fork must include the ISC notice from the upstream
 manifest/README and this fork provenance. `smartstring 1.0.1` remains an MPL-2.0+
 transitive of that pin.
 
+## I04 bundled SQLite
+
+`puyudb-core` links `rusqlite 0.41.1` and its bundled `libsqlite3-sys 0.39.1`.
+Those crates are MIT. The compiled amalgam is SQLite 3.54.1, whose author
+disclaims copyright. No SQLite source is vendored in this repository. A
+distributed binary that contains the amalgam must still carry the SQLite
+notice from that locked package.
+
 ## I02 research dependency obligations
 
 Original PuyuDB files remain Apache-2.0. The dev-only Loro comparison links
