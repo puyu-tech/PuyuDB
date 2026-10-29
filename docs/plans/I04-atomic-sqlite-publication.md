@@ -40,7 +40,9 @@ beside the database.
   `lamport = 1 + max(parent lamport)` enforcement, bounds-checked snapshot
   indexing in `sqlite-fault::reset` paths, strict `created_unix`/no-CR
   manifest parsing, and corruption (not silent rebind) when an existing
-  database has an emptied `format_meta`.
+  database has an emptied `format_meta`. A residual found while verifying that
+  fix (reset under an open file must fail the sync without restoring an empty
+  snapshot) is also fixed, with a regression test in `publication_power.rs`.
 
 ## Scope (I04 tracer bullets, in order)
 

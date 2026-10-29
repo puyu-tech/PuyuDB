@@ -961,6 +961,32 @@ mod tests {
             Store::open(&dir, &SPACE),
             Err(Error::UnsupportedFormat(_))
         ));
+        // missing created_unix
+        fs::write(
+            dir.join("manifest.toml"),
+            "format = \"puyudb-space-manifest/v1\"\nspace = \"space:0101010101010101010101010101010101\"\nstorage = \"sqlite-wal-full-v1\"\nlock = \"owner-file-v1\"\n",
+        )
+        .expect("write");
+        assert!(matches!(Store::open(&dir, &SPACE), Err(Error::Manifest(_))));
+        // CRLF line endings are not accepted
+        fs::write(
+            dir.join("manifest.toml"),
+            "format = \"puyudb-space-manifest/v1\"\r\nspace = \"space:0101010101010101010101010101010101\"\r\nstorage = \"sqlite-wal-full-v1\"\r\nlock = \"owner-file-v1\"\r\ncreated_unix = \"1\"\r\n",
+        )
+        .expect("write");
+        assert!(matches!(Store::open(&dir, &SPACE), Err(Error::Manifest(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn emptied_format_meta_is_corruption_not_rebind() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        drop(store);
+        let conn = Connection::open(dir.join("space.sqlite")).expect("direct open");
+        conn.execute("DELETE FROM format_meta", []).expect("wipe");
+        drop(conn);
+        assert!(matches!(Store::open(&dir, &SPACE), Err(Error::Corrupt(_))));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1025,6 +1051,28 @@ mod tests {
                 peer: 1,
             })
             .expect("second writer");
+        assert!(store.is_published(&first.id().expect("id")).expect("read"));
+        assert!(store.is_published(&other.id().expect("id")).expect("read"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn same_key_on_another_branch_is_a_distinct_stream() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let first = genesis(6);
+        let first_sig = sign(&first);
+        store
+            .publish(&signed(&first, &[], &first_sig))
+            .expect("first branch");
+        // Same public key, writer epoch and sequence, but a different branch:
+        // a distinct stream per spec §13, not an equivocation.
+        let mut other = genesis(7);
+        other.branch = BranchId::from_array([5; 16]);
+        let other_sig = sign(&other);
+        store
+            .publish(&signed(&other, &[], &other_sig))
+            .expect("second branch");
         assert!(store.is_published(&first.id().expect("id")).expect("read"));
         assert!(store.is_published(&other.id().expect("id")).expect("read"));
         let _ = fs::remove_dir_all(&dir);
