@@ -261,15 +261,17 @@ unsafe extern "C" fn x_sync(file: *mut sqlite3_file, flags: c_int) -> c_int {
     let id = unsafe { (*file.cast::<FaultFile>()).id };
     if fail {
         // reset() while a file is open can shrink the vec; fail the sync
-        // without touching the file rather than indexing out of bounds.
+        // without touching the file rather than restoring an empty snapshot
+        // (which would truncate it) or indexing out of bounds.
         let snap = STATE
             .lock()
             .expect("fault state")
             .snapshots
             .get(id)
-            .cloned()
-            .unwrap_or_default();
-        restore(real, &snap);
+            .cloned();
+        if let Some(snap) = snap {
+            restore(real, &snap);
+        }
         return SQLITE_IOERR;
     }
     let rc = unsafe {
