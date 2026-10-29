@@ -113,6 +113,16 @@ impl Store {
     /// Returns [`Error::Busy`] when another process holds the lock, and
     /// [`Error::UnpatchedSqlite`] when the linked SQLite predates 3.51.3.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, Error> {
+        Self::open_vfs(dir, None)
+    }
+
+    /// Open the ledger through a named SQLite VFS.
+    ///
+    /// `vfs` is a fault-injection hook. Production callers use [`Store::open`].
+    ///
+    /// # Errors
+    /// Same as [`Store::open`].
+    pub fn open_vfs(dir: impl AsRef<Path>, vfs: Option<&str>) -> Result<Self, Error> {
         let dir = dir.as_ref();
         fs::create_dir_all(dir)?;
         let owner = OpenOptions::new()
@@ -122,7 +132,12 @@ impl Store {
             .write(true)
             .open(dir.join("owner.lock"))?;
         owner.try_lock().map_err(|_| Error::Busy)?;
-        let conn = Connection::open(dir.join("space.sqlite"))?;
+        let db_path = dir.join("space.sqlite");
+        let conn = if let Some(vfs) = vfs {
+            Connection::open_with_flags_and_vfs(db_path, rusqlite::OpenFlags::default(), vfs)?
+        } else {
+            Connection::open(db_path)?
+        };
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
         if cfg!(target_vendor = "apple") {
