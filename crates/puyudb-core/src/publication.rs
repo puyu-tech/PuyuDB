@@ -144,7 +144,17 @@ impl Store {
             .read(true)
             .write(true)
             .open(dir.join("owner.lock"))?;
-        owner.try_lock().map_err(|_| Error::Busy)?;
+        // A file scanner can hold a byte-range lock on a file it has just seen
+        // created, so a first failure is not proof that another process owns the
+        // database. Retry briefly before reporting it as taken.
+        let mut tries = 0;
+        while owner.try_lock().is_err() {
+            tries += 1;
+            if tries == 4 {
+                return Err(Error::Busy);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
         let db_path = dir.join("space.sqlite");
         let conn = if let Some(vfs) = vfs {
             Connection::open_with_flags_and_vfs(db_path, rusqlite::OpenFlags::default(), vfs)?
