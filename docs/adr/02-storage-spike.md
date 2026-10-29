@@ -415,6 +415,22 @@ fjall    p50=4318000 p99=5435250  file_bytes=89813               du_kib=140
 heed     p50=4417208 p99=8707417  file_bytes=17014784            du_kib=16616
 ```
 
+The same 256 KiB workload with rusqlite `fullfsync=ON` and redb
+`Durability::Immediate`, seed 3, 40 counted publishes, repeated 32-byte
+payload:
+
+```text
+rusqlite fullfsync=on publish_p50_ns=4417792 publish_p99_ns=9116916
+throughput_per_s=89.5634 file_bytes=15826944 wal=0 du_kib=15424
+reopen_verify_ns=495458
+redb Immediate       publish_p50_ns=4466042 publish_p99_ns=6715417
+throughput_per_s=98.5255 file_bytes=31985664 du_kib=31236
+reopen_verify_ns=8769875
+```
+
+At this size the publish latency is still a tie. redb's file is about twice
+as large. Both verifies passed. This is still not a power-loss result.
+
 The fjall size is not a storage win. That payload repeats 32 bytes, and fjall
 compressed it. The same count with an xorshift byte stream (`ADR02_INCOMPRESSIBLE=1`,
 10 counted publishes, 20 warmup, 262144 bytes) stored about the raw size in
