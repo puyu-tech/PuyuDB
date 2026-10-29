@@ -3,8 +3,8 @@
 //! The shim VFS discards bytes that never reached a successful sync, or leaves
 //! a torn write, then refuses further writes. Reopen uses the normal VFS.
 
-use puyudb_core::identity::{BatchId, WriterEpoch};
-use puyudb_core::profile::chunk_id;
+use puyudb_core::identity::{ArtifactId, BatchId, BranchId, SpaceId, WriterEpoch};
+use puyudb_core::profile::{self, BatchBody, chunk_id};
 use puyudb_core::publication::{Publication, Store};
 use sqlite_fault::{self, install, reset};
 
@@ -22,14 +22,49 @@ fn dir(label: &str) -> std::path::PathBuf {
     path
 }
 
-fn publication<'a>(sequence: u64, chunks: &'a [puyudb_core::identity::ChunkId]) -> Publication<'a> {
+fn signed<'a>(
+    body: &'a BatchBody,
+    chunks: &'a [puyudb_core::identity::ChunkId],
+    signature: &'a [u8; 64],
+) -> Publication<'a> {
     Publication {
-        batch_id: BatchId::from_array([sequence as u8; 32]),
-        writer_epoch: WriterEpoch::from_array([9; 16]),
-        sequence,
-        body: b"body",
+        body,
+        signature_key: &body.public_key,
+        signature,
         chunks,
         peer: 1,
+    }
+}
+
+struct Prepared {
+    body: BatchBody,
+    signature: [u8; 64],
+    batch: BatchId,
+}
+
+fn prepared() -> Prepared {
+    let body = genesis();
+    let batch = body.id().expect("id");
+    let signature = profile::sign_batch(&[3; 32], &body.space, &batch);
+    Prepared {
+        body,
+        signature,
+        batch,
+    }
+}
+
+fn genesis() -> BatchBody {
+    BatchBody {
+        space: SpaceId::from_array([1; 16]),
+        branch: BranchId::from_array([2; 16]),
+        public_key: profile::public_key(&[3; 32]),
+        writer_epoch: WriterEpoch::from_array([4; 16]),
+        sequence: 1,
+        previous: None,
+        parents: Vec::new(),
+        lamport: 1,
+        native_artifacts: Vec::new(),
+        metadata: ArtifactId::from_array([6; 32]),
     }
 }
 
@@ -45,16 +80,15 @@ fn fault_vfs_can_publish_when_disarmed() {
     let bytes = b"durable-chunk";
     let id = chunk_id(bytes);
     let store = open_fault(&path);
+    let prepared = prepared();
     store.stage_chunk(id, bytes).expect("stage");
-    store.publish(&publication(1, &[id])).expect("publish");
+    store
+        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .expect("publish");
     drop(store);
     reset();
     let store = Store::open(&path).expect("reopen");
-    assert!(
-        store
-            .is_published(&publication(1, &[id]).batch_id)
-            .expect("read")
-    );
+    assert!(store.is_published(&prepared.batch).expect("read"));
     let _ = std::fs::remove_dir_all(&path);
 }
 
@@ -64,22 +98,22 @@ fn lost_sync_during_publish_leaves_no_publication() {
     let bytes = b"staged-only";
     let id = chunk_id(bytes);
     let store = open_fault(&path);
+    let prepared = prepared();
     store.stage_chunk(id, bytes).expect("stage");
     sqlite_fault::fail_next_sync();
-    let err = store
-        .publish(&publication(1, &[id]))
-        .expect_err("sync lost");
-    drop(err);
+    assert!(
+        store
+            .publish(&signed(&prepared.body, &[id], &prepared.signature))
+            .is_err()
+    );
     drop(store);
     reset();
     let store = Store::open(&path).expect("reopen");
-    assert!(
-        !store
-            .is_published(&publication(1, &[id]).batch_id)
-            .expect("read")
-    );
+    assert!(!store.is_published(&prepared.batch).expect("read"));
     assert_eq!(store.staged_without_publication().expect("staged"), 1);
-    store.publish(&publication(1, &[id])).expect("retry");
+    store
+        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .expect("retry");
     let _ = std::fs::remove_dir_all(&path);
 }
 
@@ -89,18 +123,21 @@ fn torn_write_during_publish_leaves_no_publication() {
     let bytes = b"tear-chunk";
     let id = chunk_id(bytes);
     let store = open_fault(&path);
+    let prepared = prepared();
     store.stage_chunk(id, bytes).expect("stage");
     sqlite_fault::tear_next_write();
-    assert!(store.publish(&publication(1, &[id])).is_err());
+    assert!(
+        store
+            .publish(&signed(&prepared.body, &[id], &prepared.signature))
+            .is_err()
+    );
     drop(store);
     reset();
     let store = Store::open(&path).expect("reopen");
-    assert!(
-        !store
-            .is_published(&publication(1, &[id]).batch_id)
-            .expect("read")
-    );
-    store.publish(&publication(1, &[id])).expect("retry");
+    assert!(!store.is_published(&prepared.batch).expect("read"));
+    store
+        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .expect("retry");
     let _ = std::fs::remove_dir_all(&path);
 }
 
