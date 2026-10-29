@@ -31,12 +31,14 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 CREATE TABLE IF NOT EXISTS batches (
   batch_id BLOB PRIMARY KEY,
+  public_key BLOB NOT NULL,
+  branch BLOB NOT NULL,
   writer_epoch BLOB NOT NULL,
   sequence INTEGER NOT NULL,
   lamport INTEGER NOT NULL,
   body BLOB NOT NULL,
   quarantined INTEGER NOT NULL,
-  UNIQUE(writer_epoch, sequence)
+  UNIQUE(public_key, branch, writer_epoch, sequence)
 );
 CREATE TABLE IF NOT EXISTS batch_chunks (
   batch_id BLOB NOT NULL,
@@ -150,6 +152,7 @@ pub struct Receipt {
 /// One owning writer for a local publication database.
 pub struct Store {
     conn: Connection,
+    space: SpaceId,
     _owner: File,
 }
 
@@ -182,20 +185,6 @@ impl Store {
     ) -> Result<Self, Error> {
         let dir = dir.as_ref();
         fs::create_dir_all(dir)?;
-        let manifest_path = dir.join(MANIFEST_NAME);
-        let manifest_space = if manifest_path.exists() {
-            Some(read_manifest(&manifest_path)?)
-        } else {
-            None
-        };
-        if let Some(existing) = manifest_space
-            && existing != *space
-        {
-            return Err(Error::SpaceMismatch);
-        }
-        if manifest_space.is_none() {
-            write_manifest(&manifest_path, space)?;
-        }
         let owner = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -213,6 +202,22 @@ impl Store {
             }
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
+        // Only the lock owner writes the manifest, so two racing processes can
+        // never leave a manifest that names a space the database does not.
+        let manifest_path = dir.join(MANIFEST_NAME);
+        let manifest_space = if manifest_path.exists() {
+            Some(read_manifest(&manifest_path)?)
+        } else {
+            None
+        };
+        if let Some(existing) = manifest_space
+            && existing != *space
+        {
+            return Err(Error::SpaceMismatch);
+        }
+        if manifest_space.is_none() {
+            write_manifest(&manifest_path, space)?;
+        }
         let db_path = dir.join("space.sqlite");
         let conn = if let Some(vfs) = vfs {
             Connection::open_with_flags_and_vfs(db_path, rusqlite::OpenFlags::default(), vfs)?
@@ -229,14 +234,20 @@ impl Store {
         if !sqlite_has_wal_reset_fix(&version) {
             return Err(Error::UnpatchedSqlite(version));
         }
+        let db_existed: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'batches'",
+            [],
+            |row| row.get(0),
+        )?;
         conn.execute_batch(SCHEMA)?;
-        check_format_meta(&conn, space)?;
+        check_format_meta(&conn, space, db_existed == 1)?;
         let check: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         if check != "ok" {
             return Err(Error::Corrupt(check));
         }
         Ok(Self {
             conn,
+            space: *space,
             _owner: owner,
         })
     }
@@ -272,6 +283,11 @@ impl Store {
     /// A failed admission or a missing chunk leaves no new visible batch. A
     /// missing parent stays pending. `Ok` means the commit returned under WAL/FULL.
     pub fn publish(&self, publication: &Publication<'_>) -> Result<Receipt, Error> {
+        if publication.body.space != self.space {
+            return Err(Error::Rejected(
+                "batch names a different space than this store".into(),
+            ));
+        }
         if !publication.body.native_artifacts.is_empty() {
             return Err(Error::NativeUnchecked);
         }
@@ -304,10 +320,12 @@ impl Store {
                 }
             }
             self.conn.execute(
-                "INSERT INTO batches(batch_id, writer_epoch, sequence, lamport, body, quarantined)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                "INSERT INTO batches(batch_id, public_key, branch, writer_epoch, sequence, lamport, body, quarantined)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
                 params![
                     batch_id.as_bytes().as_slice(),
+                    publication.body.public_key.as_slice(),
+                    publication.body.branch.as_bytes().as_slice(),
                     publication.body.writer_epoch.as_bytes().as_slice(),
                     publication.body.sequence as i64,
                     publication.body.lamport as i64,
@@ -367,8 +385,11 @@ impl Store {
         let existing: Option<(Vec<u8>, i64)> = self
             .conn
             .query_row(
-                "SELECT batch_id, quarantined FROM batches WHERE writer_epoch = ?1 AND sequence = ?2",
+                "SELECT batch_id, quarantined FROM batches
+                 WHERE public_key = ?1 AND branch = ?2 AND writer_epoch = ?3 AND sequence = ?4",
                 params![
+                    body.public_key.as_slice(),
+                    body.branch.as_bytes().as_slice(),
                     body.writer_epoch.as_bytes().as_slice(),
                     body.sequence as i64,
                 ],
@@ -378,8 +399,11 @@ impl Store {
         if let Some((stored_id, _)) = existing {
             if stored_id.as_slice() != batch_id.as_bytes().as_slice() {
                 self.conn.execute(
-                    "UPDATE batches SET quarantined = 1 WHERE writer_epoch = ?1 AND sequence = ?2",
+                    "UPDATE batches SET quarantined = 1
+                     WHERE public_key = ?1 AND branch = ?2 AND writer_epoch = ?3 AND sequence = ?4",
                     params![
+                        body.public_key.as_slice(),
+                        body.branch.as_bytes().as_slice(),
                         body.writer_epoch.as_bytes().as_slice(),
                         body.sequence as i64,
                     ],
@@ -396,8 +420,10 @@ impl Store {
             .conn
             .query_row(
                 "SELECT body FROM batches
-                 WHERE writer_epoch = ?1 AND sequence = ?2 AND quarantined = 0",
+                 WHERE public_key = ?1 AND branch = ?2 AND writer_epoch = ?3 AND sequence = ?4 AND quarantined = 0",
                 params![
+                    body.public_key.as_slice(),
+                    body.branch.as_bytes().as_slice(),
                     body.writer_epoch.as_bytes().as_slice(),
                     (body.sequence - 1) as i64,
                 ],
@@ -430,9 +456,12 @@ impl Store {
                 .map_err(|_| Error::MissingDependency)?;
             max_parent = max_parent.max(lamport as u64);
         }
-        if body.lamport < max_parent.saturating_add(1) {
+        let expected = max_parent
+            .checked_add(1)
+            .ok_or_else(|| Error::Rejected("lamport overflow".into()))?;
+        if body.lamport != expected {
             return Err(Error::Rejected(
-                "lamport is below 1 + max(parent lamport)".into(),
+                "lamport must equal 1 + max(parent lamport)".into(),
             ));
         }
         Ok(())
@@ -585,6 +614,9 @@ fn write_manifest(path: &Path, space: &SpaceId) -> Result<(), Error> {
 /// values double-quoted, no comments or blank lines.
 fn read_manifest(path: &Path) -> Result<SpaceId, Error> {
     let text = fs::read_to_string(path).map_err(|err| Error::Manifest(err.to_string()))?;
+    if text.contains('\r') {
+        return Err(Error::Manifest("CR is not allowed".into()));
+    }
     let mut format = None;
     let mut space = None;
     let mut storage = None;
@@ -634,12 +666,18 @@ fn read_manifest(path: &Path) -> Result<SpaceId, Error> {
     if lock != LOCK_PROFILE {
         return Err(Error::UnsupportedFormat(lock));
     }
+    if !created {
+        return Err(Error::Manifest("missing created_unix".into()));
+    }
     let space = space.ok_or_else(|| Error::Manifest("missing space".into()))?;
     SpaceId::from_str(&space).map_err(|err| Error::Manifest(err.to_string()))
 }
 
 /// Create `format_meta` on a fresh database, or verify it on an existing one.
-fn check_format_meta(conn: &Connection, space: &SpaceId) -> Result<(), Error> {
+/// `db_existed` is true when the database file already had a `batches` table;
+/// an existing database with an emptied `format_meta` is corruption, not a
+/// rebind to the caller's space.
+fn check_format_meta(conn: &Connection, space: &SpaceId, db_existed: bool) -> Result<(), Error> {
     let get = |key: &str| -> Result<Option<String>, Error> {
         Ok(conn
             .query_row(
@@ -651,13 +689,19 @@ fn check_format_meta(conn: &Connection, space: &SpaceId) -> Result<(), Error> {
     };
     match get("schema_major")? {
         None => {
-            conn.execute_batch(&format!(
+            if db_existed {
+                return Err(Error::Corrupt("format_meta is missing".into()));
+            }
+            conn.execute(
                 "INSERT INTO format_meta(key, value) VALUES
-                 ('schema_major', '{SCHEMA_MAJOR}'),
-                 ('schema_minor', '{SCHEMA_MINOR}'),
-                 ('native_codec', '{NATIVE_CODEC}'),
-                 ('space', '{space}')"
-            ))?;
+                 ('schema_major', ?1), ('schema_minor', ?2), ('native_codec', ?3), ('space', ?4)",
+                params![
+                    SCHEMA_MAJOR.to_string(),
+                    SCHEMA_MINOR.to_string(),
+                    NATIVE_CODEC,
+                    space.to_string(),
+                ],
+            )?;
         }
         Some(major) => {
             let major: i64 = major
@@ -936,6 +980,76 @@ mod tests {
             Store::open(&dir, &SPACE),
             Err(Error::UnsupportedFormat(_))
         ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn foreign_space_body_is_rejected() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let mut foreign = genesis(6);
+        foreign.space = SpaceId::from_array([9; 16]);
+        let foreign_sig = sign(&foreign);
+        let err = store
+            .publish(&signed(&foreign, &[], &foreign_sig))
+            .expect_err("foreign space");
+        assert!(matches!(err, Error::Rejected(_)));
+        assert!(
+            !store
+                .is_published(&foreign.id().expect("id"))
+                .expect("read")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn distinct_writer_keys_are_distinct_streams() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let first = genesis(6);
+        let first_sig = sign(&first);
+        store
+            .publish(&signed(&first, &[], &first_sig))
+            .expect("first");
+        // Same writer_epoch bytes and sequence, but a different public key and
+        // branch context: a different stream, not an equivocation.
+        let mut other = genesis(7);
+        other.public_key = profile::public_key(&[4; 32]);
+        let other_sig = profile::sign_batch(&[4; 32], &other.space, &other.id().expect("id"));
+        store
+            .publish(&Publication {
+                body: &other,
+                signature_key: &other.public_key,
+                signature: &other_sig,
+                chunks: &[],
+                peer: 1,
+            })
+            .expect("second writer");
+        assert!(store.is_published(&first.id().expect("id")).expect("read"));
+        assert!(store.is_published(&other.id().expect("id")).expect("read"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lamport_must_equal_one_plus_max_parent() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let first = genesis(6);
+        let first_sig = sign(&first);
+        store
+            .publish(&signed(&first, &[], &first_sig))
+            .expect("first");
+        let mut child = first.clone();
+        child.sequence = 2;
+        child.lamport = 1000;
+        child.previous = Some(first.id().expect("id"));
+        child.parents = vec![first.id().expect("id")];
+        child.metadata = ArtifactId::from_array([8; 32]);
+        let child_sig = sign(&child);
+        let err = store
+            .publish(&signed(&child, &[], &child_sig))
+            .expect_err("lamport");
+        assert!(matches!(err, Error::Rejected(_)));
         let _ = fs::remove_dir_all(&dir);
     }
 

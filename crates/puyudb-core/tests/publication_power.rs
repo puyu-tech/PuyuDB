@@ -158,6 +158,28 @@ fn torn_write_during_publish_leaves_no_publication() {
 }
 
 #[test]
+fn acked_batch_survives_a_later_armed_fault() {
+    let _serial = serial();
+    let path = dir("acked");
+    let bytes = b"acked-chunk";
+    let id = chunk_id(bytes);
+    let store = open_fault(&path);
+    let prepared = prepared();
+    store.stage_chunk(id, bytes).expect("stage");
+    store
+        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .expect("publish");
+    // The ack already returned; a later fault must not undo it.
+    sqlite_fault::fail_next_sync();
+    assert!(store.stage_chunk(chunk_id(b"other"), b"other").is_err());
+    drop(store);
+    reset();
+    let store = Store::open(&path, &SPACE).expect("reopen");
+    assert!(store.is_published(&prepared.batch).expect("read"));
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
 fn lost_sync_during_stage_does_not_ack_the_chunk() {
     let _serial = serial();
     let path = dir("stage");

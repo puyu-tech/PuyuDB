@@ -426,7 +426,9 @@ changed documentation only; no Rust/build inputs changed after the audited runs.
 The [I04 plan](plans/I04-atomic-sqlite-publication.md) follows blueprint §18.3,
 §6.2–§6.5 and T04. The [ADR-02 pin](adr/02-i04-pin.md) is accepted: rusqlite
 0.41.1 bundled SQLite 3.54.1, WAL/FULL, fullfsync on Apple, one owning process
-via an OS lock. Done so far, all with green hosted CI on the branch:
+via an OS lock. Done so far on the branch (HEAD CI green; the first B1 push
+failed once on macos-15-intel from a test temp-dir collision, fixed by the
+follow-up commit):
 
 - Publication ledger in `puyudb-core::publication`: staged chunks, one atomic
   `BEGIN IMMEDIATE … COMMIT` for batch + chunk references + event + outbox,
@@ -439,12 +441,26 @@ via an OS lock. Done so far, all with green hosted CI on the branch:
   open rejects an unknown major format, a manifest/DB space mismatch, and a
   failed `quick_check`.
 - Fault-injection VFS (`sqlite-fault`): lost sync and torn write leave no
-  publication and no ack; SIGKILL after a staged chunk leaves no publication.
-  Tests are serialized around the process-wide VFS state.
+  publication and no ack; SIGKILL after a staged chunk leaves no publication;
+  an acked batch survives a later armed fault. Tests are serialized around the
+  process-wide VFS state.
+- An audit of this slice (fresh session, adversarial, report not kept in git)
+  confirmed three blockers, all fixed on the branch: `publish` rejects a batch
+  naming a different space; writer streams are keyed by the full
+  `(public_key, branch, writer_epoch, sequence)` tuple per spec §13; the
+  manifest is written only under the owner lock. Majors fixed: exact
+  `lamport = 1 + max(parent lamport)`, bounds-safe VFS snapshot indexing,
+  strict manifest parsing, corruption instead of silent rebind when
+  `format_meta` is emptied. Open items recorded in the
+  [plan](plans/I04-atomic-sqlite-publication.md): parent-closure/minimal
+  frontier checks (B3), WAL-reset regression scenario in the T04 corpus (B6),
+  quarantine not cascading to descendants (I08).
 
-Still open inside I04: the artifact layer with `content_availability` (B2),
-`batch_parents` (B3), `requests` idempotency (B4), replication staging tables
-(B5), disk-full fault injection (B6), Windows/Linux spike reruns (B7). A
+Still open inside I04: the artifact layer with `content_availability` and the
+256 KiB chunk cap (B2), `batch_parents` plus parent-closure/minimal-frontier
+admission checks (B3), `requests` idempotency (B4), replication staging tables
+(B5), disk-full fault injection plus the WAL-reset regression scenario (B6),
+Windows/Linux spike reruns (B7). A
 machine/VM power-cut drill is still required per ADR-02; the VFS model is the
 software power-loss evidence. No projections, branches, native scope, checkout,
 quota, replication, backup or CLI surface exists yet.
