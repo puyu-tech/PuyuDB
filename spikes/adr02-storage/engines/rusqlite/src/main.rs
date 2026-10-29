@@ -153,6 +153,21 @@ impl Engine for Store {
         }
     }
 
+    fn settings(&self) -> String {
+        let mut parts = Vec::new();
+        for pragma in ["journal_mode", "synchronous", "fullfsync", "foreign_keys"] {
+            let value = self
+                .conn
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| {
+                    row.get::<_, String>(0)
+                        .or_else(|_| row.get::<_, i64>(0).map(|n| n.to_string()))
+                })
+                .unwrap_or_else(|err| err.to_string());
+            parts.push(format!("{pragma}={value}"));
+        }
+        format!("sqlite={} {}", rusqlite::version(), parts.join(" "))
+    }
+
     fn identify() -> String {
         let flush = if std::env::var_os("ADR02_FULLFSYNC").is_some() {
             " fullfsync=on"

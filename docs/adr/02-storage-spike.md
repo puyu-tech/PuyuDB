@@ -2,6 +2,10 @@
 
 **Status: evidence only. No engine is selected. ADR-02 is not amended.**
 
+A follow-up on this Mac added Turso (`turso` 0.9.0-pre.2, the Rust rewrite,
+not libsql) and two extra workloads. It does not change the recommendation.
+Windows and Linux were still not run.
+
 This is not I04. The harness is an isolated workspace under `spikes/adr02-storage/`
 with its own `Cargo.lock`. It is not a member of the PuyuDB workspace, it is not
 in `deny.toml`, and it does not change any `puyudb-*` crate. Nothing here is a
@@ -330,3 +334,104 @@ wording, not the engine:
 
 I04 still has to implement admission, the real schema, backups, and the
 power-loss drill. This spike does not close that gate.
+
+## Follow-up: Turso and larger chunks
+
+Turso here is the `turso` crate, the in-process Rust rewrite. It is not the
+libsql engine already in the first table. Pin `=0.9.0-pre.2` (published
+2026-10-28, MIT, no declared MSRV). Latest non-pre on crates.io that day was
+0.8.3. The README claims Linux, macOS, and Windows; only this Mac was run.
+
+`sqlite_version()` returned `3.50.4`. [COMPAT.md](https://github.com/tursodatabase/turso/blob/v0.9.0-pre.2/COMPAT.md)
+says that string is the SQLite version used for differential testing, not an
+amalgam pin. The WAL-reset bug is a C SQLite bug fixed in 3.51.3. A rewrite
+reporting 3.50.4 is neither proof it has that bug nor proof it has the fix.
+It does not satisfy ADR-02's patched-amalgam pin.
+
+Settings after `PRAGMA journal_mode=WAL` and `synchronous=FULL`:
+
+```text
+rusqlite: journal_mode=wal synchronous=2 fullfsync=0 foreign_keys=1 sqlite=3.54.1
+turso:    journal_mode=Text("wal") synchronous=Integer(2) fullfsync=Integer(0) foreign_keys=Integer(1) sqlite_version=Text("3.50.4")
+```
+
+Integer 2 is SQLite's FULL. `fullfsync` stayed 0. Turso's pager comment says
+`FullFsync` uses `F_FULLFSYNC` on Apple and is selected by `PRAGMA fullfsync`.
+Default FULL is the same trap as bundled SQLite.
+
+`cargo-deny check advisories` on the updated lockfile still has
+`RUSTSEC-2025-0141` (heed) and adds three vulnerabilities pulled by
+`turso_core` through `tantivy` / `zstd`: `RUSTSEC-2026-0391`,
+`RUSTSEC-2026-0398`, `RUSTSEC-2026-0403`. They are not in the publication path
+this harness called. They are in the crate graph of a local open.
+
+The crash matrix, now including a kill after 16 durable 4 KiB stages and
+before any root, passed for all seven engines (`roots=0`, `staged_only=16`).
+Times: ffi 1.80s, fjall 21.13s, heed 2.26s, libsql 1.70s, redb 5.59s,
+rusqlite 1.55s, turso 3.12s. Turso's second open was
+`second_open=rejected:database is locked`. SQLite still allows the second
+connection and rejects only `BEGIN IMMEDIATE`.
+
+Small Turso publish, release, 300 samples, 64-byte chunks, fullfsync off:
+
+```text
+engine=turso 0.9.0-pre.2 fullfsync=default
+chunk_bytes=64
+publish_p50_ns=92791
+publish_p99_ns=158084
+throughput_per_s=4897.0597
+file_bytes=1462104
+file turso.db 90112
+file turso.db-wal 1371992
+du_kib 1428
+```
+
+That p50 matches SQLite with fullfsync off, not the ~5 ms flush. With
+`ADR02_FULLFSYNC=1`, 80 samples:
+
+```text
+rusqlite publish_p50_ns=4529791 publish_p99_ns=11353375 throughput_per_s=104.7072
+turso    publish_p50_ns=4964125 publish_p99_ns=8710792 throughput_per_s=104.2384
+file turso.db 4096
+file turso.db-wal 2966432
+```
+
+Once the Apple flush is on, Turso and rusqlite are the same latency. Turso
+left the small publications in a multi-megabyte WAL; SQLite checkpointed the
+WAL to 0 on close. Both totals are durable only if that flush ran.
+
+256 KiB chunks, 40 counted publishes plus 20 warmup, repeated 32-byte payload,
+fullfsync off. Publish p50 stays ~70 µs for every SQLite-family engine,
+including Turso, because the flush is still not `F_FULLFSYNC`. redb/fjall/heed
+stay near 4–5 ms.
+
+```text
+rusqlite p50=67166  p99=121666  file_bytes=15826944 wal=0        du_kib=15424
+ffi      p50=70542  p99=141458  file_bytes=15826944 wal=0        du_kib=15424
+libsql   p50=73375  p99=218083  file_bytes=15826944 wal=0        du_kib=15424
+turso    p50=107208 p99=504667  file_bytes=15956936 wal=1215432  du_kib=15584
+redb     p50=5065709 p99=12522583 file_bytes=31985664            du_kib=31236
+fjall    p50=4318000 p99=5435250  file_bytes=89813               du_kib=140
+heed     p50=4417208 p99=8707417  file_bytes=17014784            du_kib=16616
+```
+
+The fjall size is not a storage win. That payload repeats 32 bytes, and fjall
+compressed it. The same count with an xorshift byte stream (`ADR02_INCOMPRESSIBLE=1`,
+10 counted publishes, 20 warmup, 262144 bytes) stored about the raw size in
+both engines:
+
+```text
+rusqlite file_bytes=7946240 du_kib=7728 publish_p50_ns=79292
+fjall    file_bytes=7912669 du_kib=7780 publish_p50_ns=4489208
+file fjall/0.jnl 7904220
+```
+
+Command: `spikes/adr02-storage/extra.sh`. The xorshift pair is the same binary
+with `ADR02_INCOMPRESSIBLE=1`.
+
+Turso does not replace the recommendation. It passes the publication crash
+matrix, it speaks the same SQL constraints, and with `fullfsync=ON` it matches
+rusqlite's real flush. It is a pre-release, it does not carry the 3.51.3
+amalgam fix, its default FULL ack is the weak Mac flush, and its crate graph
+has vulnerability advisories that bundled SQLite 3.54.1 did not pull. I04
+should not start on it.

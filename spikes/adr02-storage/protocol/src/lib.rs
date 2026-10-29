@@ -50,6 +50,9 @@ pub trait Engine: Sized {
     fn snapshot(&self) -> Result<Snapshot, String>;
     fn probe_native(dir: &Path) -> Result<String, String>;
     fn identify() -> String;
+    fn settings(&self) -> String {
+        "settings=n/a".into()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +134,25 @@ pub fn chunk_bytes(key: &[u8; 32]) -> [u8; 64] {
     bytes[..32].copy_from_slice(key);
     bytes[32..].copy_from_slice(key);
     bytes
+}
+
+pub fn payload(key: &[u8; 32], len: u32) -> Vec<u8> {
+    let len = len.max(32) as usize;
+    let mut body = vec![0u8; len];
+    if std::env::var_os("ADR02_INCOMPRESSIBLE").is_some() {
+        let mut state = u64::from_le_bytes(key[..8].try_into().unwrap_or([0; 8]));
+        for byte in &mut body {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *byte = state as u8;
+        }
+    } else {
+        for (index, byte) in body.iter_mut().enumerate() {
+            *byte = key[index % 32];
+        }
+    }
+    body
 }
 
 pub fn pack_root(key: &[u8; 32], stream: u64, seq: u64) -> [u8; 48] {
@@ -279,14 +301,34 @@ pub fn main<E: Engine>() -> Result<(), String> {
             }
         }
         "measure" => measure::<E>(&args),
+        "settings" => {
+            let engine = E::open(&args.dir)?;
+            println!("{}", engine.settings());
+            Ok(())
+        }
+        "stage-many-wait" => stage_many_wait::<E>(&args),
         other => Err(format!("unknown command {other}")),
+    }
+}
+
+fn stage_many_wait<E: Engine>(args: &Args) -> Result<(), String> {
+    let mut engine = E::open(&args.dir)?;
+    let count = args.count.max(1) as u64;
+    for root in 1..=count {
+        let key = chunk_key(args.seed, root);
+        engine.stage_chunk(&key, &payload(&key, args.bytes))?;
+    }
+    println!("STAGED {count}");
+    let _ = std::io::stdout().flush();
+    loop {
+        thread::sleep(Duration::from_secs(60));
     }
 }
 
 fn stage_wait<E: Engine>(args: &Args) -> Result<(), String> {
     let mut engine = E::open(&args.dir)?;
     let key = chunk_key(args.seed, args.root);
-    engine.stage_chunk(&key, &chunk_bytes(&key))?;
+    engine.stage_chunk(&key, &payload(&key, args.bytes))?;
     println!("CHUNK_DURABLE {}", args.root);
     let _ = std::io::stdout().flush();
     loop {
@@ -303,7 +345,7 @@ fn publish_loop<E: Engine>(args: &Args) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     for root in 1..=args.count.max(1) as u64 {
         let key = chunk_key(args.seed, root);
-        engine.stage_chunk(&key, &chunk_bytes(&key))?;
+        engine.stage_chunk(&key, &payload(&key, args.bytes))?;
         engine.publish(root, 1, root, &key)?;
         record_ack(&mut acks, &args.dir, root)?;
         println!("ACK {root}");
@@ -315,7 +357,7 @@ fn publish_loop<E: Engine>(args: &Args) -> Result<(), String> {
 fn preflight<E: Engine>(dir: &Path) -> Result<(), String> {
     let mut engine = E::open(dir)?;
     let key = chunk_key(1, 1);
-    engine.stage_chunk(&key, &chunk_bytes(&key))?;
+    engine.stage_chunk(&key, &payload(&key, 64))?;
     engine.publish(1, 1, 1, &key)?;
     let dup = engine.publish(2, 1, 1, &key);
     if dup.is_ok() {
@@ -340,7 +382,7 @@ fn measure<E: Engine>(args: &Args) -> Result<(), String> {
     let mut engine = E::open(&args.dir)?;
     for root in 1..=MEASURE_WARMUP {
         let key = chunk_key(args.seed, root);
-        engine.stage_chunk(&key, &chunk_bytes(&key))?;
+        engine.stage_chunk(&key, &payload(&key, args.bytes))?;
         engine.publish(root, 1, root, &key)?;
     }
     let mut publish_ns = Vec::with_capacity(count as usize);
@@ -348,7 +390,7 @@ fn measure<E: Engine>(args: &Args) -> Result<(), String> {
     for offset in 1..=count {
         let root = MEASURE_WARMUP + offset;
         let key = chunk_key(args.seed, root);
-        engine.stage_chunk(&key, &chunk_bytes(&key))?;
+        engine.stage_chunk(&key, &payload(&key, args.bytes))?;
         let one = Instant::now();
         engine.publish(root, 1, root, &key)?;
         publish_ns.push(one.elapsed().as_nanos());
@@ -367,6 +409,7 @@ fn measure<E: Engine>(args: &Args) -> Result<(), String> {
     let bytes = dir_bytes(&args.dir)?;
     let sum: u128 = publish_ns.iter().sum();
     println!("engine={}", E::identify());
+    println!("chunk_bytes={}", args.bytes);
     println!("samples={count}");
     println!("rank=nearest-rank ceil(p*n/100)-1");
     println!("publish_p50_ns={}", percentile(&publish_ns, 50));
@@ -378,8 +421,37 @@ fn measure<E: Engine>(args: &Args) -> Result<(), String> {
         count as f64 / elapsed.as_secs_f64()
     );
     println!("file_bytes={bytes}");
+    list_files(&args.dir)?;
     println!("reopen_verify_ns={}", reopen.as_nanos());
     println!("{}", report.line());
+    Ok(())
+}
+
+fn list_files(dir: &Path) -> Result<(), String> {
+    let mut files = Vec::new();
+    fn walk(root: &Path, path: &Path, files: &mut Vec<(String, u64)>) -> Result<(), String> {
+        for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let meta = entry.metadata().map_err(|e| e.to_string())?;
+            if meta.is_dir() {
+                walk(root, &entry.path(), files)?;
+            } else {
+                let name = entry
+                    .path()
+                    .strip_prefix(root)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .into_owned();
+                files.push((name, meta.len()));
+            }
+        }
+        Ok(())
+    }
+    walk(dir, dir, &mut files)?;
+    files.sort();
+    for (name, len) in files {
+        println!("file {name} {len}");
+    }
     Ok(())
 }
 
@@ -535,6 +607,63 @@ pub fn crash_matrix(bin: &str) {
         verify_dir(bin, &dir, false);
         let _ = fs::remove_dir_all(&dir);
     }
+    stage_many_kill(bin);
+}
+
+fn stage_many_kill(bin: &str) {
+    let dir = unique_dir("many");
+    let mut child = Command::new(bin)
+        .args([
+            "--cmd",
+            "stage-many-wait",
+            "--dir",
+            &dir.to_string_lossy(),
+            "--seed",
+            "99",
+            "--count",
+            "16",
+            "--bytes",
+            "4096",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn stage-many");
+    let stdout = child.stdout.take().expect("stdout");
+    let signaled = wait_line(stdout, "STAGED", Duration::from_secs(120));
+    kill_child(&mut child);
+    let _ = child.wait();
+    assert!(signaled.is_ok(), "no STAGED from {bin}: {signaled:?}");
+    let output = Command::new(bin)
+        .args([
+            "--cmd",
+            "verify",
+            "--dir",
+            &dir.to_string_lossy(),
+            "--acks",
+            &dir.join("acks.log").to_string_lossy(),
+        ])
+        .output()
+        .expect("verify many");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "many verify failed: {stdout} {stderr}"
+    );
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("VERIFY"))
+        .unwrap_or("");
+    assert!(
+        line.contains("roots=0"),
+        "staged chunks became a publication: {line}"
+    );
+    assert!(
+        line.contains("staged_only=16"),
+        "staged chunks were not durable: {line}"
+    );
+    let _ = fs::remove_dir_all(&dir);
 }
 
 fn verify_dir(bin: &str, dir: &Path, expect_no_root: bool) {
@@ -682,6 +811,7 @@ struct Args {
     seed: u64,
     count: u32,
     root: u64,
+    bytes: u32,
     acks: Option<PathBuf>,
     no_owner_lock: bool,
 }
@@ -694,6 +824,7 @@ impl Args {
             seed: 1,
             count: MEASURE_COUNT as u32,
             root: 1,
+            bytes: 64,
             acks: None,
             no_owner_lock: false,
         };
@@ -705,6 +836,7 @@ impl Args {
                 "--seed" => args.seed = parse_next(&mut raw, "--seed")?,
                 "--count" => args.count = parse_next(&mut raw, "--count")?,
                 "--root" => args.root = parse_next(&mut raw, "--root")?,
+                "--bytes" => args.bytes = parse_next(&mut raw, "--bytes")?,
                 "--acks" => {
                     args.acks = Some(PathBuf::from(raw.next().ok_or("--acks needs a value")?))
                 }

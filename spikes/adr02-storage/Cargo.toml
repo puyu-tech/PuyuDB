@@ -8,6 +8,7 @@ members = [
     "engines/redb",
     "engines/fjall",
     "engines/heed",
+    "engines/turso",
 ]
 
 # Isolated from the PuyuDB workspace. libsql-ffi and libsqlite3-sys both export

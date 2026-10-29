@@ -9,7 +9,7 @@ uname -a
 sw_vers
 rustc --version
 sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
-for bin in adr02-rusqlite adr02-ffi adr02-libsql adr02-redb adr02-fjall adr02-heed; do
+for bin in adr02-rusqlite adr02-ffi adr02-libsql adr02-redb adr02-fjall adr02-heed adr02-turso; do
   dir=$(mktemp -d "/tmp/adr02-measure-${bin}.XXXX")
   echo "==== $bin measure ===="
   "$CARGO_TARGET_DIR/release/$bin" --cmd measure --dir "$dir" --count 300 --seed 1
