@@ -1,0 +1,11 @@
+[package]
+name = "sqlite-fault"
+version = "0.1.0-dev"
+edition = "2024"
+rust-version = "1.99.1"
+license = "Apache-2.0"
+publish = false
+description = "SQLite VFS that injects torn writes and lost unsynced flushes"
+
+[dependencies]
+libsqlite3-sys = { version = "=0.39.1", features = ["bundled"] }
