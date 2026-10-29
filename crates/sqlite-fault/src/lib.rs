@@ -130,7 +130,9 @@ unsafe extern "C" fn x_open(
         return rc;
     }
     let snap = read_all(real);
-    STATE.lock().expect("fault state").snapshots[id] = snap;
+    if let Some(slot) = STATE.lock().expect("fault state").snapshots.get_mut(id) {
+        *slot = snap;
+    }
     unsafe {
         (*file).pMethods = &IO;
     }
@@ -258,7 +260,15 @@ unsafe extern "C" fn x_sync(file: *mut sqlite3_file, flags: c_int) -> c_int {
     let real = real_file(file);
     let id = unsafe { (*file.cast::<FaultFile>()).id };
     if fail {
-        let snap = STATE.lock().expect("fault state").snapshots[id].clone();
+        // reset() while a file is open can shrink the vec; fail the sync
+        // without touching the file rather than indexing out of bounds.
+        let snap = STATE
+            .lock()
+            .expect("fault state")
+            .snapshots
+            .get(id)
+            .cloned()
+            .unwrap_or_default();
         restore(real, &snap);
         return SQLITE_IOERR;
     }
@@ -271,7 +281,9 @@ unsafe extern "C" fn x_sync(file: *mut sqlite3_file, flags: c_int) -> c_int {
     };
     if rc == SQLITE_OK {
         let snap = read_all(real);
-        STATE.lock().expect("fault state").snapshots[id] = snap;
+        if let Some(slot) = STATE.lock().expect("fault state").snapshots.get_mut(id) {
+            *slot = snap;
+        }
     }
     rc
 }
