@@ -307,7 +307,25 @@ pub fn main<E: Engine>() -> Result<(), String> {
             Ok(())
         }
         "stage-many-wait" => stage_many_wait::<E>(&args),
+        "create-wait" => create_wait::<E>(&args),
         other => Err(format!("unknown command {other}")),
+    }
+}
+
+fn create_wait<E: Engine>(args: &Args) -> Result<(), String> {
+    println!("OPENING");
+    let _ = std::io::stdout().flush();
+    let mut engine = E::open(&args.dir)?;
+    println!("OPENED");
+    let _ = std::io::stdout().flush();
+    // Gap so a kill after OPENED lands before the first chunk commit.
+    thread::sleep(Duration::from_millis(30));
+    let key = chunk_key(args.seed, 1);
+    engine.stage_chunk(&key, &payload(&key, 64))?;
+    println!("CHUNK_DURABLE 1");
+    let _ = std::io::stdout().flush();
+    loop {
+        thread::sleep(Duration::from_secs(60));
     }
 }
 
@@ -487,6 +505,86 @@ pub fn engine_bin(name: &str) -> String {
         .join(name)
         .to_string_lossy()
         .into_owned()
+}
+
+pub const PRE_ACK_DELAYS: u64 = 40;
+pub const PRE_ACK_BOUNDARY: u64 = 12;
+
+/// Kills before any durable publication ack, including database creation.
+pub fn pre_ack_kills(bin: &str) {
+    for iter in 0..PRE_ACK_DELAYS {
+        kill_before_ack(bin, 0xA402_2000 + iter, KillAt::Delay(iter));
+    }
+    for iter in 0..PRE_ACK_BOUNDARY {
+        kill_before_ack(bin, 0xA402_3000 + iter, KillAt::Line("OPENING"));
+        kill_before_ack(bin, 0xA402_4000 + iter, KillAt::Line("OPENED"));
+    }
+}
+
+enum KillAt {
+    Delay(u64),
+    Line(&'static str),
+}
+
+fn kill_before_ack(bin: &str, seed: u64, at: KillAt) {
+    let dir = unique_dir(&format!("preack-{seed}"));
+    let mut child = Command::new(bin)
+        .args([
+            "--cmd",
+            "create-wait",
+            "--dir",
+            &dir.to_string_lossy(),
+            "--seed",
+            &seed.to_string(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn create-wait");
+    match at {
+        KillAt::Delay(ms) => thread::sleep(Duration::from_millis(ms)),
+        KillAt::Line(prefix) => {
+            let stdout = child.stdout.take().expect("stdout");
+            let signaled = wait_line(stdout, prefix, Duration::from_secs(30));
+            if signaled.is_err() {
+                kill_child(&mut child);
+                let _ = child.wait();
+                panic!("no {prefix} for {bin} seed {seed}: {signaled:?}");
+            }
+        }
+    }
+    kill_child(&mut child);
+    let status = child.wait().expect("wait");
+    if let Some(code) = status.code().filter(|code| *code != 0) {
+        panic!("create-wait exited {code} before kill for seed {seed}");
+    }
+    let output = Command::new(bin)
+        .args([
+            "--cmd",
+            "verify",
+            "--dir",
+            &dir.to_string_lossy(),
+            "--acks",
+            &dir.join("missing-acks").to_string_lossy(),
+        ])
+        .output()
+        .expect("verify pre-ack");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "reopen failed after pre-ack kill seed {seed} in {}: {stdout} {stderr}",
+        dir.display()
+    );
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("VERIFY"))
+        .unwrap_or("");
+    assert!(
+        line.contains("ok=1") && line.contains("roots=0"),
+        "pre-ack kill seed {seed} left a publication: {line}"
+    );
+    let _ = fs::remove_dir_all(&dir);
 }
 
 pub fn crash_matrix(bin: &str) {

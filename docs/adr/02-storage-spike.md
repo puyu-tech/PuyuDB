@@ -435,3 +435,28 @@ rusqlite's real flush. It is a pre-release, it does not carry the 3.51.3
 amalgam fix, its default FULL ack is the weak Mac flush, and its crate graph
 has vulnerability advisories that bundled SQLite 3.54.1 did not pull. I04
 should not start on it.
+
+## What is worth doing next
+
+Three proposed follow-ups, judged against this spike:
+
+1. Pre-ack kills for the chosen SQLite pin were not in the final matrix. That
+   matrix waits for the first ack. The fjall creation-window failure sits in
+   the gap. This was worth a cheap run, and it is now done for `rusqlite` and
+   the thin FFI (same 3.54.1 amalgam). `pre_ack_kills`: 40 kills at 0–39 ms
+   after spawn, 12 kills on `OPENING` (inside open/schema), 12 kills on
+   `OPENED` (schema committed, before the first chunk). Seeds `0xA4022000`,
+   `0xA4023000`, `0xA4024000`. Each reopen had to succeed with `roots=0`.
+   Both packages passed in 1.74 s. This is process kill, not a torn sector.
+   It says this harness's SQLite open path does not share fjall's
+   unrecoverable create window. It does not prove power-loss recovery.
+2. A power-loss or faulted-VFS drill is required by blueprint §6.1 and T04,
+   and this spike still does not claim it. Doing it now against the 64-byte
+   fake schema would be thrown away when I04 has a real schema. A toy VFS
+   can also pass while missing the failure that matters. Leave it to I04,
+   on the real publication path, with `fullfsync` on for Apple. A machine
+   power-cut is the expensive confirmation, not a spike task.
+3. Repeating the latency run is not worth it yet. One run, p99 under 11 ms
+   against a 30 ms p95 budget, on one Mac. More samples matter if an I04
+   workload approaches that budget. They do not change the flush finding:
+   default WAL/FULL on this Mac is not `F_FULLFSYNC`.
