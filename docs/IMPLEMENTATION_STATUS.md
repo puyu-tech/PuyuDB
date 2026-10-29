@@ -421,6 +421,34 @@ The main workspace, dependency lock and DT pin remain unchanged; the experiment
 used a separate generated harness. The 2026-10-26 I02 closure (DT selected)
 changed documentation only; no Rust/build inputs changed after the audited runs.
 
+## I04 in progress: atomic SQLite publication (branch `i04-atomic-sqlite-publication`)
+
+The [I04 plan](plans/I04-atomic-sqlite-publication.md) follows blueprint §18.3,
+§6.2–§6.5 and T04. The [ADR-02 pin](adr/02-i04-pin.md) is accepted: rusqlite
+0.41.1 bundled SQLite 3.54.1, WAL/FULL, fullfsync on Apple, one owning process
+via an OS lock. Done so far, all with green hosted CI on the branch:
+
+- Publication ledger in `puyudb-core::publication`: staged chunks, one atomic
+  `BEGIN IMMEDIATE … COMMIT` for batch + chunk references + event + outbox,
+  durable ack only after the WAL/FULL commit. Admission verifies signature and
+  key equality, recomputes the batch id, checks the stream step and parent
+  lamports, quarantines on equivocation, and requires staged chunks.
+- Owner lock beside the database, with a short retry before `Busy`.
+- Per-space `manifest.toml` (format, space id, storage/lock profiles, creation
+  time) plus a `format_meta` table (schema major/minor, native codec, space id);
+  open rejects an unknown major format, a manifest/DB space mismatch, and a
+  failed `quick_check`.
+- Fault-injection VFS (`sqlite-fault`): lost sync and torn write leave no
+  publication and no ack; SIGKILL after a staged chunk leaves no publication.
+  Tests are serialized around the process-wide VFS state.
+
+Still open inside I04: the artifact layer with `content_availability` (B2),
+`batch_parents` (B3), `requests` idempotency (B4), replication staging tables
+(B5), disk-full fault injection (B6), Windows/Linux spike reruns (B7). A
+machine/VM power-cut drill is still required per ADR-02; the VFS model is the
+software power-loss evidence. No projections, branches, native scope, checkout,
+quota, replication, backup or CLI surface exists yet.
+
 ## Limits and next action
 
 CI is configured for Linux x86-64/ARM64, macOS x86-64/ARM64 and Windows x86-64

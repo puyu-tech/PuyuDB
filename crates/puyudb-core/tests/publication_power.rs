@@ -18,6 +18,8 @@ fn serial() -> MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|err| err.into_inner())
 }
 
+const SPACE: SpaceId = SpaceId::from_array([1; 16]);
+
 fn dir(label: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!(
         "puyu-power-{label}-{}-{}",
@@ -81,7 +83,7 @@ fn genesis() -> BatchBody {
 fn open_fault(path: &std::path::Path) -> Store {
     install();
     reset();
-    Store::open_vfs(path, Some("puyu-fault")).expect("fault open")
+    Store::open_vfs(path, Some("puyu-fault"), &SPACE).expect("fault open")
 }
 
 #[test]
@@ -98,7 +100,7 @@ fn fault_vfs_can_publish_when_disarmed() {
         .expect("publish");
     drop(store);
     reset();
-    let store = Store::open(&path).expect("reopen");
+    let store = Store::open(&path, &SPACE).expect("reopen");
     assert!(store.is_published(&prepared.batch).expect("read"));
     let _ = std::fs::remove_dir_all(&path);
 }
@@ -120,7 +122,7 @@ fn lost_sync_during_publish_leaves_no_publication() {
     );
     drop(store);
     reset();
-    let store = Store::open(&path).expect("reopen");
+    let store = Store::open(&path, &SPACE).expect("reopen");
     assert!(!store.is_published(&prepared.batch).expect("read"));
     assert_eq!(store.staged_without_publication().expect("staged"), 1);
     store
@@ -146,7 +148,7 @@ fn torn_write_during_publish_leaves_no_publication() {
     );
     drop(store);
     reset();
-    let store = Store::open(&path).expect("reopen");
+    let store = Store::open(&path, &SPACE).expect("reopen");
     assert!(!store.is_published(&prepared.batch).expect("read"));
     store
         .publish(&signed(&prepared.body, &[id], &prepared.signature))
@@ -165,7 +167,7 @@ fn lost_sync_during_stage_does_not_ack_the_chunk() {
     assert!(store.stage_chunk(id, bytes).is_err());
     drop(store);
     reset();
-    let store = Store::open(&path).expect("reopen");
+    let store = Store::open(&path, &SPACE).expect("reopen");
     assert_eq!(store.staged_without_publication().expect("staged"), 0);
     let _ = std::fs::remove_dir_all(&path);
 }

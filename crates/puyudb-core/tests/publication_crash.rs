@@ -8,6 +8,8 @@ use puyudb_core::identity::{ArtifactId, BranchId, SpaceId, WriterEpoch};
 use puyudb_core::profile::{self, BatchBody, chunk_id};
 use puyudb_core::publication::{Publication, Store};
 
+const SPACE: SpaceId = SpaceId::from_array([1; 16]);
+
 fn child_dir() -> Option<PathBuf> {
     std::env::var_os("PUYU_PUBLICATION_CRASH").map(PathBuf::from)
 }
@@ -15,7 +17,7 @@ fn child_dir() -> Option<PathBuf> {
 #[test]
 fn kill_after_staged_chunk_leaves_no_publication() {
     if let Some(dir) = child_dir() {
-        let store = Store::open(&dir).expect("child open");
+        let store = Store::open(&dir, &SPACE).expect("child open");
         let bytes = b"staged-before-kill";
         let id = chunk_id(bytes);
         store.stage_chunk(id, bytes).expect("stage");
@@ -52,7 +54,7 @@ fn kill_after_staged_chunk_leaves_no_publication() {
     let _ = child.kill();
     let _ = child.wait();
 
-    let store = Store::open(&dir).expect("reopen");
+    let store = Store::open(&dir, &SPACE).expect("reopen");
     let id = chunk_id(b"staged-before-kill");
     assert_eq!(store.staged_without_publication().expect("staged"), 1);
     let body = BatchBody {

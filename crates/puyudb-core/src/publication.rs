@@ -8,7 +8,10 @@
 //! commit together, and the ack returns only after that commit.
 
 use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::Path;
+use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, params};
 use thiserror::Error;
@@ -18,6 +21,10 @@ use crate::identity::{ArtifactId, BatchId, BranchId, ChunkId, SpaceId, WriterEpo
 use crate::profile::{self, BatchBody, Record, chunk_id};
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS format_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS chunks (
   id BLOB PRIMARY KEY,
   bytes BLOB NOT NULL
@@ -84,7 +91,34 @@ pub enum Error {
     /// Native scope is not checked by this ledger yet.
     #[error("native scope is not checked")]
     NativeUnchecked,
+    /// The space manifest is unreadable or not a v1 space manifest.
+    #[error("space manifest: {0}")]
+    Manifest(String),
+    /// The manifest or database names an unsupported format or profile.
+    #[error("unsupported format: {0}")]
+    UnsupportedFormat(String),
+    /// The manifest and the database name different spaces.
+    #[error("manifest and database name different spaces")]
+    SpaceMismatch,
+    /// SQLite's integrity check failed at open.
+    #[error("database failed integrity check: {0}")]
+    Corrupt(String),
 }
+
+/// Schema major written to `format_meta`. Readers reject any other major.
+const SCHEMA_MAJOR: i64 = 1;
+/// Schema minor written to `format_meta`. Readers reject a newer minor.
+const SCHEMA_MINOR: i64 = 0;
+/// Frozen native codec recorded in `format_meta`.
+const NATIVE_CODEC: &str = "dt-text-v1";
+/// `format` value of the per-space manifest.
+const MANIFEST_FORMAT: &str = "puyudb-space-manifest/v1";
+/// `storage` profile of the manifest.
+const STORAGE_PROFILE: &str = "sqlite-wal-full-v1";
+/// `lock` profile of the manifest.
+const LOCK_PROFILE: &str = "owner-file-v1";
+/// Per-space manifest file name inside the space directory.
+const MANIFEST_NAME: &str = "manifest.toml";
 
 /// One signed batch proposed for publication.
 ///
@@ -120,13 +154,19 @@ pub struct Store {
 }
 
 impl Store {
-    /// Open or create the ledger and take the owner lock.
+    /// Open or create the ledger for `space` and take the owner lock.
+    ///
+    /// A missing manifest is created for `space`; an existing manifest must
+    /// name the same space, or the open fails with [`Error::SpaceMismatch`].
     ///
     /// # Errors
-    /// Returns [`Error::Busy`] when another process holds the lock, and
-    /// [`Error::UnpatchedSqlite`] when the linked SQLite predates 3.51.3.
-    pub fn open(dir: impl AsRef<Path>) -> Result<Self, Error> {
-        Self::open_vfs(dir, None)
+    /// Returns [`Error::Busy`] when another process holds the lock,
+    /// [`Error::UnpatchedSqlite`] when the linked SQLite predates 3.51.3,
+    /// [`Error::UnsupportedFormat`]/[`Error::Manifest`] for an unreadable or
+    /// unsupported on-disk format, and [`Error::Corrupt`] when the integrity
+    /// check fails.
+    pub fn open(dir: impl AsRef<Path>, space: &SpaceId) -> Result<Self, Error> {
+        Self::open_vfs(dir, None, space)
     }
 
     /// Open the ledger through a named SQLite VFS.
@@ -135,9 +175,27 @@ impl Store {
     ///
     /// # Errors
     /// Same as [`Store::open`].
-    pub fn open_vfs(dir: impl AsRef<Path>, vfs: Option<&str>) -> Result<Self, Error> {
+    pub fn open_vfs(
+        dir: impl AsRef<Path>,
+        vfs: Option<&str>,
+        space: &SpaceId,
+    ) -> Result<Self, Error> {
         let dir = dir.as_ref();
         fs::create_dir_all(dir)?;
+        let manifest_path = dir.join(MANIFEST_NAME);
+        let manifest_space = if manifest_path.exists() {
+            Some(read_manifest(&manifest_path)?)
+        } else {
+            None
+        };
+        if let Some(existing) = manifest_space
+            && existing != *space
+        {
+            return Err(Error::SpaceMismatch);
+        }
+        if manifest_space.is_none() {
+            write_manifest(&manifest_path, space)?;
+        }
         let owner = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -172,6 +230,11 @@ impl Store {
             return Err(Error::UnpatchedSqlite(version));
         }
         conn.execute_batch(SCHEMA)?;
+        check_format_meta(&conn, space)?;
+        let check: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        if check != "ok" {
+            return Err(Error::Corrupt(check));
+        }
         Ok(Self {
             conn,
             _owner: owner,
@@ -494,6 +557,137 @@ fn bytes_at(item: &Item) -> Result<Vec<u8>, Error> {
     }
 }
 
+/// Write the flat v1 space manifest atomically: temp file, fsync, rename.
+fn write_manifest(path: &Path, space: &SpaceId) -> Result<(), Error> {
+    let created = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| Error::Manifest(err.to_string()))?
+        .as_secs();
+    let text = format!(
+        "format = \"{MANIFEST_FORMAT}\"\n\
+         space = \"{space}\"\n\
+         storage = \"{STORAGE_PROFILE}\"\n\
+         lock = \"{LOCK_PROFILE}\"\n\
+         created_unix = \"{created}\"\n"
+    );
+    let tmp = path.with_extension("toml.tmp");
+    let mut file = File::create(&tmp)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    fs::rename(&tmp, path)?;
+    if let Ok(dir) = File::open(path.parent().unwrap_or(Path::new("."))) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
+/// Parse the strict flat manifest: exactly the five v1 keys, each once,
+/// values double-quoted, no comments or blank lines.
+fn read_manifest(path: &Path) -> Result<SpaceId, Error> {
+    let text = fs::read_to_string(path).map_err(|err| Error::Manifest(err.to_string()))?;
+    let mut format = None;
+    let mut space = None;
+    let mut storage = None;
+    let mut lock = None;
+    let mut created = false;
+    for line in text.lines() {
+        let (key, value) = line
+            .split_once(" = ")
+            .and_then(|(key, value)| {
+                value
+                    .strip_prefix('"')
+                    .and_then(|v| v.strip_suffix('"'))
+                    .map(|v| (key, v))
+            })
+            .ok_or_else(|| Error::Manifest(format!("malformed line: {line:?}")))?;
+        let slot = match key {
+            "format" => &mut format,
+            "space" => &mut space,
+            "storage" => &mut storage,
+            "lock" => &mut lock,
+            "created_unix" => {
+                if created {
+                    return Err(Error::Manifest("duplicate created_unix".into()));
+                }
+                created = true;
+                value
+                    .parse::<u64>()
+                    .map_err(|_| Error::Manifest("created_unix is not a number".into()))?;
+                continue;
+            }
+            other => return Err(Error::Manifest(format!("unknown key {other:?}"))),
+        };
+        if slot.is_some() {
+            return Err(Error::Manifest(format!("duplicate key {key:?}")));
+        }
+        *slot = Some(value.to_string());
+    }
+    let format = format.ok_or_else(|| Error::Manifest("missing format".into()))?;
+    if format != MANIFEST_FORMAT {
+        return Err(Error::UnsupportedFormat(format));
+    }
+    let storage = storage.ok_or_else(|| Error::Manifest("missing storage".into()))?;
+    if storage != STORAGE_PROFILE {
+        return Err(Error::UnsupportedFormat(storage));
+    }
+    let lock = lock.ok_or_else(|| Error::Manifest("missing lock".into()))?;
+    if lock != LOCK_PROFILE {
+        return Err(Error::UnsupportedFormat(lock));
+    }
+    let space = space.ok_or_else(|| Error::Manifest("missing space".into()))?;
+    SpaceId::from_str(&space).map_err(|err| Error::Manifest(err.to_string()))
+}
+
+/// Create `format_meta` on a fresh database, or verify it on an existing one.
+fn check_format_meta(conn: &Connection, space: &SpaceId) -> Result<(), Error> {
+    let get = |key: &str| -> Result<Option<String>, Error> {
+        Ok(conn
+            .query_row(
+                "SELECT value FROM format_meta WHERE key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .ok())
+    };
+    match get("schema_major")? {
+        None => {
+            conn.execute_batch(&format!(
+                "INSERT INTO format_meta(key, value) VALUES
+                 ('schema_major', '{SCHEMA_MAJOR}'),
+                 ('schema_minor', '{SCHEMA_MINOR}'),
+                 ('native_codec', '{NATIVE_CODEC}'),
+                 ('space', '{space}')"
+            ))?;
+        }
+        Some(major) => {
+            let major: i64 = major
+                .parse()
+                .map_err(|_| Error::UnsupportedFormat(major.clone()))?;
+            if major != SCHEMA_MAJOR {
+                return Err(Error::UnsupportedFormat(format!("schema major {major}")));
+            }
+            let minor = get("schema_minor")?.unwrap_or_default();
+            let minor: i64 = minor
+                .parse()
+                .map_err(|_| Error::UnsupportedFormat(minor.clone()))?;
+            if minor > SCHEMA_MINOR {
+                return Err(Error::UnsupportedFormat(format!("schema minor {minor}")));
+            }
+            let codec = get("native_codec")?.unwrap_or_default();
+            if codec != NATIVE_CODEC {
+                return Err(Error::UnsupportedFormat(format!("native codec {codec}")));
+            }
+            let db_space = get("space")?.ok_or_else(|| Error::Manifest("missing space".into()))?;
+            if SpaceId::from_str(&db_space).map_err(|err| Error::Manifest(err.to_string()))?
+                != *space
+            {
+                return Err(Error::SpaceMismatch);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn sqlite_has_wal_reset_fix(version: &str) -> bool {
     let mut parts = version.split(['.', ' ']);
     let major: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
@@ -507,6 +701,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    const SPACE: SpaceId = SpaceId::from_array([1; 16]);
 
     fn temp() -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -561,7 +757,7 @@ mod tests {
         let id = chunk_id(chunk);
         let body = genesis(6);
         let signature = sign(&body);
-        let store = Store::open(&dir).expect("open");
+        let store = Store::open(&dir, &SPACE).expect("open");
         assert!(
             store
                 .sqlite_version()
@@ -580,7 +776,7 @@ mod tests {
             .expect("idempotent");
         assert_eq!(again.event_cursor, 1);
         drop(store);
-        let reopened = Store::open(&dir).expect("reopen");
+        let reopened = Store::open(&dir, &SPACE).expect("reopen");
         assert!(
             reopened
                 .is_published(&body.id().expect("id"))
@@ -594,7 +790,7 @@ mod tests {
     fn unsigned_batch_is_not_published() {
         let dir = temp();
         let body = genesis(6);
-        let store = Store::open(&dir).expect("open");
+        let store = Store::open(&dir, &SPACE).expect("open");
         let err = store
             .publish(&signed(&body, &[], &[0; 64]))
             .expect_err("unsigned");
@@ -606,7 +802,7 @@ mod tests {
     #[test]
     fn missing_parent_stays_pending_and_equivocation_unpublishes_both() {
         let dir = temp();
-        let store = Store::open(&dir).expect("open");
+        let store = Store::open(&dir, &SPACE).expect("open");
         let first = genesis(6);
         let first_sig = sign(&first);
         store
@@ -662,7 +858,7 @@ mod tests {
         let body = genesis(6);
         let signature = sign(&body);
         let missing = ChunkId::from_array([9; 32]);
-        let store = Store::open(&dir).expect("open");
+        let store = Store::open(&dir, &SPACE).expect("open");
         let err = store
             .publish(&signed(&body, &[missing], &signature))
             .expect_err("missing");
@@ -674,12 +870,71 @@ mod tests {
     #[test]
     fn second_open_is_busy() {
         let dir = temp();
-        let _owner = Store::open(&dir).expect("open");
-        match Store::open(&dir) {
+        let _owner = Store::open(&dir, &SPACE).expect("open");
+        match Store::open(&dir, &SPACE) {
             Err(Error::Busy) => {}
             Err(err) => panic!("expected busy, got {err}"),
             Ok(_) => panic!("second open succeeded"),
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn manifest_is_written_and_binds_the_space() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let manifest = fs::read_to_string(dir.join("manifest.toml")).expect("manifest");
+        assert!(manifest.contains("format = \"puyudb-space-manifest/v1\""));
+        assert!(manifest.contains(&format!("space = \"{SPACE}\"")));
+        drop(store);
+        Store::open(&dir, &SPACE).expect("reopen same space");
+        match Store::open(&dir, &SpaceId::from_array([9; 16])) {
+            Err(Error::SpaceMismatch) => {}
+            Err(err) => panic!("expected space mismatch, got {err}"),
+            Ok(_) => panic!("a different space opened the same directory"),
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_content() {
+        let dir = temp();
+        fs::write(dir.join("manifest.toml"), "not a manifest\n").expect("write");
+        assert!(matches!(Store::open(&dir, &SPACE), Err(Error::Manifest(_))));
+        fs::write(
+            dir.join("manifest.toml"),
+            "format = \"puyudb-space-manifest/v1\"\nspace = \"space:00\"\nstorage = \"sqlite-wal-full-v1\"\nlock = \"owner-file-v1\"\ncreated_unix = \"1\"\nextra = \"x\"\n",
+        )
+        .expect("write");
+        assert!(matches!(Store::open(&dir, &SPACE), Err(Error::Manifest(_))));
+        fs::write(
+            dir.join("manifest.toml"),
+            "format = \"other/v9\"\nspace = \"space:0101010101010101010101010101010101\"\nstorage = \"sqlite-wal-full-v1\"\nlock = \"owner-file-v1\"\ncreated_unix = \"1\"\n",
+        )
+        .expect("write");
+        assert!(matches!(
+            Store::open(&dir, &SPACE),
+            Err(Error::UnsupportedFormat(_))
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unknown_schema_major_is_rejected() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        drop(store);
+        let conn = Connection::open(dir.join("space.sqlite")).expect("direct open");
+        conn.execute(
+            "UPDATE format_meta SET value = '99' WHERE key = 'schema_major'",
+            [],
+        )
+        .expect("bump major");
+        drop(conn);
+        assert!(matches!(
+            Store::open(&dir, &SPACE),
+            Err(Error::UnsupportedFormat(_))
+        ));
         let _ = fs::remove_dir_all(&dir);
     }
 
