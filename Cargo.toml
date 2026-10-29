@@ -3,6 +3,7 @@ members = [
     "crates/puyudb-core",
     "crates/puyudb-crdt",
     "crates/puyudb-local",
+    "crates/sqlite-fault",
     "apps/puyu-cli",
 ]
 resolver = "3"
