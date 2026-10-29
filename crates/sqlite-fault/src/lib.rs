@@ -26,17 +26,6 @@ struct State {
     snapshots: Vec<Vec<u8>>,
 }
 
-impl State {
-    fn new() -> Self {
-        Self {
-            fail_sync: false,
-            tear_write: false,
-            dead: false,
-            snapshots: Vec::new(),
-        }
-    }
-}
-
 static STATE: Mutex<State> = Mutex::new(State {
     fail_sync: false,
     tear_write: false,
@@ -67,8 +56,16 @@ pub fn install() {
 }
 
 /// Clear a previous injection. Does not unregister the VFS.
+///
+/// Snapshot entries are deliberately kept: a file opened before the reset
+/// still holds its id, and shrinking or clearing the vector here would either
+/// alias that id to a file opened after the reset or make an armed sync
+/// restore an empty image (truncating the file).
 pub fn reset() {
-    *STATE.lock().expect("fault state") = State::new();
+    let mut state = STATE.lock().expect("fault state");
+    state.fail_sync = false;
+    state.tear_write = false;
+    state.dead = false;
 }
 
 /// The next `xSync` is a power loss: unsynced bytes are discarded.

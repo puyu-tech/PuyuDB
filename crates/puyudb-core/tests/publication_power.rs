@@ -212,6 +212,43 @@ fn reset_under_open_file_fails_sync_without_touching_the_file() {
 }
 
 #[test]
+fn reset_between_two_fault_stores_does_not_alias_snapshot_ids() {
+    let _serial = serial();
+    let dir_a = dir("alias-a");
+    let dir_b = dir("alias-b");
+    let bytes = b"alias-chunk";
+    let id = chunk_id(bytes);
+    let store_a = open_fault(&dir_a);
+    let prepared = prepared();
+    store_a.stage_chunk(id, bytes).expect("stage a");
+    store_a
+        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .expect("publish a");
+    // Misuse on purpose: reset() while store_a is open, then a second fault
+    // store. Snapshot ids must keep increasing, never alias across the reset.
+    reset();
+    let store_b = open_fault(&dir_b);
+    store_b.stage_chunk(id, bytes).expect("stage b");
+    sqlite_fault::fail_next_sync();
+    assert!(
+        store_b
+            .publish(&signed(&prepared.body, &[id], &prepared.signature))
+            .is_err()
+    );
+    drop(store_a);
+    drop(store_b);
+    reset();
+    let a = Store::open(&dir_a, &SPACE).expect("reopen a");
+    assert!(a.is_published(&prepared.batch).expect("read a"));
+    // With aliased ids the armed sync would have restored store A's image into
+    // store B's files; reopen must succeed and show no publication.
+    let b = Store::open(&dir_b, &SPACE).expect("reopen b");
+    assert!(!b.is_published(&prepared.batch).expect("read b"));
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+#[test]
 fn lost_sync_during_stage_does_not_ack_the_chunk() {
     let _serial = serial();
     let path = dir("stage");
