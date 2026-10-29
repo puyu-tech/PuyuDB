@@ -3,10 +3,20 @@
 //! The shim VFS discards bytes that never reached a successful sync, or leaves
 //! a torn write, then refuses further writes. Reopen uses the normal VFS.
 
+use std::sync::{Mutex, MutexGuard};
+
 use puyudb_core::identity::{ArtifactId, BatchId, BranchId, SpaceId, WriterEpoch};
 use puyudb_core::profile::{self, BatchBody, chunk_id};
 use puyudb_core::publication::{Publication, Store};
 use sqlite_fault::{self, install, reset};
+
+/// The shim VFS keeps one process-wide fault switch and one snapshot per open
+/// file, so two tests must never run at once.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|err| err.into_inner())
+}
 
 fn dir(label: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!(
@@ -76,6 +86,7 @@ fn open_fault(path: &std::path::Path) -> Store {
 
 #[test]
 fn fault_vfs_can_publish_when_disarmed() {
+    let _serial = serial();
     let path = dir("ok");
     let bytes = b"durable-chunk";
     let id = chunk_id(bytes);
@@ -94,6 +105,7 @@ fn fault_vfs_can_publish_when_disarmed() {
 
 #[test]
 fn lost_sync_during_publish_leaves_no_publication() {
+    let _serial = serial();
     let path = dir("sync");
     let bytes = b"staged-only";
     let id = chunk_id(bytes);
@@ -119,6 +131,7 @@ fn lost_sync_during_publish_leaves_no_publication() {
 
 #[test]
 fn torn_write_during_publish_leaves_no_publication() {
+    let _serial = serial();
     let path = dir("tear");
     let bytes = b"tear-chunk";
     let id = chunk_id(bytes);
@@ -143,6 +156,7 @@ fn torn_write_during_publish_leaves_no_publication() {
 
 #[test]
 fn lost_sync_during_stage_does_not_ack_the_chunk() {
+    let _serial = serial();
     let path = dir("stage");
     let bytes = b"not-durable";
     let id = chunk_id(bytes);
