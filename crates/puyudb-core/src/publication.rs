@@ -705,13 +705,14 @@ mod tests {
     const SPACE: SpaceId = SpaceId::from_array([1; 16]);
 
     fn temp() -> PathBuf {
+        // The clock alone is not unique across parallel tests on every
+        // platform, so a counter keeps each directory distinct.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "puyu-pub-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&path).expect("temp");
         path
