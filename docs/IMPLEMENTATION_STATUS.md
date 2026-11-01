@@ -1,6 +1,8 @@
 # Implementation status
 
-**Completed issue IDs: I01, I02, I03. I03 closed 2026-10-28; evidence is
+**Completed issue IDs: I01, I02, I03, I04. I04 closed 2026-11-01: the atomic
+SQLite publication ledger (B1-B7) merged via PR #2 into `i01-repository-foundations`
+and PR #3 brought I01-I04 to `main`. I03 closed 2026-10-28; evidence is
 [the closure record](I03-closure.md). I02 closed on
 2026-10-26: the maintainer definitively selected diamond-types (DT) with the
 small reviewed native patch set, on the completed common baseline, Loro/DT-fit
@@ -9,18 +11,17 @@ experiments, native-interface spike and three-platform final comparison. On
 confirmed the later promotion route as a pinned fork revision with recorded
 provenance. The profile is frozen as a specification plus fixtures, and
 `puyudb-core` now implements the codec that reproduces them byte-for-byte.
-There is still no storage, durable publication, protocol, daemon or CLI surface,
-no native encoding is canonicalized. T3b pins diamond-types to the puyu-tech
+The local publication ledger now exists (I04); there is still no replication,
+protocol, daemon or CLI surface, and no native encoding is canonicalized. T3b pins diamond-types to the puyu-tech
 fork `puyudb/dt-text-v1` at `0d5008bc89b6a2470474711fabe3c8f8b3136e9e`
 (upstream `89ae3a0ab8d941a2885e6ec89d094bc9ce9d2922` plus the two reviewed
 patches). Closure does not add storage, a protocol, or a canonical native
 encoding.**
-Work is maintained on `i03-identity-batch-profile`. Commit `5266c65` was pushed
-to that branch. [PR #1](https://github.com/puyu-tech/PuyuDB/pull/1) is open and
-unmerged. Local checkpoint commits record reviewed progress; they do not accept
-a native format or constitute a release. No merge to `main`, publication,
-deployment, or GitHub issue creation was performed. IDs below are
-implementation-plan IDs.
+Work is maintained on `main`: PR #1 merged I03 into `i01-repository-foundations`
+(`2aec9d6`), PR #2 merged I04 there (`037d841`), PR #3 merged I01-I04 into `main`
+(`26bb823`), PR #4 filled the LICENSE copyright line. The issue branches remain as
+evidence branches. No publication, deployment, or GitHub issue creation was
+performed. IDs below are implementation-plan IDs.
 
 ## I01 closure
 
@@ -422,12 +423,12 @@ The main workspace, dependency lock and DT pin remain unchanged; the experiment
 used a separate generated harness. The 2026-10-26 I02 closure (DT selected)
 changed documentation only; no Rust/build inputs changed after the audited runs.
 
-## I04 in progress: atomic SQLite publication (branch `i04-atomic-sqlite-publication`)
+## I04 closed (2026-11-01): atomic SQLite publication (merged via PR #2; branch `i04-atomic-sqlite-publication`)
 
 The [I04 plan](plans/I04-atomic-sqlite-publication.md) follows blueprint §18.3,
 §6.2–§6.5 and T04. The [ADR-02 pin](adr/02-i04-pin.md) is accepted: rusqlite
 0.41.1 bundled SQLite 3.54.1, WAL/FULL, fullfsync on Apple, one owning process
-via an OS lock. Done so far on the branch (HEAD CI green; the first B1 push
+via an OS lock. Done on the branch (HEAD CI green; the first B1 push
 failed once on macos-15-intel from a test temp-dir collision, fixed by the
 follow-up commit):
 
