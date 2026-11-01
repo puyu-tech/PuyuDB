@@ -69,6 +69,7 @@ const CONFLICT_DOMAIN: &[u8] = b"puyudb/conflict/v1";
 const BRANCH_DESCRIPTOR_DOMAIN: &[u8] = b"puyudb/branch-descriptor/v1";
 const BRANCH_SIGNATURE_DOMAIN: &[u8] = b"puyudb/branch-signature/v1";
 const SEMANTIC_MANIFEST_DOMAIN: &[u8] = b"puyudb/semantic-manifest/v1";
+const REQUEST_DOMAIN: &[u8] = b"puyudb/request/v1";
 const DT_SEED_ACTOR_DOMAIN: &[u8] = b"puyudb/dt-seed-actor/v1";
 const DT_ACTOR_DOMAIN: &[u8] = b"puyudb/dt-actor/v1";
 
@@ -197,6 +198,21 @@ pub fn raw_digest_chunks<'a>(kind: &str, chunks: impl IntoIterator<Item = &'a [u
 #[must_use]
 pub fn artifact_id(body: &[u8]) -> ArtifactId {
     ArtifactId::from_array(digest(ARTIFACT_DOMAIN, &[body]))
+}
+
+/// Digest binding one idempotent publication request: canonical body,
+/// signature, peer, and the ordered chunk list.
+#[must_use]
+pub fn request_hash(body: &[u8], signature: &[u8; 64], chunks: &[ChunkId], peer: u64) -> [u8; 32] {
+    let peer_bytes = peer.to_be_bytes();
+    let mut fields: Vec<&[u8]> = Vec::with_capacity(chunks.len() + 3);
+    fields.push(body);
+    fields.push(signature);
+    fields.push(&peer_bytes);
+    for chunk in chunks {
+        fields.push(chunk.as_bytes());
+    }
+    digest(REQUEST_DOMAIN, &fields)
 }
 
 /// `EpochId` of one canonical epoch descriptor.

@@ -469,9 +469,14 @@ DAG, and admission checks parent existence, exact `lamport = 1 + max(parent
 lamport)`, `previous` membership in the parent closure, and minimality of the
 parent frontier.
 
-Still open inside I04: `requests` idempotency (B4), replication staging tables
-(B5), disk-full fault injection plus the WAL-reset regression scenario (B6),
-Windows/Linux spike reruns (B7). A
+B4 is done on the branch: the `requests` table records
+`(caller, key) → request hash, batch, event cursor`; a repeated identical keyed
+publish returns the stored receipt (including after reopen), a different
+request under the same key is rejected, and a failed publish leaves no row.
+
+Still open inside I04: replication staging tables (B5), disk-full fault
+injection plus the WAL-reset regression scenario (B6), Windows/Linux spike
+reruns (B7). A
 machine/VM power-cut drill is still required per ADR-02; the VFS model is the
 software power-loss evidence. No projections, branches, native scope, checkout,
 quota, replication, backup or CLI surface exists yet.
