@@ -54,7 +54,7 @@ beside the database.
   writing nothing, then the VFS is dead) with power-loss tests for publish and
   stage, plus the §17.3 WAL-reset regression scenario as an explicit T04 test
   (`PRAGMA wal_checkpoint(TRUNCATE)` between publications under the fault VFS).
-- B7 done via hosted runners (`.github/workflows/adr02-spike.yml`, actions
+- B7 done via hosted runners (`.github/workflows/adr02-spike.yml` on the `i04-atomic-sqlite-publication` branch, actions
   pinned by commit id): run `41322417700` (2026-11-01) is green on
   `ubuntu-24.04` (full spike workspace, all engines) and `windows-2025`
   (pinned `adr02-rusqlite` crash matrix: `publication_crash_matrix` and
