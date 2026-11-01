@@ -10,9 +10,17 @@ PuyuDB is the first project in the **Puyu** ecosystem. It is designed as standal
 
 **Early development — not yet released.**
 
-This repository contains Rust workspace foundations, experimental native text/history validation, and a CLI entry point with help and version output only. It does not yet contain a working database engine, database commands, server, or SDK. The capabilities described below are project goals, not currently available features. PuyuDB is not ready for production use.
+This repository contains the Rust workspace foundations, the native text-engine validation evidence (I02), the frozen canonical profile codec (I03), and a local atomic SQLite publication ledger (I04: manifest-bound spaces, content-addressed artifacts with 256 KiB chunks, DAG admission, idempotent keyed publishes, fault-injection power-loss tests). The CLI entry point currently offers help and version output only. There are no database commands, replication, server, or SDK yet. The capabilities described below are project goals, not currently available features. PuyuDB is not ready for production use.
 
 See [implementation status](docs/IMPLEMENTATION_STATUS.md) for completed work, verification evidence, and the next milestone.
+
+## Repository layout
+
+- `crates/` — workspace crates: `puyudb-core` (canonical profile codec and publication ledger), `puyudb-crdt` (pinned native engine plus dev-only comparisons), `puyudb-local`, and the `sqlite-fault` test VFS.
+- `apps/` — the `puyu` CLI binary crate.
+- `docs/` — specification, ADRs, implementation plans, validation reports, and the dependency ledger.
+- `tests/` and `scripts/` — golden fixtures and the Python contract/vector suites run by CI.
+- `experiments/` — I02 research harnesses kept as validation evidence; not part of the workspace build.
 
 ## Why PuyuDB?
 
