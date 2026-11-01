@@ -8,7 +8,7 @@ pinned to an exact revision of the puyu-tech fork, not a moving branch.
 Rust 1.99.1 is the current compiler/floor. Exact pins make selections reproducible;
 they do not mean Cargo fetches moving latest versions on every build.
 
-The resolved metadata graph contains **227 registry package versions and two
+The resolved metadata graph contains **234 registry package versions and two
 same-revision Git packages**, including development, build, and target-specific
 dependencies. The ledger below records
 direct selections and license/maintenance-sensitive transitive dependencies.
@@ -37,6 +37,12 @@ dev-only comparison/conformance dependencies. See
 | [curve25519-dalek-derive](https://crates.io/crates/curve25519-dalek-derive/0.1.1) | 0.1.1 | Build/proc-macro transitive; selects field arithmetic backends | MIT/Apache-2.0 | Undeclared |
 | [serde_json](https://crates.io/crates/serde_json/1.0.154) | 1.0.154 | Dev only in core; reads the committed canonical-profile fixtures | MIT OR Apache-2.0 | 1.71 |
 | [thiserror](https://crates.io/crates/thiserror/2.0.21) | 2.0.21 | Direct; experimental error types | MIT OR Apache-2.0 | 1.77 |
+| [rusqlite](https://crates.io/crates/rusqlite/0.41.1) | 0.41.1 | Direct in core; I04 publication ledger over bundled SQLite (ADR-02 pin) | MIT | 1.89.0 |
+| [libsqlite3-sys](https://crates.io/crates/libsqlite3-sys/0.39.1) | 0.39.1 | Transitive of rusqlite; builds the bundled SQLite 3.54.1 amalgamation | MIT | 1.88.0 |
+| [fallible-iterator](https://crates.io/crates/fallible-iterator/0.3.0) | 0.3.0 | Transitive of rusqlite; fallible iteration | MIT OR Apache-2.0 | Undeclared |
+| [fallible-streaming-iterator](https://crates.io/crates/fallible-streaming-iterator/0.1.9) | 0.1.9 | Transitive of rusqlite; fallible streaming iteration | MIT OR Apache-2.0 | Undeclared |
+| [pkg-config](https://crates.io/crates/pkg-config/0.3.34) | 0.3.34 | Build-only transitive of libsqlite3-sys; system library probe | MIT OR Apache-2.0 | 1.63 |
+| [vcpkg](https://crates.io/crates/vcpkg/0.2.15) | 0.2.15 | Build-only transitive of libsqlite3-sys; Windows library probe | MIT OR Apache-2.0 | Undeclared |
 | [proptest](https://crates.io/crates/proptest/1.12.0) | 1.12.0 | Dev only; deterministic generated native histories | MIT OR Apache-2.0 | 1.88 |
 | [yrs](https://crates.io/crates/yrs/0.28.0) | 0.28.0 | Dev only; challenger trace, not selected | MIT | Undeclared |
 | [loro](https://crates.io/crates/loro/1.17.1) | 1.17.1 | Dev only; challenger trace, not selected 2026-10-26 | MIT | Undeclared |
@@ -57,7 +63,8 @@ Promoting the fork onto the normal `puyudb-crdt` graph makes `rand 0.8.8`,
 `rand_core 0.6.4` and `getrandom 0.2.17` duplicate the newer versions already
 pulled by Automerge and the workspace `rand 0.10.3` pin. Those older versions
 come from diamond-types' `jumprope` dependency and were already locked. `deny.toml`
-skips them rather than forking `jumprope`. They are not vulnerability waivers.
+skips them rather than forking `jumprope`. The same applies to `smallvec 1.16.4`
+(rusqlite) beside the fork's `smallvec 2.0.0-beta.3`. They are not vulnerability waivers.
 
 `RUSTSEC-2026-0249` reports that `smartstring 1.0.1` is unmaintained. It is not a
 vulnerability advisory, and the ignore is not a vulnerability waiver. It is
@@ -83,8 +90,9 @@ repository; both direct full revision and expected manifest version are constrai
 The CLI retains only
 `std`, `help`, `usage`, and `error-context`; Automerge/Loro/Yrs default features
 are disabled. Proptest enables `std` without fork/timeout infrastructure.
-DT defaults (LZ4/storage) are disabled. Core/local remain standard-library-only;
-the CLI does not link the native engines.
+DT defaults (LZ4/storage) are disabled. Core links rusqlite (bundled SQLite) for the I04 publication
+ledger; local remains standard-library-only; the CLI does not link the native
+engines.
 
 For dual MIT/Apache code PuyuDB selects Apache-2.0 where offered; the extra
 Unicode-3.0 requirement remains mandatory. License texts were inspected for the
@@ -94,8 +102,9 @@ obligations before distributing binaries or vendored sources; see
 modified, or vendored. This is not a completed distribution/legal audit.
 
 Latest direct releases do not imply unconstrained transitive upgrades: Automerge
-0.12.0 requires `hexane 1.0.0-alpha.5`; Loro's `pest 2.9.4` transitive requires
-exactly `psm 0.1.24` even though 0.1.32 exists. `cargo update --dry-run --verbose`
+0.12.0 requires `hexane 1.0.0-alpha.5`; Loro's `pest 2.9.5` transitive (with
+`pest_stack_guard 1.0.0`, dev-only) requires exactly `psm 0.1.24` even though
+0.1.32 exists. `cargo update --dry-run --verbose`
 reported zero available compatible lockfile changes. Other multiple major versions
 satisfy different upstream contracts. Do not silently replace them with incompatible
 releases or forks.
@@ -110,7 +119,9 @@ passes. Its source manifest is 2.0.0, not a crates.io release; its archive has n
 root LICENSE/NOTICE text despite declaring ISC. Record that gap before any
 distribution. See [exact provenance](validation/I02-sources.md).
 
-SQLite, Git libraries, application transport, and signing are not dependencies.
+Git libraries, application transport, and a server are not dependencies. SQLite
+(rusqlite's bundled amalgamation, per [ADR-02](adr/02-i04-pin.md)) and Ed25519
+signing (ed25519-dalek) are dependencies of `puyudb-core`; see the rows above.
 Runtime/native format acceptance remains separate from pinning research code.
 
 ## Automated checks

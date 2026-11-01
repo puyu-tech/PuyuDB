@@ -31,4 +31,16 @@ No releases have been published.
   capture and retained comparative evidence from WSL2/macOS. Alternatives remain
   under evaluation; no engine selection, production binding or format freeze.
 
+- I03: frozen canonical profile v1 (spec plus golden vectors) and the
+  `puyudb-core` codec reproducing it byte-for-byte; diamond-types pinned to the
+  patched puyu-tech fork. No storage or native format acceptance yet.
+- I04 in progress on `i04-atomic-sqlite-publication`: atomic SQLite publication
+  ledger (rusqlite 0.41.1 bundled SQLite 3.54.1, WAL/FULL, owner lock) with
+  manifest + `format_meta`, artifact layer with 256 KiB chunks and hydration
+  tracking, the `batch_parents` DAG with closure/minimal-frontier admission,
+  idempotent keyed publication, replication staging schema, and a
+  fault-injection VFS covering lost sync, torn write, disk-full and a
+  WAL-reset regression. Still no projections, branches, native scope,
+  checkout, replication, or CLI surface.
+
 There is no working database engine, persisted format, server, or SDK.
