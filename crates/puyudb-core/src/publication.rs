@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use crate::canon::{self, Item};
 use crate::identity::{ArtifactId, BatchId, BranchId, ChunkId, SpaceId, WriterEpoch};
-use crate::profile::{self, BatchBody, Record, chunk_id};
+use crate::profile::{self, ArtifactManifest, BatchBody, Record, chunk_id};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS format_meta (
@@ -29,6 +29,22 @@ CREATE TABLE IF NOT EXISTS chunks (
   id BLOB PRIMARY KEY,
   bytes BLOB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS artifacts (
+  id BLOB PRIMARY KEY,
+  kind TEXT NOT NULL,
+  raw_length INTEGER NOT NULL,
+  raw_digest BLOB NOT NULL,
+  manifest BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS artifact_chunks (
+  artifact_id BLOB NOT NULL,
+  ordinal INTEGER NOT NULL,
+  chunk_id BLOB NOT NULL,
+  PRIMARY KEY(artifact_id, ordinal),
+  FOREIGN KEY(artifact_id) REFERENCES artifacts(id),
+  FOREIGN KEY(chunk_id) REFERENCES chunks(id)
+);
+CREATE INDEX IF NOT EXISTS artifact_chunks_chunk ON artifact_chunks(chunk_id);
 CREATE TABLE IF NOT EXISTS batches (
   batch_id BLOB PRIMARY KEY,
   public_key BLOB NOT NULL,
@@ -40,13 +56,18 @@ CREATE TABLE IF NOT EXISTS batches (
   quarantined INTEGER NOT NULL,
   UNIQUE(public_key, branch, writer_epoch, sequence)
 );
-CREATE TABLE IF NOT EXISTS batch_chunks (
+CREATE TABLE IF NOT EXISTS batch_artifacts (
   batch_id BLOB NOT NULL,
   ordinal INTEGER NOT NULL,
-  chunk_id BLOB NOT NULL,
+  artifact_id BLOB NOT NULL,
   PRIMARY KEY(batch_id, ordinal),
   FOREIGN KEY(batch_id) REFERENCES batches(batch_id),
-  FOREIGN KEY(chunk_id) REFERENCES chunks(id)
+  FOREIGN KEY(artifact_id) REFERENCES artifacts(id)
+);
+CREATE TABLE IF NOT EXISTS content_availability (
+  artifact_id BLOB PRIMARY KEY,
+  state TEXT NOT NULL CHECK(state IN ('resident', 'intentional-missing', 'lost')),
+  FOREIGN KEY(artifact_id) REFERENCES artifacts(id)
 );
 CREATE TABLE IF NOT EXISTS events (
   cursor INTEGER PRIMARY KEY,
@@ -78,6 +99,9 @@ pub enum Error {
     /// Staged bytes do not hash to the supplied chunk id.
     #[error("chunk bytes do not match the chunk id")]
     ChunkMismatch,
+    /// A staged chunk exceeds the frozen 256 KiB raw chunk cap.
+    #[error("chunk exceeds the 256 KiB raw cap")]
+    ChunkTooLarge,
     /// A required chunk is not staged.
     #[error("chunk is not staged")]
     MissingChunk,
@@ -134,10 +158,25 @@ pub struct Publication<'a> {
     pub signature_key: &'a [u8; 32],
     /// Ed25519 signature over the batch preimage.
     pub signature: &'a [u8; 64],
-    /// Staged chunks this publication requires, in order.
+    /// Artifact manifests this publication binds, in body reference order
+    /// (native artifacts in edit order, then the metadata artifact).
+    pub artifacts: &'a [ArtifactManifest],
+    /// Staged chunks this publication requires: exactly the concatenation of
+    /// the artifacts' chunk lists, in order.
     pub chunks: &'a [ChunkId],
     /// Outbox peer for this local publication.
     pub peer: u64,
+}
+
+/// Hydration state of one artifact, distinct from publication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Availability {
+    /// All chunks are resident and verified against the manifest.
+    Resident,
+    /// Authenticated manifest, payload deliberately not fetched (replication).
+    IntentionalMissing,
+    /// Expected bytes are known to be gone; distinct from corruption.
+    Lost,
 }
 
 /// Returned only after the publication commit is durable.
@@ -275,8 +314,12 @@ impl Store {
     /// Durably stage one chunk. Idempotent when the same bytes are staged again.
     ///
     /// # Errors
-    /// Returns [`Error::ChunkMismatch`] when `id` is not the digest of `bytes`.
+    /// Returns [`Error::ChunkTooLarge`] above the frozen 256 KiB raw cap and
+    /// [`Error::ChunkMismatch`] when `id` is not the digest of `bytes`.
     pub fn stage_chunk(&self, id: ChunkId, bytes: &[u8]) -> Result<(), Error> {
+        if bytes.len() > profile::CHUNK_RAW_BYTES {
+            return Err(Error::ChunkTooLarge);
+        }
         if chunk_id(bytes) != id {
             return Err(Error::ChunkMismatch);
         }
@@ -318,6 +361,44 @@ impl Store {
             publication.signature_key,
             publication.signature,
         )?;
+        // Artifact admission: every manifest is canonical and in-profile, its
+        // ID is exactly the one the signed body commits, and the chunk list is
+        // the concatenation of the manifests' chunk lists. Counts are bounded
+        // transitively: body cap on artifact references, manifest cap on chunks.
+        let mut referenced = publication.body.native_artifacts.clone();
+        referenced.push(publication.body.metadata);
+        if referenced.len() != publication.artifacts.len() {
+            return Err(Error::Rejected(
+                "artifact list does not match the batch body".into(),
+            ));
+        }
+        let mut encoded_artifacts = Vec::with_capacity(publication.artifacts.len());
+        for (manifest, want) in publication.artifacts.iter().zip(&referenced) {
+            let bytes = manifest.encode()?;
+            profile::validate_record(Record::ArtifactManifest, &bytes)?;
+            let id = manifest.id()?;
+            if &id != want {
+                return Err(Error::Rejected(
+                    "artifact id does not match the batch body".into(),
+                ));
+            }
+            encoded_artifacts.push((id, bytes));
+        }
+        let expected_chunks: Vec<&ChunkId> = publication
+            .artifacts
+            .iter()
+            .flat_map(|manifest| manifest.chunks.iter())
+            .collect();
+        if expected_chunks.len() != publication.chunks.len()
+            || expected_chunks
+                .iter()
+                .zip(publication.chunks)
+                .any(|(expected, given)| *expected != given)
+        {
+            return Err(Error::Rejected(
+                "chunk list does not match the artifact manifests".into(),
+            ));
+        }
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         let result = (|| {
             if let Some(cursor) = self.visible_cursor(&batch_id)? {
@@ -329,15 +410,64 @@ impl Store {
             }
             self.admit_stream(publication.body, &batch_id)?;
             self.admit_parents(publication.body)?;
-            for chunk in publication.chunks {
-                let staged: i64 = self.conn.query_row(
-                    "SELECT COUNT(*) FROM chunks WHERE id = ?1",
-                    params![chunk.as_bytes().as_slice()],
-                    |row| row.get(0),
-                )?;
-                if staged != 1 {
-                    return Err(Error::MissingChunk);
+            for (manifest, (artifact_id, manifest_bytes)) in
+                publication.artifacts.iter().zip(&encoded_artifacts)
+            {
+                // Hydration of a local publication: every listed chunk must be
+                // staged, hash to its id, and stream to the manifest's raw
+                // digest and length. Applied implies resident here.
+                let mut total: u64 = 0;
+                let mut payload: Vec<Vec<u8>> = Vec::with_capacity(manifest.chunks.len());
+                for chunk in &manifest.chunks {
+                    let bytes: Vec<u8> = self
+                        .conn
+                        .query_row(
+                            "SELECT bytes FROM chunks WHERE id = ?1",
+                            params![chunk.as_bytes().as_slice()],
+                            |row| row.get(0),
+                        )
+                        .map_err(|_| Error::MissingChunk)?;
+                    if chunk_id(&bytes) != *chunk {
+                        return Err(Error::Rejected(
+                            "stored chunk does not hash to its id".into(),
+                        ));
+                    }
+                    total += bytes.len() as u64;
+                    payload.push(bytes);
                 }
+                if total != manifest.raw_length
+                    || profile::raw_digest_chunks(&manifest.kind, payload.iter().map(Vec::as_slice))
+                        != manifest.raw_digest
+                {
+                    return Err(Error::Rejected(
+                        "artifact payload does not match its manifest".into(),
+                    ));
+                }
+                self.conn.execute(
+                    "INSERT INTO artifacts(id, kind, raw_length, raw_digest, manifest)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        artifact_id.as_bytes().as_slice(),
+                        manifest.kind.as_str(),
+                        manifest.raw_length as i64,
+                        manifest.raw_digest.as_slice(),
+                        manifest_bytes.as_slice(),
+                    ],
+                )?;
+                for (ordinal, chunk) in manifest.chunks.iter().enumerate() {
+                    self.conn.execute(
+                        "INSERT INTO artifact_chunks(artifact_id, ordinal, chunk_id) VALUES (?1, ?2, ?3)",
+                        params![
+                            artifact_id.as_bytes().as_slice(),
+                            ordinal as i64,
+                            chunk.as_bytes().as_slice(),
+                        ],
+                    )?;
+                }
+                self.conn.execute(
+                    "INSERT INTO content_availability(artifact_id, state) VALUES (?1, 'resident')",
+                    params![artifact_id.as_bytes().as_slice()],
+                )?;
             }
             self.conn.execute(
                 "INSERT INTO batches(batch_id, public_key, branch, writer_epoch, sequence, lamport, body, quarantined)
@@ -352,13 +482,13 @@ impl Store {
                     encoded,
                 ],
             )?;
-            for (ordinal, chunk) in publication.chunks.iter().enumerate() {
+            for (ordinal, (artifact_id, _)) in encoded_artifacts.iter().enumerate() {
                 self.conn.execute(
-                    "INSERT INTO batch_chunks(batch_id, ordinal, chunk_id) VALUES (?1, ?2, ?3)",
+                    "INSERT INTO batch_artifacts(batch_id, ordinal, artifact_id) VALUES (?1, ?2, ?3)",
                     params![
                         batch_id.as_bytes().as_slice(),
                         ordinal as i64,
-                        chunk.as_bytes().as_slice(),
+                        artifact_id.as_bytes().as_slice(),
                     ],
                 )?;
             }
@@ -500,7 +630,7 @@ impl Store {
         Ok(count == 1)
     }
 
-    /// Staged chunks that no publication references.
+    /// Staged chunks that no admitted artifact references.
     ///
     /// # Errors
     /// Returns a SQLite error if the read fails.
@@ -508,12 +638,55 @@ impl Store {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM chunks c
              WHERE NOT EXISTS (
-               SELECT 1 FROM batch_chunks b WHERE b.chunk_id = c.id
+               SELECT 1 FROM artifact_chunks a WHERE a.chunk_id = c.id
              )",
             [],
             |row| row.get(0),
         )?;
         Ok(count as u64)
+    }
+
+    /// Hydration state recorded for one artifact.
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn artifact_availability(&self, id: &ArtifactId) -> Result<Option<Availability>, Error> {
+        let state: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT state FROM content_availability WHERE artifact_id = ?1",
+                params![id.as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(match state.as_deref() {
+            None => None,
+            Some("resident") => Some(Availability::Resident),
+            Some("intentional-missing") => Some(Availability::IntentionalMissing),
+            Some("lost") => Some(Availability::Lost),
+            Some(other) => return Err(Error::Corrupt(format!("unknown availability {other}"))),
+        })
+    }
+
+    /// Artifact ids one published batch references, in body order.
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn batch_artifacts(&self, batch: &BatchId) -> Result<Vec<ArtifactId>, Error> {
+        let mut rows = self.conn.prepare(
+            "SELECT artifact_id FROM batch_artifacts WHERE batch_id = ?1 ORDER BY ordinal",
+        )?;
+        let ids = rows
+            .query_map(params![batch.as_bytes().as_slice()], |row| {
+                let bytes: Vec<u8> = row.get(0)?;
+                Ok(bytes)
+            })?
+            .collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>()?;
+        ids.iter()
+            .map(|bytes| {
+                ArtifactId::from_bytes(bytes).map_err(|err| Error::Corrupt(err.to_string()))
+            })
+            .collect()
     }
 }
 
@@ -783,9 +956,37 @@ mod tests {
         path
     }
 
-    fn genesis(metadata: u8) -> BatchBody {
-        BatchBody {
-            space: SpaceId::from_array([1; 16]),
+    /// Frame a payload as an artifact and split it into chunk bytes.
+    fn frame(kind: &str, payload: &[u8]) -> (ArtifactManifest, Vec<(ChunkId, Vec<u8>)>) {
+        let manifest = ArtifactManifest::for_payload(kind, payload).expect("manifest");
+        let chunks = payload
+            .chunks(profile::CHUNK_RAW_BYTES)
+            .map(|c| (chunk_id(c), c.to_vec()))
+            .collect();
+        (manifest, chunks)
+    }
+
+    /// Stage every chunk and return the ids in manifest order.
+    fn stage(store: &Store, chunks: &[(ChunkId, Vec<u8>)]) -> Vec<ChunkId> {
+        let mut ids = Vec::with_capacity(chunks.len());
+        for (id, bytes) in chunks {
+            store.stage_chunk(*id, bytes).expect("stage");
+            ids.push(*id);
+        }
+        ids
+    }
+
+    struct Fixture {
+        body: BatchBody,
+        signature: [u8; 64],
+        manifest: ArtifactManifest,
+        chunks: Vec<(ChunkId, Vec<u8>)>,
+    }
+
+    fn fixture(metadata_byte: u8) -> Fixture {
+        let (manifest, chunks) = frame("metadata-v1", &[metadata_byte]);
+        let mut body = BatchBody {
+            space: SPACE,
             branch: BranchId::from_array([2; 16]),
             public_key: profile::public_key(&[3; 32]),
             writer_epoch: WriterEpoch::from_array([4; 16]),
@@ -794,20 +995,49 @@ mod tests {
             parents: Vec::new(),
             lamport: 1,
             native_artifacts: Vec::new(),
-            metadata: ArtifactId::from_array([metadata; 32]),
+            metadata: ArtifactId::from_array([0; 32]),
+        };
+        body.metadata = manifest.id().expect("artifact id");
+        let signature = sign(&body);
+        Fixture {
+            body,
+            signature,
+            manifest,
+            chunks,
         }
     }
 
-    fn signed<'a>(
-        body: &'a BatchBody,
-        chunks: &'a [ChunkId],
-        sig: &'a [u8; 64],
-    ) -> Publication<'a> {
-        Publication {
+    /// A child batch of `parent` carrying a fresh one-byte metadata artifact.
+    fn child(
+        parent: &Fixture,
+        sequence: u64,
+        lamport: u64,
+        metadata_byte: u8,
+        parents: Vec<BatchId>,
+    ) -> Fixture {
+        let (manifest, chunks) = frame("metadata-v1", &[metadata_byte]);
+        let mut body = parent.body.clone();
+        body.sequence = sequence;
+        body.lamport = lamport;
+        body.previous = Some(parent.body.id().expect("id"));
+        body.parents = parents;
+        body.metadata = manifest.id().expect("artifact id");
+        let signature = sign(&body);
+        Fixture {
             body,
-            signature_key: &body.public_key,
-            signature: sig,
+            signature,
+            manifest,
             chunks,
+        }
+    }
+
+    fn publication<'a>(f: &'a Fixture, ids: &'a [ChunkId]) -> Publication<'a> {
+        Publication {
+            body: &f.body,
+            signature_key: &f.body.public_key,
+            signature: &f.signature,
+            artifacts: std::slice::from_ref(&f.manifest),
+            chunks: ids,
             peer: 1,
         }
     }
@@ -819,10 +1049,7 @@ mod tests {
     #[test]
     fn publish_is_visible_after_reopen_and_staged_chunks_are_not() {
         let dir = temp();
-        let chunk = b"chunk-bytes";
-        let id = chunk_id(chunk);
-        let body = genesis(6);
-        let signature = sign(&body);
+        let f = fixture(6);
         let store = Store::open(&dir, &SPACE).expect("open");
         assert!(
             store
@@ -830,38 +1057,89 @@ mod tests {
                 .expect("version")
                 .starts_with("3.54.")
         );
-        store.stage_chunk(id, chunk).expect("stage");
-        assert!(!store.is_published(&body.id().expect("id")).expect("read"));
+        let ids = stage(&store, &f.chunks);
+        let batch = f.body.id().expect("id");
+        let artifact = f.manifest.id().expect("artifact id");
+        assert!(!store.is_published(&batch).expect("read"));
         assert_eq!(store.staged_without_publication().expect("staged"), 1);
-        let receipt = store
-            .publish(&signed(&body, &[id], &signature))
-            .expect("publish");
+        let receipt = store.publish(&publication(&f, &ids)).expect("publish");
         assert_eq!(receipt.event_cursor, 1);
-        let again = store
-            .publish(&signed(&body, &[id], &signature))
-            .expect("idempotent");
+        let again = store.publish(&publication(&f, &ids)).expect("idempotent");
         assert_eq!(again.event_cursor, 1);
+        assert_eq!(
+            store
+                .artifact_availability(&artifact)
+                .expect("availability"),
+            Some(Availability::Resident)
+        );
+        assert_eq!(
+            store.batch_artifacts(&batch).expect("artifacts"),
+            vec![artifact]
+        );
         drop(store);
         let reopened = Store::open(&dir, &SPACE).expect("reopen");
-        assert!(
-            reopened
-                .is_published(&body.id().expect("id"))
-                .expect("read")
-        );
+        assert!(reopened.is_published(&batch).expect("read"));
         assert_eq!(reopened.staged_without_publication().expect("staged"), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn multi_chunk_artifact_publishes_and_verifies() {
+        let dir = temp();
+        let payload = vec![7u8; profile::CHUNK_RAW_BYTES * 2 + 100];
+        let (manifest, chunks) = frame("opaque-baseline-v1", &payload);
+        assert_eq!(manifest.chunks.len(), 3);
+        let mut body = fixture(6).body;
+        body.metadata = manifest.id().expect("artifact id");
+        let signature = sign(&body);
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let ids = stage(&store, &chunks);
+        let f = Fixture {
+            body,
+            signature,
+            manifest: manifest.clone(),
+            chunks,
+        };
+        store.publish(&publication(&f, &ids)).expect("publish");
+        assert_eq!(
+            store
+                .artifact_availability(&manifest.id().expect("id"))
+                .expect("availability"),
+            Some(Availability::Resident)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn oversized_chunk_is_rejected() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let bytes = vec![0u8; profile::CHUNK_RAW_BYTES + 1];
+        let err = store
+            .stage_chunk(chunk_id(&bytes), &bytes)
+            .expect_err("too large");
+        assert!(matches!(err, Error::ChunkTooLarge));
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn unsigned_batch_is_not_published() {
         let dir = temp();
-        let body = genesis(6);
+        let f = fixture(6);
         let store = Store::open(&dir, &SPACE).expect("open");
+        let ids = stage(&store, &f.chunks);
         let err = store
-            .publish(&signed(&body, &[], &[0; 64]))
+            .publish(&Publication {
+                body: &f.body,
+                signature_key: &f.body.public_key,
+                signature: &[0; 64],
+                artifacts: std::slice::from_ref(&f.manifest),
+                chunks: &ids,
+                peer: 1,
+            })
             .expect_err("unsigned");
         assert!(matches!(err, Error::Rejected(_)));
-        assert!(!store.is_published(&body.id().expect("id")).expect("read"));
+        assert!(!store.is_published(&f.body.id().expect("id")).expect("read"));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -869,67 +1147,150 @@ mod tests {
     fn missing_parent_stays_pending_and_equivocation_unpublishes_both() {
         let dir = temp();
         let store = Store::open(&dir, &SPACE).expect("open");
-        let first = genesis(6);
-        let first_sig = sign(&first);
+        let first = fixture(6);
+        let first_ids = stage(&store, &first.chunks);
         store
-            .publish(&signed(&first, &[], &first_sig))
+            .publish(&publication(&first, &first_ids))
             .expect("first");
 
-        let mut child = first.clone();
-        child.sequence = 2;
-        child.lamport = 2;
-        child.previous = Some(first.id().expect("id"));
-        child.parents = vec![first.id().expect("id")];
-        child.metadata = ArtifactId::from_array([8; 32]);
-        let child_sig = sign(&child);
+        let second = child(&first, 2, 2, 8, vec![first.body.id().expect("id")]);
+        let second_ids = stage(&store, &second.chunks);
         store
-            .publish(&signed(&child, &[], &child_sig))
+            .publish(&publication(&second, &second_ids))
             .expect("child");
 
-        let mut orphan = child.clone();
-        orphan.sequence = 3;
-        orphan.lamport = 3;
-        orphan.previous = Some(child.id().expect("id"));
-        orphan.parents = vec![BatchId::from_array([9; 32])];
-        orphan.metadata = ArtifactId::from_array([10; 32]);
-        let orphan_sig = sign(&orphan);
+        let orphan = child(&second, 3, 3, 10, vec![BatchId::from_array([9; 32])]);
+        let orphan_ids = stage(&store, &orphan.chunks);
         let err = store
-            .publish(&signed(&orphan, &[], &orphan_sig))
+            .publish(&publication(&orphan, &orphan_ids))
             .expect_err("parent");
         assert!(matches!(err, Error::MissingDependency));
 
-        let mut other = first.clone();
-        other.metadata = ArtifactId::from_array([11; 32]);
-        let other_sig = sign(&other);
+        // Same stream position as `first`, different body: equivocation.
+        let (rival_manifest, rival_chunks) = frame("metadata-v1", &[11]);
+        let mut rival = first.body.clone();
+        rival.metadata = rival_manifest.id().expect("artifact id");
+        let rival_sig = sign(&rival);
+        let rival_ids = stage(&store, &rival_chunks);
         let err = store
-            .publish(&signed(&other, &[], &other_sig))
+            .publish(&Publication {
+                body: &rival,
+                signature_key: &rival.public_key,
+                signature: &rival_sig,
+                artifacts: std::slice::from_ref(&rival_manifest),
+                chunks: &rival_ids,
+                peer: 1,
+            })
             .expect_err("equivocation");
         assert!(matches!(err, Error::Equivocation));
         assert!(
             !store
-                .is_published(&first.id().expect("id"))
+                .is_published(&first.body.id().expect("id"))
                 .expect("first hidden")
         );
         assert!(
             !store
-                .is_published(&other.id().expect("id"))
+                .is_published(&rival.id().expect("id"))
                 .expect("other hidden")
         );
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn missing_chunk_leaves_no_publication() {
+    fn missing_artifact_chunk_leaves_no_publication() {
         let dir = temp();
-        let body = genesis(6);
-        let signature = sign(&body);
-        let missing = ChunkId::from_array([9; 32]);
+        let f = fixture(6);
         let store = Store::open(&dir, &SPACE).expect("open");
-        let err = store
-            .publish(&signed(&body, &[missing], &signature))
-            .expect_err("missing");
+        // The chunk ids match the manifest list, but nothing was staged.
+        let ids: Vec<ChunkId> = f.manifest.chunks.clone();
+        let err = store.publish(&publication(&f, &ids)).expect_err("missing");
         assert!(matches!(err, Error::MissingChunk));
+        assert!(!store.is_published(&f.body.id().expect("id")).expect("read"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chunk_list_must_match_the_manifests() {
+        let dir = temp();
+        let f = fixture(6);
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let _ = stage(&store, &f.chunks);
+        let err = store.publish(&publication(&f, &[])).expect_err("chunks");
+        assert!(matches!(err, Error::Rejected(_)));
+        assert!(!store.is_published(&f.body.id().expect("id")).expect("read"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn artifact_id_must_match_the_signed_body() {
+        let dir = temp();
+        let f = fixture(6);
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let ids = stage(&store, &f.chunks);
+        // Rebind the body to a different artifact id and re-sign.
+        let mut body = f.body.clone();
+        body.metadata = ArtifactId::from_array([9; 32]);
+        let sig = sign(&body);
+        let err = store
+            .publish(&Publication {
+                body: &body,
+                signature_key: &body.public_key,
+                signature: &sig,
+                artifacts: std::slice::from_ref(&f.manifest),
+                chunks: &ids,
+                peer: 1,
+            })
+            .expect_err("id mismatch");
+        assert!(matches!(err, Error::Rejected(_)));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn payload_that_does_not_match_the_manifest_is_rejected() {
+        let dir = temp();
+        let (mut manifest, chunks) = frame("metadata-v1", &[6]);
+        manifest.raw_digest = [9; 32]; // lie about the content digest
+        let mut body = fixture(6).body;
+        body.metadata = manifest.id().expect("artifact id");
+        let signature = sign(&body);
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let ids = stage(&store, &chunks);
+        let err = store
+            .publish(&Publication {
+                body: &body,
+                signature_key: &body.public_key,
+                signature: &signature,
+                artifacts: std::slice::from_ref(&manifest),
+                chunks: &ids,
+                peer: 1,
+            })
+            .expect_err("digest mismatch");
+        assert!(matches!(err, Error::Rejected(_)));
         assert!(!store.is_published(&body.id().expect("id")).expect("read"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reserved_artifact_kind_is_rejected() {
+        let dir = temp();
+        let (mut manifest, chunks) = frame("metadata-v1", &[6]);
+        manifest.kind = "archive-coverage-v1".into();
+        let mut body = fixture(6).body;
+        body.metadata = manifest.id().expect("artifact id");
+        let signature = sign(&body);
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let ids = stage(&store, &chunks);
+        let err = store
+            .publish(&Publication {
+                body: &body,
+                signature_key: &body.public_key,
+                signature: &signature,
+                artifacts: std::slice::from_ref(&manifest),
+                chunks: &ids,
+                peer: 1,
+            })
+            .expect_err("reserved kind");
+        assert!(matches!(err, Error::Rejected(_)));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1034,11 +1395,18 @@ mod tests {
     fn foreign_space_body_is_rejected() {
         let dir = temp();
         let store = Store::open(&dir, &SPACE).expect("open");
-        let mut foreign = genesis(6);
+        let mut foreign = fixture(6).body;
         foreign.space = SpaceId::from_array([9; 16]);
         let foreign_sig = sign(&foreign);
         let err = store
-            .publish(&signed(&foreign, &[], &foreign_sig))
+            .publish(&Publication {
+                body: &foreign,
+                signature_key: &foreign.public_key,
+                signature: &foreign_sig,
+                artifacts: &[],
+                chunks: &[],
+                peer: 1,
+            })
             .expect_err("foreign space");
         assert!(matches!(err, Error::Rejected(_)));
         assert!(
@@ -1053,26 +1421,34 @@ mod tests {
     fn distinct_writer_keys_are_distinct_streams() {
         let dir = temp();
         let store = Store::open(&dir, &SPACE).expect("open");
-        let first = genesis(6);
-        let first_sig = sign(&first);
+        let first = fixture(6);
+        let first_ids = stage(&store, &first.chunks);
         store
-            .publish(&signed(&first, &[], &first_sig))
+            .publish(&publication(&first, &first_ids))
             .expect("first");
         // Same writer_epoch bytes and sequence, but a different public key and
         // branch context: a different stream, not an equivocation.
-        let mut other = genesis(7);
+        let (manifest, chunks) = frame("metadata-v1", &[7]);
+        let mut other = first.body.clone();
         other.public_key = profile::public_key(&[4; 32]);
+        other.metadata = manifest.id().expect("artifact id");
         let other_sig = profile::sign_batch(&[4; 32], &other.space, &other.id().expect("id"));
+        let ids = stage(&store, &chunks);
         store
             .publish(&Publication {
                 body: &other,
                 signature_key: &other.public_key,
                 signature: &other_sig,
-                chunks: &[],
+                artifacts: std::slice::from_ref(&manifest),
+                chunks: &ids,
                 peer: 1,
             })
             .expect("second writer");
-        assert!(store.is_published(&first.id().expect("id")).expect("read"));
+        assert!(
+            store
+                .is_published(&first.body.id().expect("id"))
+                .expect("read")
+        );
         assert!(store.is_published(&other.id().expect("id")).expect("read"));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1081,20 +1457,34 @@ mod tests {
     fn same_key_on_another_branch_is_a_distinct_stream() {
         let dir = temp();
         let store = Store::open(&dir, &SPACE).expect("open");
-        let first = genesis(6);
-        let first_sig = sign(&first);
+        let first = fixture(6);
+        let first_ids = stage(&store, &first.chunks);
         store
-            .publish(&signed(&first, &[], &first_sig))
+            .publish(&publication(&first, &first_ids))
             .expect("first branch");
         // Same public key, writer epoch and sequence, but a different branch:
         // a distinct stream per spec §13, not an equivocation.
-        let mut other = genesis(7);
+        let (manifest, chunks) = frame("metadata-v1", &[7]);
+        let mut other = first.body.clone();
         other.branch = BranchId::from_array([5; 16]);
+        other.metadata = manifest.id().expect("artifact id");
         let other_sig = sign(&other);
+        let ids = stage(&store, &chunks);
         store
-            .publish(&signed(&other, &[], &other_sig))
+            .publish(&Publication {
+                body: &other,
+                signature_key: &other.public_key,
+                signature: &other_sig,
+                artifacts: std::slice::from_ref(&manifest),
+                chunks: &ids,
+                peer: 1,
+            })
             .expect("second branch");
-        assert!(store.is_published(&first.id().expect("id")).expect("read"));
+        assert!(
+            store
+                .is_published(&first.body.id().expect("id"))
+                .expect("read")
+        );
         assert!(store.is_published(&other.id().expect("id")).expect("read"));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1103,20 +1493,15 @@ mod tests {
     fn lamport_must_equal_one_plus_max_parent() {
         let dir = temp();
         let store = Store::open(&dir, &SPACE).expect("open");
-        let first = genesis(6);
-        let first_sig = sign(&first);
+        let first = fixture(6);
+        let first_ids = stage(&store, &first.chunks);
         store
-            .publish(&signed(&first, &[], &first_sig))
+            .publish(&publication(&first, &first_ids))
             .expect("first");
-        let mut child = first.clone();
-        child.sequence = 2;
-        child.lamport = 1000;
-        child.previous = Some(first.id().expect("id"));
-        child.parents = vec![first.id().expect("id")];
-        child.metadata = ArtifactId::from_array([8; 32]);
-        let child_sig = sign(&child);
+        let wrong = child(&first, 2, 1000, 8, vec![first.body.id().expect("id")]);
+        let wrong_ids = stage(&store, &wrong.chunks);
         let err = store
-            .publish(&signed(&child, &[], &child_sig))
+            .publish(&publication(&wrong, &wrong_ids))
             .expect_err("lamport");
         assert!(matches!(err, Error::Rejected(_)));
         let _ = fs::remove_dir_all(&dir);
@@ -1134,13 +1519,13 @@ mod tests {
     fn integers_beyond_i64_are_rejected() {
         let dir = temp();
         let store = Store::open(&dir, &SPACE).expect("open");
-        let body = genesis(6);
-        let signature = sign(&body);
-        let mut overflow = signed(&body, &[], &signature);
+        let f = fixture(6);
+        let ids = stage(&store, &f.chunks);
+        let mut overflow = publication(&f, &ids);
         overflow.peer = u64::MAX;
         let err = store.publish(&overflow).expect_err("peer overflow");
         assert!(matches!(err, Error::Rejected(_)));
-        assert!(!store.is_published(&body.id().expect("id")).expect("read"));
+        assert!(!store.is_published(&f.body.id().expect("id")).expect("read"));
         let _ = fs::remove_dir_all(&dir);
     }
 

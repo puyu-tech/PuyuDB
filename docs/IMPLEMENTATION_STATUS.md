@@ -456,8 +456,15 @@ follow-up commit):
   frontier checks (B3), WAL-reset regression scenario in the T04 corpus (B6),
   quarantine not cascading to descendants (I08).
 
-Still open inside I04: the artifact layer with `content_availability` and the
-256 KiB chunk cap (B2), `batch_parents` plus parent-closure/minimal-frontier
+B2 is done on the branch: `artifacts` / `artifact_chunks` / `batch_artifacts`
+(the flat `batch_chunks` table is replaced by the artifact mapping) and
+`content_availability` (`resident` / `intentional-missing` / `lost`).
+`stage_chunk` enforces the 256 KiB raw cap; `publish` binds each artifact
+manifest to the id the signed body commits, requires the chunk list to equal
+the manifests' concatenation, and verifies hydration (per-chunk hash, length,
+streamed raw digest), so a local `Applied` receipt implies `resident`.
+
+Still open inside I04: `batch_parents` plus parent-closure/minimal-frontier
 admission checks (B3), `requests` idempotency (B4), replication staging tables
 (B5), disk-full fault injection plus the WAL-reset regression scenario (B6),
 Windows/Linux spike reruns (B7). A

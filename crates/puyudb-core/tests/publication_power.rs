@@ -5,8 +5,8 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use puyudb_core::identity::{ArtifactId, BatchId, BranchId, SpaceId, WriterEpoch};
-use puyudb_core::profile::{self, BatchBody, chunk_id};
+use puyudb_core::identity::{BatchId, BranchId, ChunkId, SpaceId, WriterEpoch};
+use puyudb_core::profile::{self, ArtifactManifest, BatchBody, chunk_id};
 use puyudb_core::publication::{Publication, Store};
 use sqlite_fault::{self, install, reset};
 
@@ -35,40 +35,18 @@ fn dir(label: &str) -> std::path::PathBuf {
     path
 }
 
-fn signed<'a>(
-    body: &'a BatchBody,
-    chunks: &'a [puyudb_core::identity::ChunkId],
-    signature: &'a [u8; 64],
-) -> Publication<'a> {
-    Publication {
-        body,
-        signature_key: &body.public_key,
-        signature,
-        chunks,
-        peer: 1,
-    }
-}
-
 struct Prepared {
     body: BatchBody,
     signature: [u8; 64],
     batch: BatchId,
+    manifest: ArtifactManifest,
+    payload: Vec<u8>,
 }
 
-fn prepared() -> Prepared {
-    let body = genesis();
-    let batch = body.id().expect("id");
-    let signature = profile::sign_batch(&[3; 32], &body.space, &batch);
-    Prepared {
-        body,
-        signature,
-        batch,
-    }
-}
-
-fn genesis() -> BatchBody {
-    BatchBody {
-        space: SpaceId::from_array([1; 16]),
+fn prepared_with(payload: &[u8]) -> Prepared {
+    let manifest = ArtifactManifest::for_payload("metadata-v1", payload).expect("manifest");
+    let body = BatchBody {
+        space: SPACE,
         branch: BranchId::from_array([2; 16]),
         public_key: profile::public_key(&[3; 32]),
         writer_epoch: WriterEpoch::from_array([4; 16]),
@@ -77,7 +55,55 @@ fn genesis() -> BatchBody {
         parents: Vec::new(),
         lamport: 1,
         native_artifacts: Vec::new(),
-        metadata: ArtifactId::from_array([6; 32]),
+        metadata: manifest.id().expect("artifact id"),
+    };
+    let batch = body.id().expect("id");
+    let signature = profile::sign_batch(&[3; 32], &body.space, &batch);
+    Prepared {
+        body,
+        signature,
+        batch,
+        manifest,
+        payload: payload.to_vec(),
+    }
+}
+
+fn prepared() -> Prepared {
+    prepared_with(b"fault-metadata")
+}
+
+/// A child of `parent` carrying its own metadata artifact payload.
+fn prepared_child(parent: &Prepared, payload: &[u8]) -> Prepared {
+    let mut p = prepared_with(payload);
+    p.body.sequence = parent.body.sequence + 1;
+    p.body.lamport = parent.body.lamport + 1;
+    p.body.previous = Some(parent.batch);
+    p.body.parents = vec![parent.batch];
+    p.batch = p.body.id().expect("id");
+    p.signature = profile::sign_batch(&[3; 32], &p.body.space, &p.batch);
+    p
+}
+
+/// Stage the prepared artifact's chunks and return their ids in order.
+fn stage_prepared(store: &Store, p: &Prepared) -> Vec<ChunkId> {
+    p.payload
+        .chunks(profile::CHUNK_RAW_BYTES)
+        .map(|c| {
+            let id = chunk_id(c);
+            store.stage_chunk(id, c).expect("stage");
+            id
+        })
+        .collect()
+}
+
+fn signed<'a>(p: &'a Prepared, ids: &'a [ChunkId], sig: &'a [u8; 64]) -> Publication<'a> {
+    Publication {
+        body: &p.body,
+        signature_key: &p.body.public_key,
+        signature: sig,
+        artifacts: std::slice::from_ref(&p.manifest),
+        chunks: ids,
+        peer: 1,
     }
 }
 
@@ -91,13 +117,11 @@ fn open_fault(path: &std::path::Path) -> Store {
 fn fault_vfs_can_publish_when_disarmed() {
     let _serial = serial();
     let path = dir("ok");
-    let bytes = b"durable-chunk";
-    let id = chunk_id(bytes);
     let store = open_fault(&path);
     let prepared = prepared();
-    store.stage_chunk(id, bytes).expect("stage");
+    let ids = stage_prepared(&store, &prepared);
     store
-        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .publish(&signed(&prepared, &ids, &prepared.signature))
         .expect("publish");
     drop(store);
     reset();
@@ -110,15 +134,13 @@ fn fault_vfs_can_publish_when_disarmed() {
 fn lost_sync_during_publish_leaves_no_publication() {
     let _serial = serial();
     let path = dir("sync");
-    let bytes = b"staged-only";
-    let id = chunk_id(bytes);
     let store = open_fault(&path);
     let prepared = prepared();
-    store.stage_chunk(id, bytes).expect("stage");
+    let ids = stage_prepared(&store, &prepared);
     sqlite_fault::fail_next_sync();
     assert!(
         store
-            .publish(&signed(&prepared.body, &[id], &prepared.signature))
+            .publish(&signed(&prepared, &ids, &prepared.signature))
             .is_err()
     );
     drop(store);
@@ -127,7 +149,7 @@ fn lost_sync_during_publish_leaves_no_publication() {
     assert!(!store.is_published(&prepared.batch).expect("read"));
     assert_eq!(store.staged_without_publication().expect("staged"), 1);
     store
-        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .publish(&signed(&prepared, &ids, &prepared.signature))
         .expect("retry");
     let _ = std::fs::remove_dir_all(&path);
 }
@@ -136,15 +158,13 @@ fn lost_sync_during_publish_leaves_no_publication() {
 fn torn_write_during_publish_leaves_no_publication() {
     let _serial = serial();
     let path = dir("tear");
-    let bytes = b"tear-chunk";
-    let id = chunk_id(bytes);
     let store = open_fault(&path);
     let prepared = prepared();
-    store.stage_chunk(id, bytes).expect("stage");
+    let ids = stage_prepared(&store, &prepared);
     sqlite_fault::tear_next_write();
     assert!(
         store
-            .publish(&signed(&prepared.body, &[id], &prepared.signature))
+            .publish(&signed(&prepared, &ids, &prepared.signature))
             .is_err()
     );
     drop(store);
@@ -152,7 +172,7 @@ fn torn_write_during_publish_leaves_no_publication() {
     let store = Store::open(&path, &SPACE).expect("reopen");
     assert!(!store.is_published(&prepared.batch).expect("read"));
     store
-        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .publish(&signed(&prepared, &ids, &prepared.signature))
         .expect("retry");
     let _ = std::fs::remove_dir_all(&path);
 }
@@ -161,13 +181,11 @@ fn torn_write_during_publish_leaves_no_publication() {
 fn acked_batch_survives_a_later_armed_fault() {
     let _serial = serial();
     let path = dir("acked");
-    let bytes = b"acked-chunk";
-    let id = chunk_id(bytes);
     let store = open_fault(&path);
     let prepared = prepared();
-    store.stage_chunk(id, bytes).expect("stage");
+    let ids = stage_prepared(&store, &prepared);
     store
-        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .publish(&signed(&prepared, &ids, &prepared.signature))
         .expect("publish");
     // The ack already returned; a later fault must not undo it.
     sqlite_fault::fail_next_sync();
@@ -183,28 +201,25 @@ fn acked_batch_survives_a_later_armed_fault() {
 fn reset_under_open_file_fails_sync_without_touching_the_file() {
     let _serial = serial();
     let path = dir("reset-open");
-    let bytes = b"reset-chunk";
-    let id = chunk_id(bytes);
     let store = open_fault(&path);
     let prepared = prepared();
-    store.stage_chunk(id, bytes).expect("stage");
+    let ids = stage_prepared(&store, &prepared);
     store
-        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .publish(&signed(&prepared, &ids, &prepared.signature))
         .expect("publish");
+    let second = prepared_child(&prepared, b"second-metadata");
+    let second_ids = stage_prepared(&store, &second);
     // Misuse the shim on purpose: reset() while the file is still open. The
     // armed sync must fail through the defensive snapshot .get() without
     // touching the file (R01); reset no longer shrinks the vec, so ids stay
     // monotonic (R02).
     reset();
     sqlite_fault::fail_next_sync();
-    let mut second = prepared.body.clone();
-    second.sequence = 2;
-    second.lamport = 2;
-    second.previous = Some(prepared.batch);
-    second.parents = vec![prepared.batch];
-    second.metadata = ArtifactId::from_array([7; 32]);
-    let second_sig = profile::sign_batch(&[3; 32], &second.space, &second.id().expect("id"));
-    assert!(store.publish(&signed(&second, &[], &second_sig)).is_err());
+    assert!(
+        store
+            .publish(&signed(&second, &second_ids, &second.signature))
+            .is_err()
+    );
     drop(store);
     reset();
     let store = Store::open(&path, &SPACE).expect("reopen");
@@ -217,23 +232,21 @@ fn reset_between_two_fault_stores_does_not_alias_snapshot_ids() {
     let _serial = serial();
     let dir_a = dir("alias-a");
     let dir_b = dir("alias-b");
-    let bytes = b"alias-chunk";
-    let id = chunk_id(bytes);
     let store_a = open_fault(&dir_a);
     let prepared = prepared();
-    store_a.stage_chunk(id, bytes).expect("stage a");
+    let ids_a = stage_prepared(&store_a, &prepared);
     store_a
-        .publish(&signed(&prepared.body, &[id], &prepared.signature))
+        .publish(&signed(&prepared, &ids_a, &prepared.signature))
         .expect("publish a");
     // Misuse on purpose: reset() while store_a is open, then a second fault
     // store. Snapshot ids must keep increasing, never alias across the reset.
     reset();
     let store_b = open_fault(&dir_b);
-    store_b.stage_chunk(id, bytes).expect("stage b");
+    let ids_b = stage_prepared(&store_b, &prepared);
     sqlite_fault::fail_next_sync();
     assert!(
         store_b
-            .publish(&signed(&prepared.body, &[id], &prepared.signature))
+            .publish(&signed(&prepared, &ids_b, &prepared.signature))
             .is_err()
     );
     drop(store_a);

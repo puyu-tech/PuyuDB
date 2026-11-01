@@ -28,6 +28,15 @@ beside the database.
   serialized around the global VFS state), `tests/publication_crash.rs`
   (SIGKILL after staged chunk → no publication).
 - B1 done (`64f0136` plus the audit-fix commit): manifest + `format_meta`.
+- B2 done: artifact layer — `artifacts` / `artifact_chunks` / `batch_artifacts`
+  (the flat `batch_chunks` table is replaced by the artifact mapping) plus
+  `content_availability` (`resident` / `intentional-missing` / `lost`).
+  `stage_chunk` enforces the frozen 256 KiB raw chunk cap; `publish` binds every
+  artifact manifest to the artifact id the signed body commits, requires the
+  publication chunk list to equal the concatenation of the manifests' chunk
+  lists (bounding count transitively through the body and manifest caps), and
+  verifies hydration — per-chunk hash, total length, and the streamed raw
+  content digest — so a local `Applied` receipt implies `resident`.
 - Spike evidence on `adr02-storage-spike` (`docs/adr/02-storage-spike.md`):
   six engines, boundary/random kill matrices — macOS only, SIGKILL only.
 - Audit of B1 + ledger (`87e1c2b`) found and the follow-up commit fixed three
