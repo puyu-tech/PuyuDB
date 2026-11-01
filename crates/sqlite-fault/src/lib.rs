@@ -10,8 +10,8 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::Mutex;
 
 use libsqlite3_sys::{
-    SQLITE_IOERR, SQLITE_OK, sqlite3_file, sqlite3_initialize, sqlite3_int64, sqlite3_io_methods,
-    sqlite3_vfs, sqlite3_vfs_find, sqlite3_vfs_register,
+    SQLITE_FULL, SQLITE_IOERR, SQLITE_OK, sqlite3_file, sqlite3_initialize, sqlite3_int64,
+    sqlite3_io_methods, sqlite3_vfs, sqlite3_vfs_find, sqlite3_vfs_register,
 };
 
 const NAME: &[u8] = b"puyu-fault\0";
@@ -86,7 +86,7 @@ pub fn tear_next_write() {
     state.dead = false;
 }
 
-/// The next `xWrite` fails with `SQLITE_IOERR` and writes nothing: disk full
+/// The next `xWrite` fails with `SQLITE_FULL` and writes nothing: a full disk
 /// leaves no torn prefix, unlike [`tear_next_write`]. Then the VFS goes dead.
 pub fn fail_next_write_enospc() {
     let mut state = STATE.lock().expect("fault state");
@@ -224,11 +224,11 @@ unsafe extern "C" fn x_write(
             return SQLITE_IOERR;
         }
         if state.fail_write_enospc {
-            // Disk full: the write fails and no byte reaches the file, so
-            // unlike a torn write there is no short prefix on disk.
+            // Disk full: the write fails with SQLITE_FULL and no byte reaches
+            // the file, so unlike a torn write there is no short prefix on disk.
             state.fail_write_enospc = false;
             state.dead = true;
-            return SQLITE_IOERR;
+            return SQLITE_FULL;
         }
         if state.tear_write {
             state.tear_write = false;

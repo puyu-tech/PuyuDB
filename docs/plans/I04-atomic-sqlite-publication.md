@@ -54,6 +54,15 @@ beside the database.
   writing nothing, then the VFS is dead) with power-loss tests for publish and
   stage, plus the §17.3 WAL-reset regression scenario as an explicit T04 test
   (`PRAGMA wal_checkpoint(TRUNCATE)` between publications under the fault VFS).
+- Follow-up audit of B2–B6 (fresh session over `e38f462..e199854`) found two
+  majors, both fixed: keyed idempotency now checks the `requests` row before
+  the already-published shortcut, rejects key reuse even when the new batch is
+  already published, and stops returning a receipt once its batch is
+  quarantined (`receipt_for` filters `quarantined = 0` too); artifact rows use
+  `INSERT OR IGNORE` so two batches may share one content-addressed artifact.
+  Also fixed: the ENOSPC arm returns `SQLITE_FULL`, staging bodies are capped
+  at the 1 MiB profile cap, expiry values are checked against the i64 range,
+  and idempotency caller/key are size-capped.
 - Spike evidence on `adr02-storage-spike` (`docs/adr/02-storage-spike.md`):
   six engines, boundary/random kill matrices — macOS only, SIGKILL only.
 - Audit of B1 + ledger (`87e1c2b`) found and the follow-up commit fixed three

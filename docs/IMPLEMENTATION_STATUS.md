@@ -272,8 +272,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-**137 workspace tests pass:** 104 native research tests, 12 canonical-profile
-integration tests, 15 core unit tests and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
+**176 workspace tests pass:** 104 native research tests, 12 canonical-profile
+integration tests, 42 core unit tests, 12 publication integration tests
+(11 power-loss/fault and 1 process-kill) and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
 have passed explicitly in release mode: the mixed-history delivery gate and
 the all-candidate paste/delete/restore workload fixture. Allocator calibration
 also passes as a separate example test.
@@ -479,8 +480,6 @@ the WAL-reset regression scenario as an explicit T04 test) are done.
 
 Still open inside I04: Windows/Linux spike reruns (B7). A machine/VM
 power-cut drill is still required per ADR-02; the VFS model is the
-software power-loss evidence. A
-machine/VM power-cut drill is still required per ADR-02; the VFS model is the
 software power-loss evidence. No projections, branches, native scope, checkout,
 quota, replication, backup or CLI surface exists yet.
 
