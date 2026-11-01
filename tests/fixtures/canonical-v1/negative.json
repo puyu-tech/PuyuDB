@@ -1,0 +1,461 @@
+{
+  "cases": [
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe01f68001805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c42000",
+      "code": "invalid_encoding",
+      "name": "encoding/trailing-bytes",
+      "record": "batch_body",
+      "why": "trailing bytes after a record"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe01f68001805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c4",
+      "code": "invalid_encoding",
+      "name": "encoding/truncated",
+      "record": "batch_body",
+      "why": "record cut short"
+    },
+    {
+      "body_hex": "82011800",
+      "code": "invalid_encoding",
+      "name": "encoding/non-minimal-int",
+      "record": "frontier",
+      "why": "uint 0 encoded in a 1-byte form"
+    },
+    {
+      "body_hex": "9f0150cf7ec6774d8372b3483b034a6a06a80e80ff",
+      "code": "invalid_encoding",
+      "name": "encoding/indefinite-array",
+      "record": "frontier",
+      "why": "indefinite length"
+    },
+    {
+      "body_hex": "830150cf7ec6774d8372b3483b034a6a06a80efb3ff0000000000000",
+      "code": "invalid_encoding",
+      "name": "encoding/float",
+      "record": "frontier",
+      "why": "floats are outside the profile"
+    },
+    {
+      "body_hex": "a10102",
+      "code": "invalid_encoding",
+      "name": "encoding/map",
+      "record": "frontier",
+      "why": "maps are outside the profile"
+    },
+    {
+      "body_hex": "c101",
+      "code": "invalid_encoding",
+      "name": "encoding/cbor-tag",
+      "record": "frontier",
+      "why": "CBOR tag items are outside the profile"
+    },
+    {
+      "body_hex": "8b014fcf7ec6774d8372b3483b034a6a06a850ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe01f68001805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-space-width",
+      "record": "batch_body",
+      "why": "space must be 16 bytes"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe00f68001805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-sequence-zero",
+      "record": "batch_body",
+      "why": "sequences start at 1"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe04f68001805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-first-sequence",
+      "record": "batch_body",
+      "why": "a stream's first batch has sequence 1"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe01f68005805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-genesis-lamport",
+      "record": "batch_body",
+      "why": "a genesis batch has lamport 1"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe01f682582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c0052858208a2a34a11c5dba9fb0e5076f16b20d3ac19adabd53baaf6dbe45ddbbcdee382001805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-lamport-below-parents",
+      "record": "batch_body",
+      "why": "a batch with parents has lamport >= 2"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe0158206d9fbd49248cc77d66a27ab54aa032b7556234c3f0877c5322360fc8f5af823282582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c0052858208a2a34a11c5dba9fb0e5076f16b20d3ac19adabd53baaf6dbe45ddbbcdee382002805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-sequence-one-with-previous",
+      "record": "batch_body",
+      "why": "a batch with a previous batch has sequence >= 2"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe02582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c005288001805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-previous-without-parents",
+      "record": "batch_body",
+      "why": "previous must be inside the parent closure"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe0258206d9fbd49248cc77d66a27ab54aa032b7556234c3f0877c5322360fc8f5af823298815820011051d3fb6ad7ec0feff6cd46a0556d4463425d26795fb508a08068720a43cc582001ae89216cbfedb862c99ca592e71389677f76ef39d5a8e11b3b6613f7f30c9f58200ac22a57691d6187addfa909083624ad0329fc9e21b26d2f5110879a748bd9fd58200f1da20081203d83d17a7bf72e035f28902961c1fbc0ef8227411c15b7cc68e1582012dbf85faad49882d726f6879f6bb71574421d0f1d941515fe14735764fce422582014a5bb25db5af8014e4b15f613f3f57197234629904175402b9ba5c0ba07740b5820166264ab707424ade4eeed4bf12e10c69902551f38201b0dcf3f6c2f7cc03ec6582019915dedcab6bd5bae373f834b3d970968994c3a4a083159f252acba69761d3858201ad806071a7a0b0ffbd129a614a9135a672483d563f00ca4d7998479974e7f5158201eca282dc4166e7916871f1861194596b391a27b58c4623ab74ca622c4d927fa582020497e06026627329bb501ed338349aac3dcc74f8516646ec388c8cbeacc96f1582020c8b5f45a710131e896683daeb17de1c1802dd371f48defbf5e540a0cbecb03582022a594db0ee6e03b084c949f004793ddc1023cb4074267bff674ab779cf9b4935820238c108df0d20b156d91d4c171c4b10eff8e9be738d757478d59df1d4f29399958202595df193a1ade7955beea0441adb0fed0a0bfb2c6f4c2f91708f0514315c5b1582025fe94467a7e993d71388bcb7c32a08128fc177b9752013d08f7d204f352f0b4582030e4b2f6157c14a97734b0e2769810f8f0c55ab771c2169640487bae1f051444582031d2f06428ecb7e7053975774f00e8c6ba89ba5606da178ef8b79642ab566a73582032f98478441a8d6c1f35ec42fe00dd27ea89b0b0003c6575e8fa88e7331912695820357b4fd872f16e5f92d4bb20f94c3e44493bd04893be5a9250a5e13b6e70193d582035e928ae86aef25fa264e4bc1cbdc276dfd8c8e19edb513e0e85a5ba728e4739582038222c23cad2b1c805481c699453bdc4c2fcf1e4ceea90b6e9838cbce58e688d58203ae0a94ee6536acdf7bff794973407127350b3e9ea16f435aa142de462d8b1e658203b162fb6d8581ddc798e55736069a87c70ad31e6caa251c72c88c1b89e83ab2c58203d4901e7de5586cab3f5d14bcbb735f261110659fe094fd3b7d358a626969dbd58203ff156ca27cd2548bb62c664e01dc3302882ef7e2b7297d361ecdaaf96ac173f58204074686dec8ca47716294ea64b97668bafeda42a303a97ac9af9ce1180bf0ad5582046f24b88524df559d11c5a0885a9bb6413f01c39474c42844fa13841466ec40658204704b6f5be05965fda805cbe04303ab4c3d394e2766c0b7b43f08fbba4143d665820477e02277d2bc7812a5d3c9a003c3b3ee3dad0b5cf4542d362c3a34c62c04bfc582047e1e7f54ff9ffde7040c1c77f90508f69e503940fd1d258e5091e726dcdeeb3582047e27d86d103b1a1b6a6484c7db0c5c9ca20e584234a12ce6ddab5c87b1940ba58204a9bb99ff8acecb0636927e35e158cf7d1ffdd0eaa35f3a069f25aaf332b1df758204c2eba138d07253a8d0e96988a7aaa4f8e0dee78173d7518be43065a56e39ce55820582d01ef3a113de995ff311552842273531d779a9bf6be41f13057826ee3019f582058f304c4f7fa8c4c430016999a3f7d21fb421019c19fcdef901a5f61f456eb9658205916979290a4409e476cde04521a5c022dc6134bded139309b242672dc77318158205cbc8107f43bd4bc90e3266e4fdb1cd0d2c31fc192a113bc64bb5b72768b890258205e873ab0322b4b13f0648b7784ab45f36e5796198c00d374be7a018b75cc368b58205f2e3f72b931b11a26c7484b8553f00ab309946f3cf7cf7c1fc9e1c768a0321c58205f513744db602eb11035992a9a17c8ede29af51a2f422ca686528d6313fd6e1258205f97adb44b9076f5112f724150817e899918afd457176fd34bb8e5142d1efd235820607aa8a2ca48c7fad192b704cc4b0b966cb5a2859003c50a721b0151fb2ec580582060dcfdc92ae13f770fc5d9ce72368db4a5fa723b7cd15027a968d8a5112ef6ce582062e976127a178673844ec956de39879e714290006c290b5aba5f66c5d9a332e7582063617c12045d53dfd1b3de732460e56e848c558bb8f9250e6a5a6b7fe41468ec582067bcaf46a6498e6ea7d46bcea16640a8fc6118fb09b755c181b8e6e0378a3bbf582067bd4e4e47fdcdb85c98935dc8e85863dd055ef72f86fa68817b80f1318b4b85582067f02b2d9883777e4b283dd9bad6b672e21f5dd2de15cea5df6cadf71c9c11b758206a6268b5d249c85f5bd2878ab5dd0c64ff1602d56d098790b36c047642ea187a58206b5f65ec5ce7cdcdf0d00b8cf423119e22d7c4a072602e7764b29b40e34030c658206f0a29f1d2da85d73ae03bc95f0b1844cea3f8238b6ad5aca976402c21576d2d582070fd3b1607c64526d694e25fe698e2e6cbe2ca3b4c18a8e55c55cab1b7d234ce58207679b0dffee24971b7db83c225083725218c5e01314919f4fc44cbacdbe5d90a582077249c801c7c854aa2cb3a3df8d91b749dc1a0eff76d612ab749c240cd6b00a2582077a444afdc294f3bf78b2954dc5e5c6388aa83b73d6d824d51679864d23138de582077dbdffb0c855ff86f453764a56c1d333331198b38d72f737ff7c092433ba3bc582079b1e385960b3887ad03be48234cfa5ee1d365ef5610a830904558923cbc109258207a1844a5d1a939b2e508e9688f72cc7e75ee1a482f9f225359945e9df33922a458207cf12fab56a8d543996e64456660145571d892a0d50ae75b272302f45a03181b58207d62c4a1fdaec5d76a0d2811aa6a91e6f96ff6aae542c99ae9ba8c05c9724279582081221c7d88e10c03ac90a0937bb199e49abc31b79a33504c8427a6f4ab7fa99558208196a8e88e8ad27ff68b55c397ee4d389323870faa28767015683a31403b760f582085503f3c0bbd602d277a8a3b5aee50b1b147f80da1c8dd09a8f193de73cd03175820860814ba043460db47ac86c905033bab977a89e7ece62fc8eeac1f90c1b64db45820871c237211d3673ee7545dc63690a8dcd1878e403fe990e310982e1d7051d5e95820874b021be9872518d9f5e7afaa0d1c4d49391260d88a5ad5aa910d4edcc921ea58208ad0c853f83aab83f98a5c6749efc833280418b5132718e9ce9c7b01d42d974a58208e6e5516578369d37573a6541c999788a86272b00cc82b7373dea6af4b98339958208e8df81eadb92954b2936df19f16e252d556d583893219353fb1c96692020fdb58209028ae8462e3ea8bbaca3c9ff814179a2d2609a88cae7aa82561d8fca7e4809c58209177812d087ac93279285c3fdcc164a4052564ab939f9b44c981756ffa2c96b2582091f93063ca34351b9c8c31a11be47b58b50aea6e4b104d73c2039bfe8e8ebb9f582093afb53afea5081ef437731f3ea776020f2dfaf58055075c462d42ee0ad4f05458209596f02b22576c8c063bf123cf8999b3e8ef31e36717d1592e8ddc7e6da3f72a58209c50864e009b09c37332f0c23c0ae574a95ebcfad9af8fc286fdc2eda07b05ba58209c7c48bd2886af727fdadaea5bfc8f168ec522914c23dad9f9f64f0a4dc4efe658209dc4929187bb2b42b8e689d82fcfc863ae7fb6b8f7352f6cd54b7f75c2ec65055820a14a11087c84436134135d3612cde2c1b47480538dc96f2996b2503c4bb2675c5820a15fab750de1c83a4325400d2df6ef1219e7fc50bdc3a28b3e5122d1ce7b36555820a179ad8fd548f64973be4b2092ca18b79c2199728c71b2af5ef048c08b8080a55820a3e7ea7625d70641409a5111281737f40aaf98273069619e2657098d442f45525820a3fa0ac013e50e635762186f23242c99c443508b91d58c9197c8b692e2f6b8fd5820a411bbf6b1092e829d13676680c6c283f0825efa99add19760465ed42a4922d95820a44360f1e50b9a30f591f64ae4ce02b523368ec4ecef9ea606d718b21c24fe655820a7d8948a74ab1de8193d70a0dfb4e901df2982d3ddd482960cddd2d3cd3fbd675820a9eb3586bbe0b913db4c602176642a1718d0f0c27b455fde78473cd1e24414875820ac6fa21edcfb37854e578c3487c9bc6dfc514b9d3882ddfdd26416b14473d6f65820acc43d3fe00177b761615515e9b70c3e67aef368b95723855dac7c55c2d262a75820ad26c1a8e59216d12517b31b841db6e24aa46ae820b047f92eced33898889c175820b0107cf763387d68fc51eb08d2de2d1e665821762f2535558ae995837ba83d2e5820b4e6f58048270ae679c8aeda253e7138cc4f4ff5e49eeec80483187adc7700c15820b9052331365d5aa42028442a42fa097cc04511af9fe9ca7b553e446b944198b55820ba9eafe65bf016f9c52f8c96ba91521beea60e0c76278674a3db082e46cda7c45820bbf9fb58a09606a6b12d7b01c666c2e78c90838caab509de90ebcadfc8b45d695820c062d96ca28b6970c01503c13a07db72690e8741557612b513a1409b122251be5820c0cb9b3d222c2d37870fd01f4d730c28ec9ae0e8421b4deada46ccc0197b8dfd5820c2d688700c5018556dda62601dfcb2b76bb6d2920f35deb523916e971ea6b3915820c59999f88abdac7f84ecc468950ac9c8c7ee29e313552dd80a6c39034258ffc75820c693be51ec5353b580f26934e8c7e902322262b9a8e745547d95475b2a525d085820c81de33fd9d36643cdf21ee92301c960cb07526b57b1f7d26d46329fb276b4e45820c831e3ce876ff97dfc9d48dfb7920333fbf2f66816aaf4be605a0cfce5aa9a5d5820d0e0bfd400faf1e513f1375a20daa38bc7072a87cf5ef6e8ffc4c2cd9cb963cc5820d152c63122616ec1f0d0d8c89f926068c6566a1e66964b782d07b60c5f40c2b75820d28b50dbe92a984516f50a4693fb6fe6f6038a1dbf654c34dc90d87c4ea116b85820d5c663da184e926f511946dd3010f43649b81bed49da814c91e27aa3d06fe0cb5820d6b3dc3eb6d927ce0171f1f301c620e72623ed9413f4d34b8cd7d04d9747c9fe5820d81fc4195397fa9d0631bd00379fbc0b7e5842e78aec28b6ddc13af0abc7bc685820d836066933c401d26e783dda6c10f8fc0d972ccc4b490bb1904f75f07ba5471f5820da1af56570fe5df713a30fc35fe4560031bdbb59b170da2dbbeca59c5f65b8ce5820dc104e0a6435aee79ec68697b710fea54b12653cffda3eb829853b763197213a5820ddd139239f58af45972e7eb0ef50c81b00b1e7e53b6d23337ea7719f43a5749f5820dde0c6cd5b4d120e29a52e14011dc4243b2e8a3c86ccd24462fe08c6f50e764b5820deb8a2e7839f86a26e872b6b4ae2e5b275d2336b32b67d684d3f06296bcedc7b5820e2b61f9d497e382e0ec36b11ba04582dba10dc7d125a7b59f2a150fb8aeb18da5820e440065cf88d2fe1a3cbc9ede0dcf3a3997894c97bb859e1ed305f605aef055e5820e468c10ba65bdf5a150763f1309f3a694d62559fa0440202522fd3d6e7ba10a55820e598fedbbe16e767a7adfc0a9283604f6f92ada710b995a52bb369e5498af90a5820e6b2cc0348000cd747a5e11f659c2111924b9e694eb364732bf1f9319f440dd15820ee0741bc4d3ddab0f6088ec3a12d6f231fc316b6e81e2422f4e1254baa293dfe5820f1b678e27ae5945dbe1e16e7466ec10ed8bf209498479e5b3906311ad7da24275820f1efe6708767a7be9b1b9e49df26608dd71653f963f6a075eaebac1881a7ea795820f2da4291a831f7c862ba99f801b2eed879ca5b86dd50ba305afa7e729e4fc6225820f87bff540e3898137e366524ae28f3f2c94d5d5053a9a483e05b1d9e0af140365820fa0ce0170801c0c7039c5d6377c4166b105bfbe718358fb4dfb2fe383ec6e8805820fa1cc1312c75fc718637fddaa102856a0b2f75c0b2dc198714fa96a4344fb7115820fcc6cc5f1a0f9e7c567941c2b5c2f0defc963d2398a941b94887341513d5bc175820fddbe6f281c999ebbeb7b72c87e942a7d4b7901ef6df1324c7c91a2552f280b25820fef3d735e3a6ac8ad4d4501b44011b16eafdfe03cef634de1af61cb6840531d102805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-too-many-parents",
+      "record": "batch_body",
+      "why": "parent array exceeds the profile cap"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe0258206d9fbd49248cc77d66a27ab54aa032b7556234c3f0877c5322360fc8f5af82328258208a2a34a11c5dba9fb0e5076f16b20d3ac19adabd53baaf6dbe45ddbbcdee3820582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c0052802805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-unsorted-parents",
+      "record": "batch_body",
+      "why": "parents must be sorted and unique"
+    },
+    {
+      "body_hex": "8b0150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe0258206d9fbd49248cc77d66a27ab54aa032b7556234c3f0877c5322360fc8f5af823282582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c00528582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c0052802805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "invalid_encoding",
+      "name": "shape/batch-duplicate-parents",
+      "record": "batch_body",
+      "why": "parents must be sorted and unique"
+    },
+    {
+      "body_hex": "830150cf7ec6774d8372b3483b034a6a06a80e8258208a2a34a11c5dba9fb0e5076f16b20d3ac19adabd53baaf6dbe45ddbbcdee3820582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c00528",
+      "code": "invalid_encoding",
+      "name": "shape/frontier-unsorted",
+      "record": "frontier",
+      "why": "frontier heads must be sorted"
+    },
+    {
+      "body_hex": "830150cf7ec6774d8372b3483b034a6a06a80e82582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c00528582018c4297f1b84d0df9918c8b7021ab5808be43236ec1a332f59baaeabf8c00528",
+      "code": "invalid_encoding",
+      "name": "shape/frontier-duplicate",
+      "record": "frontier",
+      "why": "frontier heads must be unique"
+    },
+    {
+      "body_hex": "850170746578742d626173656c696e652d76311a000400175820db74458232e3eca3c0dbfbf95fd4c883c5372a603dd58d59677bea825d4a84e28158200150f6078fe734f0ea685cac41ac0f39a1cb46a003b74701c85a4055701ebe8a",
+      "code": "hash_mismatch",
+      "name": "shape/manifest-length-mismatch",
+      "record": "artifact_manifest",
+      "why": "declared length disagrees with the chunk list"
+    },
+    {
+      "body_hex": "8501726f70617175652d626173656c696e652d76311a000400005820000000000000000000000000000000000000000000000000000000000000000080",
+      "code": "hash_mismatch",
+      "name": "shape/manifest-missing-chunks",
+      "record": "artifact_manifest",
+      "why": "declared length without chunks"
+    },
+    {
+      "body_hex": "850170746578742d626173656c696e652d7631015820000000000000000000000000000000000000000000000000000000000000000080",
+      "code": "hash_mismatch",
+      "name": "shape/manifest-empty-with-length",
+      "record": "artifact_manifest",
+      "why": "non-empty length with an empty chunk list"
+    },
+    {
+      "body_hex": "850170746578742d626173656c696e652d76311a00800001582000000000000000000000000000000000000000000000000000000000000000009821582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101582001010101010101010101010101010101010101010101010101010101010101015820010101010101010101010101010101010101010101010101010101010101010158200101010101010101010101010101010101010101010101010101010101010101",
+      "code": "invalid_encoding",
+      "name": "shape/manifest-text-over-epoch-cap",
+      "record": "artifact_manifest",
+      "why": "text baselines exceed the text-epoch cap"
+    },
+    {
+      "body_hex": "8501726f70617175652d626173656c696e652d76311a400000015820000000000000000000000000000000000000000000000000000000000000000080",
+      "code": "invalid_encoding",
+      "name": "shape/manifest-raw-length-over-cap",
+      "record": "artifact_manifest",
+      "why": "raw_length is checked before allocation"
+    },
+    {
+      "body_hex": "85016f756e6b6e6f776e2d6b696e642d7631005820000000000000000000000000000000000000000000000000000000000000000080",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-kind",
+      "record": "artifact_manifest",
+      "why": "unassigned artifact kind"
+    },
+    {
+      "body_hex": "8501716e616d65642d736e617073686f742d7631005820000000000000000000000000000000000000000000000000000000000000000080",
+      "code": "unsupported_capability",
+      "name": "tag/reserved-kind",
+      "record": "artifact_manifest",
+      "why": "reserved kind is not decodable here"
+    },
+    {
+      "body_hex": "830181820a5092bee216a2893462cd6e3d51c8058ec780",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-operation",
+      "record": "metadata_artifact",
+      "why": "operation tag 10 is unassigned"
+    },
+    {
+      "body_hex": "83018183075092bee216a2893462cd6e3d51c8058ec70380",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-mode",
+      "record": "metadata_artifact",
+      "why": "mode tag 3 is unassigned"
+    },
+    {
+      "body_hex": "83018183025092bee216a2893462cd6e3d51c8058ec70280",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-live",
+      "record": "metadata_artifact",
+      "why": "liveness tag 2 is unassigned"
+    },
+    {
+      "body_hex": "830181840858206a53388d13010ff99efdaedaffa31b083f6d89cd8a5bcc91ebaeaaf8c4af6de105f680",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-resolution",
+      "record": "metadata_artifact",
+      "why": "resolution tag 5 is unassigned"
+    },
+    {
+      "body_hex": "83018184050850651310dfb9227344b7a6b4e816090308417880",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-context-schema",
+      "record": "metadata_artifact",
+      "why": "context schema tag 8 is unassigned"
+    },
+    {
+      "body_hex": "87015092bee216a2893462cd6e3d51c8058ec7505f4c99cee055e5616261bc21b2b55eaf0358203947912c4ab70cd8e88e13f89eea4f7e87319a0b90e74d46c808b39009b6a615f6f6",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-epoch-kind",
+      "record": "epoch_descriptor",
+      "why": "epoch kind tag 3 is unassigned"
+    },
+    {
+      "body_hex": "8b0250cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a5820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a250ba20087899557d5406b59e00bd1c9fbe01f68001805820ab09abe1ea8a9f95fa082fffbb42b67122af1cf964fa1a96ad9d4257fa46c420",
+      "code": "unsupported_version",
+      "name": "tag/profile-version-2",
+      "record": "batch_body",
+      "why": "only profile version 1 is frozen"
+    },
+    {
+      "body_hex": "87015092bee216a2893462cd6e3d51c8058ec7505f4c99cee055e5616261bc21b2b55eaf0058203947912c4ab70cd8e88e13f89eea4f7e87319a0b90e74d46c808b39009b6a6156a616d2d746578742d7631f6",
+      "code": "unsupported_capability",
+      "name": "tag/am-seed-profile",
+      "record": "epoch_descriptor",
+      "why": "AM profile string is reserved and unused"
+    },
+    {
+      "body_hex": "87015092bee216a2893462cd6e3d51c8058ec7505f4c99cee055e5616261bc21b2b55eaf0058203947912c4ab70cd8e88e13f89eea4f7e87319a0b90e74d46c808b39009b6a615f6f6",
+      "code": "invalid_encoding",
+      "name": "shape/epoch-text-without-seed-profile",
+      "record": "epoch_descriptor",
+      "why": "text epochs require the DT seed profile"
+    },
+    {
+      "body_hex": "87015092bee216a2893462cd6e3d51c8058ec7505f4c99cee055e5616261bc21b2b55eaf0158203947912c4ab70cd8e88e13f89eea4f7e87319a0b90e74d46c808b39009b6a6156a64742d746578742d7631f6",
+      "code": "invalid_encoding",
+      "name": "shape/epoch-opaque-with-seed-profile",
+      "record": "epoch_descriptor",
+      "why": "non-text epochs have no native seed"
+    },
+    {
+      "body_hex": "83010158200000000000000000000000000000000000000000000000000000000000000000",
+      "code": "invalid_encoding",
+      "name": "shape/git-oid-width",
+      "record": "git_oid",
+      "why": "SHA-1 OIDs are 20 bytes"
+    },
+    {
+      "body_hex": "83010358200000000000000000000000000000000000000000000000000000000000000000",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-git-algorithm",
+      "record": "git_oid",
+      "why": "Git OID algorithm 3 is unassigned"
+    },
+    {
+      "body_hex": "8501015092bee216a2893462cd6e3d51c8058ec7815820348a4dcd8753495ff2dd2303366ad6dcbbb145dd8321891a31a8790263c6e95882825820348a4dcd8753495ff2dd2303366ad6dcbbb145dd8321891a31a8790263c6e95801825092bee216a2893462cd6e3d51c8058ec700",
+      "code": "invalid_encoding",
+      "name": "shape/conflict-unsorted-participants",
+      "record": "conflict",
+      "why": "participants sort by batch then index"
+    },
+    {
+      "body_hex": "8501025092bee216a2893462cd6e3d51c8058ec7825820348a4dcd8753495ff2dd2303366ad6dcbbb145dd8321891a31a8790263c6e9585820348a4dcd8753495ff2dd2303366ad6dcbbb145dd8321891a31a8790263c6e95881825092bee216a2893462cd6e3d51c8058ec700",
+      "code": "invalid_encoding",
+      "name": "shape/conflict-duplicate-epochs",
+      "record": "conflict",
+      "why": "epoch list must be unique"
+    },
+    {
+      "body_hex": "8501005092bee216a2893462cd6e3d51c8058ec7815820348a4dcd8753495ff2dd2303366ad6dcbbb145dd8321891a31a8790263c6e95881825092bee216a2893462cd6e3d51c8058ec700",
+      "code": "invalid_encoding",
+      "name": "shape/conflict-register-with-epoch",
+      "record": "conflict",
+      "why": "register conflicts concern no epoch"
+    },
+    {
+      "body_hex": "8501015092bee216a2893462cd6e3d51c8058ec7815820348a4dcd8753495ff2dd2303366ad6dcbbb145dd8321891a31a8790263c6e95881825092bee216a2893462cd6e3d51c8058ec71a00010000",
+      "code": "invalid_encoding",
+      "name": "shape/conflict-operation-index-cap",
+      "record": "conflict",
+      "why": "operation index exceeds the profile cap"
+    },
+    {
+      "body_hex": "8501035092bee216a2893462cd6e3d51c8058ec78081825092bee216a2893462cd6e3d51c8058ec700",
+      "code": "unsupported_capability",
+      "name": "tag/unknown-conflict-kind",
+      "record": "conflict",
+      "why": "conflict kind 3 is unassigned"
+    },
+    {
+      "body_hex": "84015820348a4dcd8753495ff2dd2303366ad6dcbbb145dd8321891a31a8790263c6e9586a616d2d746578742d76314178",
+      "code": "unsupported_capability",
+      "name": "shape/native-wrong-profile",
+      "record": "native_artifact",
+      "why": "only dt-text-v1 is frozen"
+    },
+    {
+      "body_hex": "83018183015092bee216a2893462cd6e3d51c8058ec76b2f6574632f70617373776480",
+      "code": "invalid_encoding",
+      "name": "shape/metadata-path-absolute",
+      "record": "metadata_artifact",
+      "why": "absolute paths are invalid"
+    },
+    {
+      "body_hex": "83018183015092bee216a2893462cd6e3d51c8058ec770646f63732f2e6769742f636f6e66696780",
+      "code": "invalid_encoding",
+      "name": "shape/metadata-control-segment",
+      "record": "metadata_artifact",
+      "why": "reserved control segment"
+    },
+    {
+      "body_hex": "830181840858206a53388d13010ff99efdaedaffa31b083f6d89cd8a5bcc91ebaeaaf8c4af6de100417880",
+      "code": "invalid_encoding",
+      "name": "shape/metadata-resolution-payload",
+      "record": "metadata_artifact",
+      "why": "retain-deletion takes a null payload"
+    },
+    {
+      "body_hex": "830150cf7ec6774d8372b3483b034a6a06a80e82880150947cdadbc5e45fca4171951209de67dc81018164622e6d64808081008088015092bee216a2893462cd6e3d51c8058ec781018164612e6d648080810080",
+      "code": "invalid_encoding",
+      "name": "shape/semantic-unsorted-entries",
+      "record": "semantic_manifest",
+      "why": "manifest entries sort by raw file id"
+    },
+    {
+      "body_hex": "83015820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a258405e941ef1c44afd4df5f84cd557eda403cb29a759aa6d1fd33b5eae48c640f5514f1081a05f627b6892ee746f2f16d105659d05176cea59470344f770123a3203",
+      "code": "invalid_signature",
+      "name": "signature/wrong-key",
+      "preimage_hex": "7075797564622f7369676e61747572652f763100cf7ec6774d8372b3483b034a6a06a80e6d9fbd49248cc77d66a27ab54aa032b7556234c3f0877c5322360fc8f5af8232",
+      "record": "batch_signature",
+      "why": "signature does not verify for the preimage"
+    },
+    {
+      "body_hex": "83015820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a2584040547a8968806c1e35e4af78c9dd9b47d8fe4554ddea39b3f1273336daccbe82edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+      "code": "invalid_signature",
+      "name": "signature/non-canonical-s",
+      "preimage_hex": "7075797564622f7369676e61747572652f763100cf7ec6774d8372b3483b034a6a06a80e6d9fbd49248cc77d66a27ab54aa032b7556234c3f0877c5322360fc8f5af8232",
+      "record": "batch_signature",
+      "why": "S must be below the group order"
+    },
+    {
+      "body_hex": "83015820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a2583f40547a8968806c1e35e4af78c9dd9b47d8fe4554ddea39b3f1273336daccbe82fb3b9d4b94b3e40f4f22794319f32e309fca7f901533f0f4acf591283fa782",
+      "code": "invalid_encoding",
+      "name": "signature/truncated",
+      "preimage_hex": "7075797564622f7369676e61747572652f763100cf7ec6774d8372b3483b034a6a06a80e6d9fbd49248cc77d66a27ab54aa032b7556234c3f0877c5322360fc8f5af8232",
+      "record": "batch_signature",
+      "why": "signatures are 64 bytes"
+    },
+    {
+      "body_hex": "83015868850150cf7ec6774d8372b3483b034a6a06a80e50ec182d4a42c65698aaeba499006c2c3a58201225925c1b0edcf4607bf128f6acc41d102babab20daacd797be93592a5a60f75820bc3eb9d607261a6998caef8808e8dbd4ba83a29b373f44808334860217c088a258402a933233abf60bd6b94f143947df1dff22df4f829c116cb802dde07a5a410fe628bfbf1b5ad668ced83b1ab582aa2224a5fec24b7beb09268447bd5f9eb2d709",
+      "code": "invalid_signature",
+      "name": "signature/branch-mismatch",
+      "record": "branch_envelope",
+      "why": "descriptor signature binds the exact body"
+    }
+  ],
+  "generated_by": "scripts/i03_canonical_vectors.py",
+  "path_cases": [
+    {
+      "accepted": false,
+      "name": "reject-absolute",
+      "value": "/absolute"
+    },
+    {
+      "accepted": false,
+      "name": "reject-dot-dot",
+      "value": "a/../b"
+    },
+    {
+      "accepted": false,
+      "name": "reject-empty-component",
+      "value": "a//b"
+    },
+    {
+      "accepted": false,
+      "name": "reject-trailing-slash",
+      "value": "a/"
+    },
+    {
+      "accepted": false,
+      "name": "reject-empty",
+      "value": ""
+    },
+    {
+      "accepted": false,
+      "name": "reject-dot",
+      "value": "a/./b"
+    },
+    {
+      "accepted": false,
+      "name": "reject-git-segment",
+      "value": "a/.git/config"
+    },
+    {
+      "accepted": false,
+      "name": "reject-puyu-segment",
+      "value": "a/.puyu/state"
+    },
+    {
+      "accepted": false,
+      "name": "reject-nul",
+      "value": "a/b\u0000c"
+    },
+    {
+      "accepted": false,
+      "name": "reject-component-cap",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "accepted": false,
+      "name": "reject-path-cap",
+      "value": "a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a"
+    },
+    {
+      "accepted": true,
+      "name": "accept-simple",
+      "value": "docs/canonical.md"
+    },
+    {
+      "accepted": true,
+      "name": "accept-case",
+      "value": "A/b"
+    },
+    {
+      "accepted": true,
+      "name": "accept-nfc",
+      "value": "docs/\u00e9.md"
+    },
+    {
+      "accepted": true,
+      "name": "accept-nfd",
+      "value": "docs/e\u0301.md"
+    },
+    {
+      "accepted": true,
+      "name": "accept-dotfile",
+      "value": ".github/workflows/ci.yml"
+    },
+    {
+      "accepted": true,
+      "name": "accept-component-cap",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "profile": 1,
+  "scope": "Record-level negatives only. DAG-level rules (equivocation, ancestor dominance, native scope) need history and are tested in T4/T5."
+}

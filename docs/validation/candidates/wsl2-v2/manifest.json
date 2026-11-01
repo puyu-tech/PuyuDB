@@ -1,0 +1,1152 @@
+{
+  "evidence_format": 1,
+  "run_id": "wsl2-20261025T212021310067Z",
+  "profile": "wsl2",
+  "raw_report_sha256": "3d4f05dca25ae7a64a9e2c763097c39d0f8f8bd1d193a2f0f8a41a2d5d6a40aa",
+  "source_archive_sha256": "9549bac3d4a2307a1ff6fe013365380a8dd6c3c8b944ef4ab99ade4790b9d5da",
+  "source_fingerprint": "74ed9166b8698401474f4f4773d851f4cfc2f61a138a7746b70bc4073bdf6f4a",
+  "source_files": {
+    ".gitattributes": "1ed1c643120559f3cacf64480148b89ebd38229ca3de4229b460934eefb845cf",
+    ".gitignore": "1674de402849d41be2473d82718ead8aff0a76885a65a45f3752ead48b6048ca",
+    "Cargo.lock": "a31fc17f20dda26b52772c23d3500842fdc372e8c691102987baf73db56851b4",
+    "Cargo.toml": "4f349ada3b5bf755940e1898d37be158afa2576972ba75363d2d51d84b687786",
+    "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "NOTICE": "7ebffd3864c4242a0f9d657bc36a2d158ac767775daa6ff2f95929fb06ef70e8",
+    "README.md": "54bb57b0f7864b0a30bb42f695a1af853023008d22aea598d79e3e0c1194624d",
+    "THIRD_PARTY_NOTICES.md": "dfe7404ca561b851265d081c646e560b31a97def9e7a88ad089dec35e0b111ab",
+    "apps/puyu-cli/Cargo.toml": "9d7c8c1beebb916ce37827571e27bf07616778499f5b6115741cbf9adfe822f4",
+    "apps/puyu-cli/src/main.rs": "3124ceaf225d18ebe815ff7ec3146b6eba4e4e855595b071db3a7159561b609f",
+    "apps/puyu-cli/tests/cli.rs": "00475657a4c6b88f0b12939f77f535e7bd352c7ef763f15acfc9f3ab6035f256",
+    "apps/puyu-cli/tests/snapshots/db-help.txt": "bb2e5733a0e5e96e9ac7d45110760d811571a076de5d32581d7ada1628309a1c",
+    "apps/puyu-cli/tests/snapshots/puyu-help.txt": "897f245c54a15418b2d280b3fd9641e8aa855b64f1ad73f6e5fb295d5d53fc51",
+    "crates/puyudb-core/Cargo.toml": "ba626c709206751e676a68d917441905a0f61a94fec3deb96d17160b31baec83",
+    "crates/puyudb-core/src/lib.rs": "5c14cb10f238e305b3463579043d0443be37a7b4f44bbb2d733c3d648d8954bb",
+    "crates/puyudb-crdt/Cargo.toml": "9c3c08b543551b8d69cdaa271f4f87f49e2f089be9a288612d716784fd24ff22",
+    "crates/puyudb-crdt/examples/candidate_allocations.rs": "ecd07d1b8ac60d1472ccf6873226fd8f6de1d32eb8ba6474d2052b9337d329e6",
+    "crates/puyudb-crdt/examples/candidate_workloads.rs": "e10e1c4ae4bafc8b0e07b938b10ef1868c938f7657eba7de39a12bbaebec9c7b",
+    "crates/puyudb-crdt/examples/native_allocations.rs": "68762e90bb8561e35d411501bfccb6fd9217548cd41fd479245d32b46496e23b",
+    "crates/puyudb-crdt/examples/native_workloads.rs": "c2fbf5e826b3435f31811dd5bdd8f4bbd986118dbe7d336adb75302b7f5995d7",
+    "crates/puyudb-crdt/examples/support/candidates.rs": "8d9e5b0cba4391204cab37f38bbcafd1940c34f9f246a66446ae931dac59ae39",
+    "crates/puyudb-crdt/examples/support/workloads.rs": "6740cdd0d02a52c3f5bbf9500608099ec300fab03526e4c3bb61d8d0929e6db3",
+    "crates/puyudb-crdt/src/bin/native_seed_probe.rs": "efecb34f2cdb7b08f579a9da8909bb35d544693ec2fa241f75302faa7e2296db",
+    "crates/puyudb-crdt/src/experiment.rs": "7e1f4cd8c77d800a7e9e3d79b229295fcfbd4c5cebde270ac57013976b22027b",
+    "crates/puyudb-crdt/src/lib.rs": "bec03b02cfadda92470d61812bb74719434e74b445c3a43b80a838e52c516429",
+    "crates/puyudb-crdt/tests/adversarial.rs": "f7b48d6d1a513c0d19716324a1fa47a7458e28677cdaf24d12fef70ee628b419",
+    "crates/puyudb-crdt/tests/candidate_workloads.rs": "80a08edd4ac0963f3868b7587f765a8cfd1ea350ec738167ff19a4dd6288cc70",
+    "crates/puyudb-crdt/tests/common/mod.rs": "40661b95cd3731276a7ccd1dff21871fe5b267ac3b5793041722939939254025",
+    "crates/puyudb-crdt/tests/comparison.rs": "84400a4177750aaf60990052c1a6fce3f8fbca77befecc32aec8ce73d836b68d",
+    "crates/puyudb-crdt/tests/fixtures/seed-empty.txt": "575ac1c2345556c4be445390ecb54941b961fcd8a9f778773ed0587f527c71c7",
+    "crates/puyudb-crdt/tests/fixtures/seed-unicode.txt": "79b2506ec3bbc470d3d34037f3896e0e625470dbdb35fd7f3f9a6d977fd7a9b9",
+    "crates/puyudb-crdt/tests/history.rs": "1684f9109cad498b53b7a552bbe6fc6a5e6f9291f6de3ed38eb2294a9e38a580",
+    "crates/puyudb-crdt/tests/mixed_histories.rs": "efc4a030beab85c0eea38dfbdc78ec19a9ace68c523373c3721e884a9cc7e619",
+    "crates/puyudb-crdt/tests/native_wire.rs": "f5914e6d7036169695d615c320234bb54963675fd044fa2b769436ce5a6da229",
+    "crates/puyudb-crdt/tests/scope.rs": "d6d1acdc7dd9fb362325c83b7694aad373ee1df5c2c1ee954a5dc9a9652fa992",
+    "crates/puyudb-crdt/tests/seeds.rs": "7cc43ca59fb11508172497073c95fee41986ac590ee8f6267bd2381006ed6f5f",
+    "crates/puyudb-crdt/tests/unicode.rs": "4869ebc95ee3db1d033880d39b52985d05bfb37aeb5c3d944510e0c76c2eb70a",
+    "crates/puyudb-local/Cargo.toml": "c2b3a0af1ef464b2e47f12d4ff071b58b58471238b938606ca870375e719887a",
+    "crates/puyudb-local/src/lib.rs": "93663b67d5fdb6e4d7f9312954ee84474fd1a04eb7901e8b13b38a78e10e792c",
+    "deny.toml": "7046d1296052ba3a971c86de4b723b90b30e605ef1af56a0341f8de7591d1a6c",
+    "docs/validation/I02-platform-runs.md": "d54284664dfe375a971a3c42d4b10f7e04f6f3f138e755abf4502816ebc8f793",
+    "rust-toolchain.toml": "f715f440167e20fd8ea9afa0498c3d1ab80174cfcb8cbc895f106a34d907a1e1",
+    "scripts/i02_baseline.py": "5630671a0d347dcfa6a61f38692b0899f0e1d020908c1be9a62aec2d068f2458",
+    "scripts/i02_candidates.py": "506b14416525051cde065fa6343a119c51b7f6dd5c05dc9ec033bc2d092cfe6c",
+    "scripts/i02_windows.py": "b1c93dbaf4eb9d1512528521bd4b68f688f6c3b775a58784f991641d047c7838",
+    "scripts/test_i02_baseline.py": "f2a6441f0cb0cb4b4e441e1b5124a0fb25560555d86b5cd6fb515b5786275968",
+    "scripts/test_i02_candidates.py": "664d404bb98f325427da998a851da193a0cbd4673e7ba6ca2957cc23b1734999"
+  },
+  "lockfile_sha256": "a31fc17f20dda26b52772c23d3500842fdc372e8c691102987baf73db56851b4",
+  "build_target": "x86_64-unknown-linux-gnu",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)\nrelease: 1.99.1\ncommit-hash: 5f94df4789f005f9a352888e8355ffc645b7ed0e\ncommit-date: 2026-08-27\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.6 (sys:0.21.0 vendored)\nlibcurl: 8.21.0-DEV (sys:0.4.90+curl-8.21.0 vendored ssl:OpenSSL/3.6.3)\nssl: OpenSSL 3.6.3 9 Jun 2026\nos: Debian 12.0.0 (bookworm) [64-bit]",
+  "build_flag_fingerprints": {
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null
+  },
+  "environment": {
+    "system": "Linux",
+    "kernel": "6.18.54.1-microsoft-standard-WSL2",
+    "machine": "x86_64",
+    "python": "3.11.2",
+    "logical_cpu_count": 12,
+    "cpu_model": "AMD Ryzen 5 3600 6-Core Processor",
+    "filesystem": "ext4"
+  },
+  "comparison_scope": {
+    "version": 2,
+    "engines": [
+      "automerge",
+      "yrs",
+      "loro",
+      "diamond-types"
+    ],
+    "native_case_timeout_seconds": 300,
+    "note": "native fixture costs; no production adapter, original-update ledger or engine selection"
+  },
+  "reference_gate": "not_evaluated",
+  "seed_repeatability": {
+    "automerge": {
+      "status": "observed_repeatable",
+      "profile": "native full-history seed artifact; not a frozen seed-change format",
+      "signatures": [
+        [
+          [
+            "0",
+            "165",
+            "53892db4851ef7ab7d5c56f31aa545fa541a6506740787e8294f2fd9d8e0dea8"
+          ],
+          [
+            "1",
+            "216",
+            "e31ac582c06b3e1590c8edac47aa3c9bc08dd687e447a847b5a4ba0628101648"
+          ],
+          [
+            "2",
+            "207",
+            "f3155600fafae3bf4d4bd4a98656c23455a1bb804a2529d1c1bc023cbab017e3"
+          ]
+        ],
+        [
+          [
+            "0",
+            "165",
+            "53892db4851ef7ab7d5c56f31aa545fa541a6506740787e8294f2fd9d8e0dea8"
+          ],
+          [
+            "1",
+            "216",
+            "e31ac582c06b3e1590c8edac47aa3c9bc08dd687e447a847b5a4ba0628101648"
+          ],
+          [
+            "2",
+            "207",
+            "f3155600fafae3bf4d4bd4a98656c23455a1bb804a2529d1c1bc023cbab017e3"
+          ]
+        ],
+        [
+          [
+            "0",
+            "165",
+            "53892db4851ef7ab7d5c56f31aa545fa541a6506740787e8294f2fd9d8e0dea8"
+          ],
+          [
+            "1",
+            "216",
+            "e31ac582c06b3e1590c8edac47aa3c9bc08dd687e447a847b5a4ba0628101648"
+          ],
+          [
+            "2",
+            "207",
+            "f3155600fafae3bf4d4bd4a98656c23455a1bb804a2529d1c1bc023cbab017e3"
+          ]
+        ]
+      ]
+    },
+    "yrs": {
+      "status": "observed_repeatable",
+      "profile": "native full-history seed artifact; not a frozen seed-change format",
+      "signatures": [
+        [
+          [
+            "0",
+            "2",
+            "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+          ],
+          [
+            "1",
+            "24",
+            "f1f82dde8ce008e0d6f348fa1a2a625e18fcf8f9bc43b30d04906816936bdac4"
+          ],
+          [
+            "2",
+            "19",
+            "ce8a240fa20cec2790a765553a7967891075a6fb001c6bbfb49f16f1de99f0eb"
+          ]
+        ],
+        [
+          [
+            "0",
+            "2",
+            "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+          ],
+          [
+            "1",
+            "24",
+            "f1f82dde8ce008e0d6f348fa1a2a625e18fcf8f9bc43b30d04906816936bdac4"
+          ],
+          [
+            "2",
+            "19",
+            "ce8a240fa20cec2790a765553a7967891075a6fb001c6bbfb49f16f1de99f0eb"
+          ]
+        ],
+        [
+          [
+            "0",
+            "2",
+            "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+          ],
+          [
+            "1",
+            "24",
+            "f1f82dde8ce008e0d6f348fa1a2a625e18fcf8f9bc43b30d04906816936bdac4"
+          ],
+          [
+            "2",
+            "19",
+            "ce8a240fa20cec2790a765553a7967891075a6fb001c6bbfb49f16f1de99f0eb"
+          ]
+        ]
+      ]
+    },
+    "loro": {
+      "status": "observed_repeatable",
+      "profile": "native full-history seed artifact; not a frozen seed-change format",
+      "signatures": [
+        [
+          [
+            "0",
+            "81",
+            "234de28ef8e77075475dab3e375a6876d6135d083d13b0c09cf73aab95acd4c6"
+          ],
+          [
+            "1",
+            "259",
+            "83683494e80d890ce1b2beba76ab7e925a38a357bcff9b2609756a33931d9136"
+          ],
+          [
+            "2",
+            "249",
+            "96d0f5b1cdae87b48a818d80f2f47dfc769a5a335b65d343688f828cfe9b4314"
+          ]
+        ],
+        [
+          [
+            "0",
+            "81",
+            "234de28ef8e77075475dab3e375a6876d6135d083d13b0c09cf73aab95acd4c6"
+          ],
+          [
+            "1",
+            "259",
+            "83683494e80d890ce1b2beba76ab7e925a38a357bcff9b2609756a33931d9136"
+          ],
+          [
+            "2",
+            "249",
+            "96d0f5b1cdae87b48a818d80f2f47dfc769a5a335b65d343688f828cfe9b4314"
+          ]
+        ],
+        [
+          [
+            "0",
+            "81",
+            "234de28ef8e77075475dab3e375a6876d6135d083d13b0c09cf73aab95acd4c6"
+          ],
+          [
+            "1",
+            "259",
+            "83683494e80d890ce1b2beba76ab7e925a38a357bcff9b2609756a33931d9136"
+          ],
+          [
+            "2",
+            "249",
+            "96d0f5b1cdae87b48a818d80f2f47dfc769a5a335b65d343688f828cfe9b4314"
+          ]
+        ]
+      ]
+    },
+    "diamond-types": {
+      "status": "observed_repeatable",
+      "profile": "native full-history seed artifact; not a frozen seed-change format",
+      "signatures": [
+        [
+          [
+            "0",
+            "29",
+            "ca86a918e4b9e5193ce49668fddabc826558c01b4e49ed07026f1f62a640abda"
+          ],
+          [
+            "1",
+            "70",
+            "d32b3e4949e65251c7e24a56cdc6332ecafb8b3183e201b7205a247777cb2d24"
+          ],
+          [
+            "2",
+            "65",
+            "ef3d9c6f3b2673055b8418dd8e66e7899f09a8e841cfe51fcbb475f353bab7c4"
+          ]
+        ],
+        [
+          [
+            "0",
+            "29",
+            "ca86a918e4b9e5193ce49668fddabc826558c01b4e49ed07026f1f62a640abda"
+          ],
+          [
+            "1",
+            "70",
+            "d32b3e4949e65251c7e24a56cdc6332ecafb8b3183e201b7205a247777cb2d24"
+          ],
+          [
+            "2",
+            "65",
+            "ef3d9c6f3b2673055b8418dd8e66e7899f09a8e841cfe51fcbb475f353bab7c4"
+          ]
+        ],
+        [
+          [
+            "0",
+            "29",
+            "ca86a918e4b9e5193ce49668fddabc826558c01b4e49ed07026f1f62a640abda"
+          ],
+          [
+            "1",
+            "70",
+            "d32b3e4949e65251c7e24a56cdc6332ecafb8b3183e201b7205a247777cb2d24"
+          ],
+          [
+            "2",
+            "65",
+            "ef3d9c6f3b2673055b8418dd8e66e7899f09a8e841cfe51fcbb475f353bab7c4"
+          ]
+        ]
+      ]
+    }
+  },
+  "executables_sha256": {
+    "candidate_workloads": "62cef6d7ae789bdcbf8e1bf02bf4503be9e2e55c938df44d560666b78d7148c1",
+    "candidate_allocations": "3e16f685ab9a188206cfdd84593d979aa0a9ea59383032eab4acaecfb6e42a4c"
+  },
+  "steps": [
+    {
+      "name": "fetch",
+      "exit_code": 0,
+      "elapsed_wall_ns": 515302593,
+      "resources": null
+    },
+    {
+      "name": "fmt",
+      "exit_code": 0,
+      "elapsed_wall_ns": 114210491,
+      "resources": null
+    },
+    {
+      "name": "clippy",
+      "exit_code": 0,
+      "elapsed_wall_ns": 1016663243,
+      "resources": null
+    },
+    {
+      "name": "tests",
+      "exit_code": 0,
+      "elapsed_wall_ns": 44178455610,
+      "resources": null
+    },
+    {
+      "name": "calibration",
+      "exit_code": 0,
+      "elapsed_wall_ns": 415012085,
+      "resources": null
+    },
+    {
+      "name": "long-test",
+      "exit_code": 0,
+      "elapsed_wall_ns": 62161268358,
+      "resources": null
+    },
+    {
+      "name": "build",
+      "exit_code": 0,
+      "elapsed_wall_ns": 2631849891,
+      "resources": null
+    },
+    {
+      "name": "candidate-fixtures",
+      "exit_code": 0,
+      "elapsed_wall_ns": 4678697675,
+      "resources": null
+    },
+    {
+      "name": "candidate-automerge-seed-0",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3662395,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "165",
+            "53892db4851ef7ab7d5c56f31aa545fa541a6506740787e8294f2fd9d8e0dea8"
+          ],
+          [
+            "1",
+            "216",
+            "e31ac582c06b3e1590c8edac47aa3c9bc08dd687e447a847b5a4ba0628101648"
+          ],
+          [
+            "2",
+            "207",
+            "f3155600fafae3bf4d4bd4a98656c23455a1bb804a2529d1c1bc023cbab017e3"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-yrs-seed-0",
+      "exit_code": 0,
+      "elapsed_wall_ns": 1481463,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "2",
+            "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+          ],
+          [
+            "1",
+            "24",
+            "f1f82dde8ce008e0d6f348fa1a2a625e18fcf8f9bc43b30d04906816936bdac4"
+          ],
+          [
+            "2",
+            "19",
+            "ce8a240fa20cec2790a765553a7967891075a6fb001c6bbfb49f16f1de99f0eb"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-loro-seed-0",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3586572,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "81",
+            "234de28ef8e77075475dab3e375a6876d6135d083d13b0c09cf73aab95acd4c6"
+          ],
+          [
+            "1",
+            "259",
+            "83683494e80d890ce1b2beba76ab7e925a38a357bcff9b2609756a33931d9136"
+          ],
+          [
+            "2",
+            "249",
+            "96d0f5b1cdae87b48a818d80f2f47dfc769a5a335b65d343688f828cfe9b4314"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-diamond-types-seed-0",
+      "exit_code": 0,
+      "elapsed_wall_ns": 1472045,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "29",
+            "ca86a918e4b9e5193ce49668fddabc826558c01b4e49ed07026f1f62a640abda"
+          ],
+          [
+            "1",
+            "70",
+            "d32b3e4949e65251c7e24a56cdc6332ecafb8b3183e201b7205a247777cb2d24"
+          ],
+          [
+            "2",
+            "65",
+            "ef3d9c6f3b2673055b8418dd8e66e7899f09a8e841cfe51fcbb475f353bab7c4"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-yrs-seed-1",
+      "exit_code": 0,
+      "elapsed_wall_ns": 1461535,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "2",
+            "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+          ],
+          [
+            "1",
+            "24",
+            "f1f82dde8ce008e0d6f348fa1a2a625e18fcf8f9bc43b30d04906816936bdac4"
+          ],
+          [
+            "2",
+            "19",
+            "ce8a240fa20cec2790a765553a7967891075a6fb001c6bbfb49f16f1de99f0eb"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-loro-seed-1",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3576092,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "81",
+            "234de28ef8e77075475dab3e375a6876d6135d083d13b0c09cf73aab95acd4c6"
+          ],
+          [
+            "1",
+            "259",
+            "83683494e80d890ce1b2beba76ab7e925a38a357bcff9b2609756a33931d9136"
+          ],
+          [
+            "2",
+            "249",
+            "96d0f5b1cdae87b48a818d80f2f47dfc769a5a335b65d343688f828cfe9b4314"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-diamond-types-seed-1",
+      "exit_code": 0,
+      "elapsed_wall_ns": 1467187,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "29",
+            "ca86a918e4b9e5193ce49668fddabc826558c01b4e49ed07026f1f62a640abda"
+          ],
+          [
+            "1",
+            "70",
+            "d32b3e4949e65251c7e24a56cdc6332ecafb8b3183e201b7205a247777cb2d24"
+          ],
+          [
+            "2",
+            "65",
+            "ef3d9c6f3b2673055b8418dd8e66e7899f09a8e841cfe51fcbb475f353bab7c4"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-automerge-seed-1",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3567647,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "165",
+            "53892db4851ef7ab7d5c56f31aa545fa541a6506740787e8294f2fd9d8e0dea8"
+          ],
+          [
+            "1",
+            "216",
+            "e31ac582c06b3e1590c8edac47aa3c9bc08dd687e447a847b5a4ba0628101648"
+          ],
+          [
+            "2",
+            "207",
+            "f3155600fafae3bf4d4bd4a98656c23455a1bb804a2529d1c1bc023cbab017e3"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-loro-seed-2",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3564882,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "81",
+            "234de28ef8e77075475dab3e375a6876d6135d083d13b0c09cf73aab95acd4c6"
+          ],
+          [
+            "1",
+            "259",
+            "83683494e80d890ce1b2beba76ab7e925a38a357bcff9b2609756a33931d9136"
+          ],
+          [
+            "2",
+            "249",
+            "96d0f5b1cdae87b48a818d80f2f47dfc769a5a335b65d343688f828cfe9b4314"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-diamond-types-seed-2",
+      "exit_code": 0,
+      "elapsed_wall_ns": 1464120,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "29",
+            "ca86a918e4b9e5193ce49668fddabc826558c01b4e49ed07026f1f62a640abda"
+          ],
+          [
+            "1",
+            "70",
+            "d32b3e4949e65251c7e24a56cdc6332ecafb8b3183e201b7205a247777cb2d24"
+          ],
+          [
+            "2",
+            "65",
+            "ef3d9c6f3b2673055b8418dd8e66e7899f09a8e841cfe51fcbb475f353bab7c4"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-automerge-seed-2",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3544614,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "165",
+            "53892db4851ef7ab7d5c56f31aa545fa541a6506740787e8294f2fd9d8e0dea8"
+          ],
+          [
+            "1",
+            "216",
+            "e31ac582c06b3e1590c8edac47aa3c9bc08dd687e447a847b5a4ba0628101648"
+          ],
+          [
+            "2",
+            "207",
+            "f3155600fafae3bf4d4bd4a98656c23455a1bb804a2529d1c1bc023cbab017e3"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-yrs-seed-2",
+      "exit_code": 0,
+      "elapsed_wall_ns": 1457758,
+      "resources": null,
+      "validated_output": {
+        "seed_signature": [
+          [
+            "0",
+            "2",
+            "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"
+          ],
+          [
+            "1",
+            "24",
+            "f1f82dde8ce008e0d6f348fa1a2a625e18fcf8f9bc43b30d04906816936bdac4"
+          ],
+          [
+            "2",
+            "19",
+            "ce8a240fa20cec2790a765553a7967891075a6fb001c6bbfb49f16f1de99f0eb"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "candidate-automerge-w01-0",
+      "exit_code": 0,
+      "elapsed_wall_ns": 415210950,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 40402944,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-yrs-w01-0",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7732872,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 3772416,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-loro-w01-0",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7831747,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 6172672,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-diamond-types-w01-0",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3657554,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 3801088,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-yrs-w01-1",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7797223,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 3624960,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-loro-w01-1",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7790331,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 5984256,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-diamond-types-w01-1",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3648127,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 3809280,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-automerge-w01-1",
+      "exit_code": 0,
+      "elapsed_wall_ns": 414906968,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 40206336,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-loro-w01-2",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7739966,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 6144000,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-diamond-types-w01-2",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7718466,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 3809280,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-automerge-w01-2",
+      "exit_code": 0,
+      "elapsed_wall_ns": 414885047,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 40472576,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-yrs-w01-2",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7744877,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 3858432,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-automerge-allocations",
+      "exit_code": 0,
+      "elapsed_wall_ns": 414937186,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 40525824,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-automerge-w02",
+      "exit_code": 0,
+      "elapsed_wall_ns": 39458995237,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 395202560,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "verified_cuts": 11,
+        "logical_edit_batches": 100000,
+        "artifact_sha256": "a4025c4038e54df62e62f1a9eadb56173bc23089b4215cec512345cf51fc667b"
+      }
+    },
+    {
+      "name": "candidate-yrs-allocations",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7754444,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 3674112,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-yrs-w02",
+      "exit_code": 0,
+      "elapsed_wall_ns": 55517922132,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 1147621376,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "verified_cuts": 11,
+        "logical_edit_batches": 100000,
+        "artifact_sha256": "6493341e0d7a15c5e1baac6e06a107e16e4dc56edeb8a38685a12f9610c09808"
+      }
+    },
+    {
+      "name": "candidate-loro-allocations",
+      "exit_code": 0,
+      "elapsed_wall_ns": 7719988,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 6230016,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-loro-w02",
+      "exit_code": 0,
+      "elapsed_wall_ns": 9436432726,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 192315392,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "verified_cuts": 11,
+        "logical_edit_batches": 100000,
+        "artifact_sha256": "4167e34061e4455266598bb76fe77a657a4d8ad2b9aa64f5ed22eda15e30b509"
+      }
+    },
+    {
+      "name": "candidate-diamond-types-allocations",
+      "exit_code": 0,
+      "elapsed_wall_ns": 3686078,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 3768320,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "samples": 128,
+        "baseline_sizes": [
+          10240,
+          102400
+        ]
+      }
+    },
+    {
+      "name": "candidate-diamond-types-w02",
+      "exit_code": 0,
+      "elapsed_wall_ns": 465152517,
+      "resources": {
+        "method": "GNU time -v",
+        "maximum_resident_set_bytes": 64704512,
+        "memory_quality": "kernel_lifetime_maximum",
+        "scope": "standalone workload process, not Cargo or process tree"
+      },
+      "validated_output": {
+        "verified_cuts": 11,
+        "logical_edit_batches": 100000,
+        "artifact_sha256": "a91510ca69cf32fe17126b0080a268afe3671767bc06c24ee9dcdb34319889fd"
+      }
+    }
+  ],
+  "files": {
+    "candidate-automerge-seed-0.csv": {
+      "bytes": 493,
+      "sha256": "cb6144f90a3ad9c53dd7ec0d4ae770d120b04e765362fb660600a8d57949f3fc"
+    },
+    "candidate-yrs-seed-0.csv": {
+      "bytes": 471,
+      "sha256": "3a9597eef4d5d535b24c14e4a2fa3d0a9311b07ec05e1ff27efc1944b607daa2"
+    },
+    "candidate-loro-seed-0.csv": {
+      "bytes": 477,
+      "sha256": "eac2b8036643dade679bc2bd84c87817719bdba0208da7195f964cffa94375ca"
+    },
+    "candidate-diamond-types-seed-0.csv": {
+      "bytes": 502,
+      "sha256": "415a4897a792960fa35903b1174ad7c083dd6cac93e2a430e3ccc36b7abeb6cc"
+    },
+    "candidate-yrs-seed-1.csv": {
+      "bytes": 471,
+      "sha256": "3a9597eef4d5d535b24c14e4a2fa3d0a9311b07ec05e1ff27efc1944b607daa2"
+    },
+    "candidate-loro-seed-1.csv": {
+      "bytes": 477,
+      "sha256": "eac2b8036643dade679bc2bd84c87817719bdba0208da7195f964cffa94375ca"
+    },
+    "candidate-diamond-types-seed-1.csv": {
+      "bytes": 502,
+      "sha256": "415a4897a792960fa35903b1174ad7c083dd6cac93e2a430e3ccc36b7abeb6cc"
+    },
+    "candidate-automerge-seed-1.csv": {
+      "bytes": 493,
+      "sha256": "cb6144f90a3ad9c53dd7ec0d4ae770d120b04e765362fb660600a8d57949f3fc"
+    },
+    "candidate-loro-seed-2.csv": {
+      "bytes": 477,
+      "sha256": "eac2b8036643dade679bc2bd84c87817719bdba0208da7195f964cffa94375ca"
+    },
+    "candidate-diamond-types-seed-2.csv": {
+      "bytes": 502,
+      "sha256": "415a4897a792960fa35903b1174ad7c083dd6cac93e2a430e3ccc36b7abeb6cc"
+    },
+    "candidate-automerge-seed-2.csv": {
+      "bytes": 493,
+      "sha256": "cb6144f90a3ad9c53dd7ec0d4ae770d120b04e765362fb660600a8d57949f3fc"
+    },
+    "candidate-yrs-seed-2.csv": {
+      "bytes": 471,
+      "sha256": "3a9597eef4d5d535b24c14e4a2fa3d0a9311b07ec05e1ff27efc1944b607daa2"
+    },
+    "candidate-automerge-w01-0.csv": {
+      "bytes": 5572,
+      "sha256": "46b11852bee42d30b80983e9ed3a873f3b13dbe592d0079475398c0757d351ef"
+    },
+    "candidate-yrs-w01-0.csv": {
+      "bytes": 4174,
+      "sha256": "822022095e93405f22b12588ff0d612f5cca1f880fa1725ecea61e9b5826e89f"
+    },
+    "candidate-loro-w01-0.csv": {
+      "bytes": 4353,
+      "sha256": "698ac88ed131e1a090cb1239d36fa616223762ae9e49f7312aac41fbf5d6a72d"
+    },
+    "candidate-diamond-types-w01-0.csv": {
+      "bytes": 5176,
+      "sha256": "214798101414922a1f2c861c422a691ca248c9319a284a5f82ed7f992822d528"
+    },
+    "candidate-yrs-w01-1.csv": {
+      "bytes": 4180,
+      "sha256": "647d69031f68e110f149868b210baf86cce023cafdc77833518e03d9fd769722"
+    },
+    "candidate-loro-w01-1.csv": {
+      "bytes": 4349,
+      "sha256": "3bb3b8c79e9d80d0c9b787dd974e66576c2127df9a7850d0f692ee42e20b646d"
+    },
+    "candidate-diamond-types-w01-1.csv": {
+      "bytes": 5183,
+      "sha256": "d7e3ee6a4ac25582bb8dc0f56c27abc615676f655988671c11a95fbabcb5e30c"
+    },
+    "candidate-automerge-w01-1.csv": {
+      "bytes": 5572,
+      "sha256": "26a15a40f6737fbb38f32be4c079f36c5fdd65a63b7be04593a55efd8fe88a00"
+    },
+    "candidate-loro-w01-2.csv": {
+      "bytes": 4348,
+      "sha256": "0ff46bb263081142c8fa8ddd3e4349a9daaf5805b4ca03581b2b7ee297d7cbd1"
+    },
+    "candidate-diamond-types-w01-2.csv": {
+      "bytes": 5188,
+      "sha256": "ba6ab91d317dc71f0ce8ebf3cf0d45b3d8688431a89a1185910df28c356ea9ee"
+    },
+    "candidate-automerge-w01-2.csv": {
+      "bytes": 5574,
+      "sha256": "fc010a4f5b879a6cfcfca8fe0e2d59742d3085690b2eecba595f012bdfb72f4b"
+    },
+    "candidate-yrs-w01-2.csv": {
+      "bytes": 4181,
+      "sha256": "cf5eda65c77d371051d4abe81dcebd7f689ec5e387754585bdee478b44efcc94"
+    },
+    "candidate-automerge-allocations.csv": {
+      "bytes": 8557,
+      "sha256": "4feb5373806d95e9912a6326b03518c1d192bf2df23d11cb447082c5225aaf4f"
+    },
+    "candidate-automerge-w02.csv": {
+      "bytes": 2653,
+      "sha256": "916b941de7fb705d092c584763d894a44555ae11b867b9aaabfb5184aa556b69"
+    },
+    "candidate-yrs-allocations.csv": {
+      "bytes": 6856,
+      "sha256": "5694fa60d6953351c4430ccf11030f553b7297c2b0f5ff2e3ef86c4cb712d916"
+    },
+    "candidate-yrs-w02.csv": {
+      "bytes": 2587,
+      "sha256": "4ca034ea8b95b33c289af47a9cf9a86e2e0c90f0732a9a02ab47c5e9cb6e549f"
+    },
+    "candidate-loro-allocations.csv": {
+      "bytes": 6788,
+      "sha256": "8a9a3bdf2b5795c4cca787673eeecb27a4265b7db4652156805ecd26e31c2430"
+    },
+    "candidate-loro-w02.csv": {
+      "bytes": 2571,
+      "sha256": "49e0ba98aee0aaa049ac0d3e72e130ec7ea390c234b62343806d4d8b7089a1ff"
+    },
+    "candidate-diamond-types-allocations.csv": {
+      "bytes": 6846,
+      "sha256": "cb3e43387c1e472803c42717d80afada31ce27cdcc42d4b4ccf43e796d1bfcdf"
+    },
+    "candidate-diamond-types-w02.csv": {
+      "bytes": 2575,
+      "sha256": "693bbbfc0d8e6d99340e56a3f650af595e3257627b7f1e6a7a6ab25c6afa796e"
+    }
+  }
+}

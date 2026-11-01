@@ -1,0 +1,136 @@
+# I04 plan — atomic SQLite storage publication
+
+Branch: `i04-atomic-sqlite-publication` (off the merged I03, `2aec9d6`).
+Normative source: `/Users/pixel/Downloads/puyu/PUYUDB-BLUEPRINT.md` — the I04 row
+in §18.3, plus §4.4, §6.1–§6.6, §17.1 (T04), §17.3, §22.1, §22.2. Acceptance is
+T04: *faulted SQLite/VFS writes/fsyncs, process kill, power-loss model,
+disk-full; no partial multi-file publication; acked batch fully recoverable,
+unacked may be present or absent.*
+
+ADR-02 pin (accepted 2026-10-29, `docs/adr/02-i04-pin.md`): `rusqlite` 0.41.1
+bundled SQLite 3.54.1 (≥ 3.51.3 WAL-reset fix), `journal_mode=WAL`,
+`synchronous=FULL`, `fullfsync=ON` on Apple, one owning process via an OS lock
+beside the database.
+
+## Already on the branch
+
+- `crates/puyudb-core/src/publication.rs`: `Store` over `space.sqlite` with
+  `chunks`, `batches`, `batch_chunks`, `events`, `outbox`; `stage_chunk` is its
+  own durable autocommit; `publish` verifies signature/key equality, recomputes
+  the batch id, checks stream step and parent lamports, quarantines on
+  equivocation, requires staged chunks, and commits batch + chunk refs + event +
+  outbox in one `BEGIN IMMEDIATE … COMMIT` under WAL/FULL; the ack returns only
+  after that commit. Owner lock via `owner.lock`, retry before `Busy`.
+- `crates/sqlite-fault`: VFS shim — failed `xSync` discards unsynced bytes,
+  torn `xWrite` leaves a short prefix, then refuses further writes.
+- Tests: `tests/publication_power.rs` (lost sync / torn write during publish
+  and stage, disarmed publish, acked batch surviving a later armed fault;
+  serialized around the global VFS state), `tests/publication_crash.rs`
+  (SIGKILL after staged chunk → no publication).
+- B1 done (`c1232b4` plus the audit-fix commit): manifest + `format_meta`.
+- B2 done: artifact layer — `artifacts` / `artifact_chunks` / `batch_artifacts`
+  (the flat `batch_chunks` table is replaced by the artifact mapping) plus
+  `content_availability` (`resident` / `intentional-missing` / `lost`).
+  `stage_chunk` enforces the frozen 256 KiB raw chunk cap; `publish` binds every
+  artifact manifest to the artifact id the signed body commits, requires the
+  publication chunk list to equal the concatenation of the manifests' chunk
+  lists (bounding count transitively through the body and manifest caps), and
+  verifies hydration — per-chunk hash, total length, and the streamed raw
+  content digest — so a local `Applied` receipt implies `resident`.
+- B3 done: `batch_parents` DAG table with a parent→child index (the
+  `(stream,seq)` uniqueness is the `batches` UNIQUE constraint); admission now
+  requires every parent to be published, `lamport = 1 + max(parent lamport)`,
+  `previous` to lie in the parent closure (recursive CTE over `batch_parents`),
+  and the parents to form a minimal frontier (no parent an ancestor of another).
+- B4 done: `requests(caller, key, request_hash, batch_id, event_cursor)`;
+  `publish_keyed` returns the stored receipt for a repeated identical request
+  (also after reopen — the unknown-after-commit case), rejects a different
+  request under the same key, and leaves no row when the publish fails, so a
+  cancelled-before-publish key stays usable. `receipt_for` reads the receipt.
+- B5 done: `staged_batches` / `staged_artifacts` / `peer_receipts` schema with
+  expiry and stored/applied cursor constraints plus a small Store API; no apply
+  path (that is I21).
+- B6 done: disk-full (ENOSPC) fault in `sqlite-fault` (next `xWrite` fails
+  writing nothing, then the VFS is dead) with power-loss tests for publish and
+  stage, plus the §17.3 WAL-reset regression scenario as an explicit T04 test
+  (`PRAGMA wal_checkpoint(TRUNCATE)` between publications under the fault VFS).
+- B7 done via hosted runners (`.github/workflows/adr02-spike.yml` on the `i04-atomic-sqlite-publication` branch, actions
+  pinned by commit id): run `41322417700` (2026-11-01) is green on
+  `ubuntu-24.04` (full spike workspace, all engines) and `windows-2025`
+  (pinned `adr02-rusqlite` crash matrix: `publication_crash_matrix` and
+  `pre_ack_creation_kills` both ok). Two harness portability bugs were fixed
+  on the way: the kill-status check now only fails on a pre-kill exit
+  (Windows `TerminateProcess` reports exit code 1), and the ack-log directory
+  fsync is Unix-only (`File::open` on a dir is `ERROR_ACCESS_DENIED` on
+  Windows). Hosted runners are VMs — same evidence class as the approved
+  WSL2 runs. The machine/VM power-cut drill remains a separate open ADR-02
+  gate.
+- Follow-up audit of B2–B6 (fresh session over `0407906..026c30f`) found two
+  majors, both fixed: keyed idempotency now checks the `requests` row before
+  the already-published shortcut, rejects key reuse even when the new batch is
+  already published, and stops returning a receipt once its batch is
+  quarantined (`receipt_for` filters `quarantined = 0` too); artifact rows use
+  `INSERT OR IGNORE` so two batches may share one content-addressed artifact.
+  Also fixed: the ENOSPC arm returns `SQLITE_FULL`, staging bodies are capped
+  at the 1 MiB profile cap, expiry values are checked against the i64 range,
+  and idempotency caller/key are size-capped.
+- Spike evidence on `adr02-storage-spike` (`docs/adr/02-storage-spike.md`):
+  six engines, boundary/random kill matrices — macOS only, SIGKILL only.
+- Audit of B1 + ledger (`46a6dbb`) found and the follow-up commit fixed three
+  blockers: `publish` now rejects a batch naming another space (the store
+  keeps its `space`); a writer stream is keyed by the full
+  `(public_key, branch, writer_epoch, sequence)` tuple per spec §13, so two
+  keys sharing epoch bytes no longer equivocate; and the manifest is written
+  only after the owner lock is held, closing the two-process race that could
+  leave manifest and database naming different spaces. Also fixed: exact
+  `lamport = 1 + max(parent lamport)` enforcement, bounds-checked snapshot
+  indexing in `sqlite-fault::reset` paths, strict `created_unix`/no-CR
+  manifest parsing, and corruption (not silent rebind) when an existing
+  database has an emptied `format_meta`. Two residuals found while verifying
+  those fixes are also closed: reset under an open file must fail the sync
+  without restoring an empty snapshot (R01), and reset must never shrink the
+  snapshot vector, which would alias file ids across two fault stores (R02);
+  both have regression tests in `publication_power.rs`.
+
+## Scope (I04 tracer bullets, in order)
+
+| # | Bullet | Blueprint | Files |
+|---|---|---|---|
+| B1 | `format_meta` (schema major/minor, native codec, space id) + per-space `manifest.toml` (format, space, storage/lock profiles, creation time); open rejects unknown major formats and manifest/DB space mismatch; `quick_check` at open | §6.2, §6.3, §6.5 | `publication.rs`, tests |
+| B2 | Artifact layer: `artifacts` / `artifact_chunks` / `batch_artifacts`, §22.1 artifact manifest (kind, raw length, raw digest, ordered chunk ids), 256 KiB chunk cap, `content_availability` (resident / intentional-missing / lost) so Applied ≠ Hydrated | §6.3, §22.1, §22.2 | `publication.rs`, `profile.rs`, tests |
+| B3 | `batch_parents` DAG table + `(stream,seq)`/parent→child indexes, plus the §4.3 parent-closure and minimal-frontier checks at admission (currently only existence + lamport are checked) | §6.3, §4.3, §13 | `publication.rs`, tests |
+| B4 | `requests` idempotency table: same caller key returns the same receipt; conflicting key reuse rejected; cancel-before-publish vs unknown-after-commit per §6.4 | §6.4 | `publication.rs`, tests |
+| B5 | `staged_batches` / `peer_receipts` schema for replication staging (apply path itself is I21) | §6.3 | `publication.rs` |
+| B6 | Fault hooks: disk-full (ENOSPC) in `sqlite-fault` in addition to lost sync/torn write; power-loss tests for each; publish/stage under disk-full leave no partial publication and no ack. Also add the fixed SQLite WAL-reset regression scenario (§17.3) as an explicit T04 evidence item — it is currently only covered by the ≥ 3.51.3 version gate, nowhere in the test corpus | §17.3, T04 | `sqlite-fault`, `publication_power.rs` |
+| B7 | Cross-platform evidence: rerun the ADR-02 spike kill matrix on Windows and Linux; VFS model already covers software power loss | §17.3 | `adr02-storage-spike` spike harness |
+| B8 | Docs: I04 section in `docs/IMPLEMENTATION_STATUS.md`, CHANGELOG entry, ADR-02 status update | §18.3 | docs |
+
+## Explicitly out of scope (later issues)
+
+Projections (`field_writes`, `files_current`, `paths_current` — I05),
+`frontiers`/`branches` resolution (I08/I12), `native_changes` scope checks
+(I05 — native artifacts stay refused), checkout/Git state (I07+),
+`upload_reservations`/quota mechanics (I15), replication protocol (I20+),
+backup/export/migration tooling (I18/I19), daemon/IPC (I17), CLI (I10).
+Machine/VM power-cut drills remain an open gate recorded in ADR-02; the VFS
+model is the software power-loss evidence. Known recorded decisions/deviations:
+equivocation quarantine unpublishes only the claimant row — descendants and
+their events stay visible until I08 frontier logic decides (matches ADR-02's
+literal wording); the owner lock lives inside the space directory
+(`<dir>/owner.lock`) rather than as the `spaces/<space-id>.owner.lock` sibling
+of blueprint §6.2, which only matters for payload eviction in I39/I40.
+
+## Definition of done for I04
+
+- B1–B6 merged with green CI (fmt, clippy `-D warnings`, workspace tests in all
+  three feature configurations, python unittest, cargo-deny).
+- T04 evidence: VFS lost-sync/torn-write/disk-full tests + SIGKILL test show no
+  partial publication and no ack for an uncommitted batch; every acked batch
+  survives reopen complete.
+- One owning writer enforced by the OS lock on all CI platforms.
+- `docs/IMPLEMENTATION_STATUS.md` records what is done and what stays open
+  (B7 cross-platform spike, machine power-cut).
+
+Commit policy: checkpoint commits on the branch, English messages, DCO
+sign-off, Mistral Vibe co-author trailer. Push only to
+`i04-atomic-sqlite-publication`; no merge/PR without maintainer approval.

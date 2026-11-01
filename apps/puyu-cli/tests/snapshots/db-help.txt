@@ -1,0 +1,9 @@
+PuyuDB database and synchronization engine
+
+Usage: puyu db
+
+Options:
+  -h, --help  Print help
+
+Foundation only. No database operations are implemented yet.
+PuyuDB is not ready for production use.
