@@ -478,7 +478,7 @@ B5 (replication staging schema: `staged_batches` / `staged_artifacts` /
 `peer_receipts`, no apply path) and B6 (disk-full ENOSPC fault injection plus
 the WAL-reset regression scenario as an explicit T04 test) are done.
 
-B7 is done via hosted runners (workflow `adr02-spike.yml`): run `41322417700`
+B7 is done via hosted runners (workflow `adr02-spike.yml` on the `i04-atomic-sqlite-publication` branch): run `41322417700`
 (2026-11-01) is green on ubuntu-24.04 (all spike engines) and windows-2025
 (pinned rusqlite kill matrix). Two spike-harness portability fixes landed
 (post-kill exit status differs on Windows; directory fsync is Unix-only).
