@@ -1,7 +1,8 @@
 //! Power-loss model for the publication ledger.
 //!
-//! The shim VFS discards bytes that never reached a successful sync, or leaves
-//! a torn write, then refuses further writes. Reopen uses the normal VFS.
+//! The shim VFS discards bytes that never reached a successful sync, leaves a
+//! torn write, or fails a write outright (disk full), then refuses further
+//! writes. Reopen uses the normal VFS.
 
 use std::sync::{Mutex, MutexGuard};
 
@@ -275,5 +276,106 @@ fn lost_sync_during_stage_does_not_ack_the_chunk() {
     reset();
     let store = Store::open(&path, &SPACE).expect("reopen");
     assert_eq!(store.staged_without_publication().expect("staged"), 0);
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn disk_full_during_publish_leaves_no_publication_and_retry_succeeds() {
+    let _serial = serial();
+    let path = dir("enospc-publish");
+    let store = open_fault(&path);
+    let prepared = prepared();
+    let ids = stage_prepared(&store, &prepared);
+    // Disk full: the write fails and nothing reaches the file, so no ack and
+    // no torn prefix.
+    sqlite_fault::fail_next_write_enospc();
+    assert!(
+        store
+            .publish(&signed(&prepared, &ids, &prepared.signature))
+            .is_err()
+    );
+    drop(store);
+    reset();
+    let store = Store::open(&path, &SPACE).expect("reopen");
+    assert!(!store.is_published(&prepared.batch).expect("read"));
+    assert_eq!(store.staged_without_publication().expect("staged"), 1);
+    store
+        .publish(&signed(&prepared, &ids, &prepared.signature))
+        .expect("retry after reset");
+    assert!(store.is_published(&prepared.batch).expect("read"));
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn disk_full_during_stage_leaves_no_chunk_and_retry_succeeds() {
+    let _serial = serial();
+    let path = dir("enospc-stage");
+    let bytes = b"disk-full-chunk";
+    let id = chunk_id(bytes);
+    let store = open_fault(&path);
+    sqlite_fault::fail_next_write_enospc();
+    assert!(store.stage_chunk(id, bytes).is_err());
+    drop(store);
+    reset();
+    let store = Store::open(&path, &SPACE).expect("reopen");
+    assert_eq!(store.staged_without_publication().expect("staged"), 0);
+    store.stage_chunk(id, bytes).expect("retry stage");
+    assert_eq!(store.staged_without_publication().expect("staged"), 1);
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn acked_batch_survives_a_later_disk_full() {
+    let _serial = serial();
+    let path = dir("enospc-acked");
+    let store = open_fault(&path);
+    let prepared = prepared();
+    let ids = stage_prepared(&store, &prepared);
+    store
+        .publish(&signed(&prepared, &ids, &prepared.signature))
+        .expect("publish");
+    // The ack already returned; a later disk-full must not undo it.
+    sqlite_fault::fail_next_write_enospc();
+    assert!(store.stage_chunk(chunk_id(b"other"), b"other").is_err());
+    drop(store);
+    reset();
+    let store = Store::open(&path, &SPACE).expect("reopen");
+    assert!(store.is_published(&prepared.batch).expect("read"));
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+/// T04 evidence for the WAL-reset path fixed in SQLite >= 3.51.3 (blueprint
+/// §17.3): a truncating checkpoint between publications must not lose
+/// committed frames when a later fault hits.
+#[test]
+fn wal_reset_regression_acked_batches_survive_checkpoint_and_later_fault() {
+    let _serial = serial();
+    let path = dir("wal-reset");
+    let store = open_fault(&path);
+    let first = prepared();
+    let first_ids = stage_prepared(&store, &first);
+    store
+        .publish(&signed(&first, &first_ids, &first.signature))
+        .expect("first");
+    store.wal_checkpoint_truncate().expect("checkpoint");
+    let second = prepared_child(&first, b"after-wal-reset");
+    let second_ids = stage_prepared(&store, &second);
+    store
+        .publish(&signed(&second, &second_ids, &second.signature))
+        .expect("second");
+    let third = prepared_child(&second, b"after-disk-full");
+    let third_ids = stage_prepared(&store, &third);
+    sqlite_fault::fail_next_write_enospc();
+    assert!(
+        store
+            .publish(&signed(&third, &third_ids, &third.signature))
+            .is_err()
+    );
+    drop(store);
+    reset();
+    let store = Store::open(&path, &SPACE).expect("reopen");
+    assert!(store.is_published(&first.batch).expect("first survives"));
+    assert!(store.is_published(&second.batch).expect("second survives"));
+    assert!(!store.is_published(&third.batch).expect("third absent"));
     let _ = std::fs::remove_dir_all(&path);
 }

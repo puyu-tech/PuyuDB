@@ -370,6 +370,22 @@ impl Store {
             .query_row("SELECT sqlite_version()", [], |row| row.get(0))?)
     }
 
+    /// Run `PRAGMA wal_checkpoint(TRUNCATE)`, the WAL-reset path fixed in
+    /// SQLite >= 3.51.3. The T04 fault corpus drives this between publications.
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the pragma fails, and [`Error::Rejected`]
+    /// when the checkpoint could not run because the WAL was busy.
+    pub fn wal_checkpoint_truncate(&self) -> Result<(), Error> {
+        let busy: i64 = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))?;
+        if busy != 0 {
+            return Err(Error::Rejected("wal checkpoint was busy".into()));
+        }
+        Ok(())
+    }
+
     /// Durably stage one chunk. Idempotent when the same bytes are staged again.
     ///
     /// # Errors

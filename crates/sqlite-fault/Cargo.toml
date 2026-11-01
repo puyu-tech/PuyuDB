@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.99.1"
 license = "Apache-2.0"
 publish = false
-description = "SQLite VFS that injects torn writes and lost unsynced flushes"
+description = "SQLite VFS that injects torn writes, disk-full writes and lost unsynced flushes"
 
 [dependencies]
 libsqlite3-sys = { version = "=0.39.1", features = ["bundled"] }
