@@ -473,10 +473,13 @@ B4 is done on the branch: the `requests` table records
 `(caller, key) → request hash, batch, event cursor`; a repeated identical keyed
 publish returns the stored receipt (including after reopen), a different
 request under the same key is rejected, and a failed publish leaves no row.
+B5 (replication staging schema: `staged_batches` / `staged_artifacts` /
+`peer_receipts`, no apply path) and B6 (disk-full ENOSPC fault injection plus
+the WAL-reset regression scenario as an explicit T04 test) are done.
 
-Still open inside I04: replication staging tables (B5), disk-full fault
-injection plus the WAL-reset regression scenario (B6), Windows/Linux spike
-reruns (B7). A
+Still open inside I04: Windows/Linux spike reruns (B7). A machine/VM
+power-cut drill is still required per ADR-02; the VFS model is the
+software power-loss evidence. A
 machine/VM power-cut drill is still required per ADR-02; the VFS model is the
 software power-loss evidence. No projections, branches, native scope, checkout,
 quota, replication, backup or CLI surface exists yet.

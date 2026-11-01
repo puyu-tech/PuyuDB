@@ -47,6 +47,13 @@ beside the database.
   (also after reopen — the unknown-after-commit case), rejects a different
   request under the same key, and leaves no row when the publish fails, so a
   cancelled-before-publish key stays usable. `receipt_for` reads the receipt.
+- B5 done: `staged_batches` / `staged_artifacts` / `peer_receipts` schema with
+  expiry and stored/applied cursor constraints plus a small Store API; no apply
+  path (that is I21).
+- B6 done: disk-full (ENOSPC) fault in `sqlite-fault` (next `xWrite` fails
+  writing nothing, then the VFS is dead) with power-loss tests for publish and
+  stage, plus the §17.3 WAL-reset regression scenario as an explicit T04 test
+  (`PRAGMA wal_checkpoint(TRUNCATE)` between publications under the fault VFS).
 - Spike evidence on `adr02-storage-spike` (`docs/adr/02-storage-spike.md`):
   six engines, boundary/random kill matrices — macOS only, SIGKILL only.
 - Audit of B1 + ledger (`87e1c2b`) found and the follow-up commit fixed three
