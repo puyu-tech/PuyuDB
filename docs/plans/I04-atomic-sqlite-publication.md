@@ -54,6 +54,17 @@ beside the database.
   writing nothing, then the VFS is dead) with power-loss tests for publish and
   stage, plus the §17.3 WAL-reset regression scenario as an explicit T04 test
   (`PRAGMA wal_checkpoint(TRUNCATE)` between publications under the fault VFS).
+- B7 done via hosted runners (`.github/workflows/adr02-spike.yml`, actions
+  pinned by commit id): run `41322417700` (2026-11-01) is green on
+  `ubuntu-24.04` (full spike workspace, all engines) and `windows-2025`
+  (pinned `adr02-rusqlite` crash matrix: `publication_crash_matrix` and
+  `pre_ack_creation_kills` both ok). Two harness portability bugs were fixed
+  on the way: the kill-status check now only fails on a pre-kill exit
+  (Windows `TerminateProcess` reports exit code 1), and the ack-log directory
+  fsync is Unix-only (`File::open` on a dir is `ERROR_ACCESS_DENIED` on
+  Windows). Hosted runners are VMs — same evidence class as the approved
+  WSL2 runs. The machine/VM power-cut drill remains a separate open ADR-02
+  gate.
 - Follow-up audit of B2–B6 (fresh session over `e38f462..e199854`) found two
   majors, both fixed: keyed idempotency now checks the `requests` row before
   the already-published shortcut, rejects key reuse even when the new batch is
