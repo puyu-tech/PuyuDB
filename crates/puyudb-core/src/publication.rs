@@ -208,6 +208,9 @@ pub struct Publication<'a> {
     pub peer: u64,
 }
 
+/// Maximum byte length of an idempotency caller or key.
+const MAX_IDEMPOTENCY_PART_BYTES: usize = 1024;
+
 /// One row of the `requests` idempotency table.
 struct RequestRow {
     hash: Vec<u8>,
@@ -429,6 +432,11 @@ impl Store {
         key: &[u8],
         publication: &Publication<'_>,
     ) -> Result<Receipt, Error> {
+        if caller.len() > MAX_IDEMPOTENCY_PART_BYTES || key.len() > MAX_IDEMPOTENCY_PART_BYTES {
+            return Err(Error::Rejected(
+                "idempotency caller or key exceeds the size cap".into(),
+            ));
+        }
         self.publish_inner(publication, Some((caller, key)))
     }
 
@@ -510,13 +518,10 @@ impl Store {
         });
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         let result = (|| {
-            if let Some(cursor) = self.visible_cursor(&batch_id)? {
-                self.conn.execute_batch("ROLLBACK")?;
-                return Ok(Receipt {
-                    batch_id,
-                    event_cursor: cursor,
-                });
-            }
+            // The keyed path checks the requests row first: key reuse must be
+            // rejected even when the new request's batch is already published,
+            // and a stored receipt is only returned while its batch is still
+            // visible (a quarantined batch must not be acked again).
             if let (Some((caller, key)), Some(hash)) = (idempotency, &request_hash) {
                 let existing: Option<RequestRow> = self
                     .conn
@@ -544,6 +549,16 @@ impl Store {
                         cursor: Some(cursor),
                         ..
                     }) => {
+                        let visible: i64 = self.conn.query_row(
+                            "SELECT COUNT(*) FROM batches WHERE batch_id = ?1 AND quarantined = 0",
+                            params![batch.as_slice()],
+                            |row| row.get(0),
+                        )?;
+                        if visible != 1 {
+                            return Err(Error::Rejected(
+                                "idempotent request points to a quarantined batch".into(),
+                            ));
+                        }
                         self.conn.execute_batch("ROLLBACK")?;
                         return Ok(Receipt {
                             batch_id: BatchId::from_bytes(&batch)
@@ -555,6 +570,13 @@ impl Store {
                     // publish, so this retry may proceed.
                     _ => {}
                 }
+            }
+            if let Some(cursor) = self.visible_cursor(&batch_id)? {
+                self.conn.execute_batch("ROLLBACK")?;
+                return Ok(Receipt {
+                    batch_id,
+                    event_cursor: cursor,
+                });
             }
             self.admit_stream(publication.body, &batch_id)?;
             self.admit_parents(publication.body)?;
@@ -591,8 +613,12 @@ impl Store {
                         "artifact payload does not match its manifest".into(),
                     ));
                 }
+                // Content-addressed rows are shared: a second batch carrying a
+                // byte-identical artifact must not hit the PK. Hydration was
+                // just re-verified inside this transaction, so ignoring the
+                // duplicate is safe.
                 self.conn.execute(
-                    "INSERT INTO artifacts(id, kind, raw_length, raw_digest, manifest)
+                    "INSERT OR IGNORE INTO artifacts(id, kind, raw_length, raw_digest, manifest)
                      VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         artifact_id.as_bytes().as_slice(),
@@ -604,7 +630,7 @@ impl Store {
                 )?;
                 for (ordinal, chunk) in manifest.chunks.iter().enumerate() {
                     self.conn.execute(
-                        "INSERT INTO artifact_chunks(artifact_id, ordinal, chunk_id) VALUES (?1, ?2, ?3)",
+                        "INSERT OR IGNORE INTO artifact_chunks(artifact_id, ordinal, chunk_id) VALUES (?1, ?2, ?3)",
                         params![
                             artifact_id.as_bytes().as_slice(),
                             ordinal as i64,
@@ -613,7 +639,7 @@ impl Store {
                     )?;
                 }
                 self.conn.execute(
-                    "INSERT INTO content_availability(artifact_id, state) VALUES (?1, 'resident')",
+                    "INSERT OR IGNORE INTO content_availability(artifact_id, state) VALUES (?1, 'resident')",
                     params![artifact_id.as_bytes().as_slice()],
                 )?;
             }
@@ -902,11 +928,15 @@ impl Store {
     /// # Errors
     /// Returns a SQLite error if the read fails.
     pub fn receipt_for(&self, caller: &[u8], key: &[u8]) -> Result<Option<Receipt>, Error> {
+        // A quarantined batch is not visible, so its stored receipt is not
+        // returned either.
         let row: Option<(Vec<u8>, i64)> = self
             .conn
             .query_row(
-                "SELECT batch_id, event_cursor FROM requests
-                 WHERE caller = ?1 AND key = ?2 AND batch_id IS NOT NULL",
+                "SELECT r.batch_id, r.event_cursor FROM requests r
+                 JOIN batches b ON b.batch_id = r.batch_id
+                 WHERE r.caller = ?1 AND r.key = ?2
+                   AND r.batch_id IS NOT NULL AND b.quarantined = 0",
                 params![caller, key],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -939,11 +969,21 @@ impl Store {
                 "integer exceeds the storable i64 range".into(),
             ));
         }
+        if body.len() > profile::MAX_BATCH_BODY_BYTES {
+            return Err(Error::Rejected(
+                "staged batch body exceeds the profile cap".into(),
+            ));
+        }
         let id = profile::batch_id(body);
         let now = now_unix()?;
         let expires = now
             .checked_add(ttl_secs)
             .ok_or_else(|| Error::Rejected("expiry overflow".into()))?;
+        if expires > i64::MAX as u64 {
+            return Err(Error::Rejected(
+                "expiry exceeds the storable i64 range".into(),
+            ));
+        }
         self.conn
             .execute(
                 "INSERT INTO staged_batches(peer, batch_id, body, received_unix, expires_unix)
@@ -1004,6 +1044,11 @@ impl Store {
         let expires = now
             .checked_add(ttl_secs)
             .ok_or_else(|| Error::Rejected("expiry overflow".into()))?;
+        if expires > i64::MAX as u64 {
+            return Err(Error::Rejected(
+                "expiry exceeds the storable i64 range".into(),
+            ));
+        }
         self.conn
             .execute(
                 "INSERT INTO staged_artifacts(peer, artifact_id, verified_bytes, received_unix, expires_unix)
@@ -2153,6 +2198,72 @@ mod tests {
             .publish_keyed(caller, key, &publication(&f, &ids))
             .expect("retry after reopen");
         assert_eq!(again, first);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keyed_reuse_with_a_published_batch_is_rejected_and_quarantine_hides_the_receipt() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let caller = b"caller-a";
+        let first = fixture(6);
+        let first_ids = stage(&store, &first.chunks);
+        let key_a = b"key-a";
+        let r1 = store
+            .publish_keyed(caller, key_a, &publication(&first, &first_ids))
+            .expect("first");
+        // A second batch published under a different key must not be accepted
+        // under key_a, even though its batch is already published.
+        let second = child(&first, 2, 2, 8, vec![first.body.id().expect("id")]);
+        let second_ids = stage(&store, &second.chunks);
+        store
+            .publish_keyed(caller, b"key-b", &publication(&second, &second_ids))
+            .expect("second");
+        let err = store
+            .publish_keyed(caller, key_a, &publication(&second, &second_ids))
+            .expect_err("key reuse");
+        assert!(matches!(err, Error::Rejected(_)));
+        assert_eq!(store.receipt_for(caller, key_a).expect("receipt"), Some(r1));
+        // Equivocation quarantines `first`; the stored receipt must stop
+        // resolving on both the keyed path and receipt_for.
+        let (rm, rc) = frame("metadata-v1", &[11]);
+        let mut rival = first.body.clone();
+        rival.metadata = rm.id().expect("artifact id");
+        let rsig = sign(&rival);
+        let rids = stage(&store, &rc);
+        let err = store
+            .publish(&Publication {
+                body: &rival,
+                signature_key: &rival.public_key,
+                signature: &rsig,
+                artifacts: std::slice::from_ref(&rm),
+                chunks: &rids,
+                peer: 1,
+            })
+            .expect_err("equivocation");
+        assert!(matches!(err, Error::Equivocation));
+        let err = store
+            .publish_keyed(caller, key_a, &publication(&first, &first_ids))
+            .expect_err("quarantined receipt");
+        assert!(matches!(err, Error::Rejected(_)));
+        assert_eq!(store.receipt_for(caller, key_a).expect("gone"), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_batches_may_share_one_content_addressed_artifact() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let first = fixture(6);
+        publish_fixture(&store, &first);
+        // Same metadata payload on another branch: identical ArtifactId.
+        let twin = other_branch_root(6, 5);
+        assert_eq!(
+            first.manifest.id().expect("id"),
+            twin.manifest.id().expect("id")
+        );
+        let twin_id = publish_fixture(&store, &twin);
+        assert!(store.is_published(&twin_id).expect("read"));
         let _ = fs::remove_dir_all(&dir);
     }
 
