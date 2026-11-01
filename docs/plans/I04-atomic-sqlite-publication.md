@@ -37,6 +37,11 @@ beside the database.
   lists (bounding count transitively through the body and manifest caps), and
   verifies hydration — per-chunk hash, total length, and the streamed raw
   content digest — so a local `Applied` receipt implies `resident`.
+- B3 done: `batch_parents` DAG table with a parent→child index (the
+  `(stream,seq)` uniqueness is the `batches` UNIQUE constraint); admission now
+  requires every parent to be published, `lamport = 1 + max(parent lamport)`,
+  `previous` to lie in the parent closure (recursive CTE over `batch_parents`),
+  and the parents to form a minimal frontier (no parent an ancestor of another).
 - Spike evidence on `adr02-storage-spike` (`docs/adr/02-storage-spike.md`):
   six engines, boundary/random kill matrices — macOS only, SIGKILL only.
 - Audit of B1 + ledger (`87e1c2b`) found and the follow-up commit fixed three
