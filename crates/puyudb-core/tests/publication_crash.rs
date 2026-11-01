@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use puyudb_core::identity::{ArtifactId, BranchId, SpaceId, WriterEpoch};
-use puyudb_core::profile::{self, BatchBody, chunk_id};
+use puyudb_core::identity::{BranchId, ChunkId, SpaceId, WriterEpoch};
+use puyudb_core::profile::{self, ArtifactManifest, BatchBody, chunk_id};
 use puyudb_core::publication::{Publication, Store};
 
 const SPACE: SpaceId = SpaceId::from_array([1; 16]);
@@ -55,8 +55,15 @@ fn kill_after_staged_chunk_leaves_no_publication() {
     let _ = child.wait();
 
     let store = Store::open(&dir, &SPACE).expect("reopen");
-    let id = chunk_id(b"staged-before-kill");
     assert_eq!(store.staged_without_publication().expect("staged"), 1);
+    let payload = b"crash-metadata";
+    let manifest = ArtifactManifest::for_payload("metadata-v1", payload).expect("manifest");
+    let mut chunk_ids: Vec<ChunkId> = Vec::new();
+    for c in payload.chunks(profile::CHUNK_RAW_BYTES) {
+        let id = chunk_id(c);
+        store.stage_chunk(id, c).expect("stage");
+        chunk_ids.push(id);
+    }
     let body = BatchBody {
         space: SpaceId::from_array([1; 16]),
         branch: BranchId::from_array([2; 16]),
@@ -67,7 +74,7 @@ fn kill_after_staged_chunk_leaves_no_publication() {
         parents: Vec::new(),
         lamport: 1,
         native_artifacts: Vec::new(),
-        metadata: ArtifactId::from_array([6; 32]),
+        metadata: manifest.id().expect("artifact id"),
     };
     let batch = body.id().expect("id");
     assert!(!store.is_published(&batch).expect("read"));
@@ -77,7 +84,8 @@ fn kill_after_staged_chunk_leaves_no_publication() {
             body: &body,
             signature_key: &body.public_key,
             signature: &signature,
-            chunks: &[id],
+            artifacts: std::slice::from_ref(&manifest),
+            chunks: &chunk_ids,
             peer: 1,
         })
         .expect("publish after crash");

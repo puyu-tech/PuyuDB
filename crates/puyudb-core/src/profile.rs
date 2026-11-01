@@ -176,6 +176,23 @@ pub fn raw_digest(kind: &str, payload: &[u8]) -> [u8; 32] {
     digest(CONTENT_DOMAIN, &[kind.as_bytes(), &[0u8], payload])
 }
 
+/// Streaming form of [`raw_digest`] over the ordered chunk payloads.
+///
+/// Produces the same digest as `raw_digest(kind, &concatenated_chunks)`
+/// without assembling the payload in memory.
+#[must_use]
+pub fn raw_digest_chunks<'a>(kind: &str, chunks: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(CONTENT_DOMAIN);
+    hasher.update([0u8]);
+    hasher.update(kind.as_bytes());
+    hasher.update([0u8]);
+    for chunk in chunks {
+        hasher.update(chunk);
+    }
+    hasher.finalize().into()
+}
+
 /// `ArtifactId` of one canonical manifest body.
 #[must_use]
 pub fn artifact_id(body: &[u8]) -> ArtifactId {
