@@ -191,9 +191,10 @@ fn reset_under_open_file_fails_sync_without_touching_the_file() {
     store
         .publish(&signed(&prepared.body, &[id], &prepared.signature))
         .expect("publish");
-    // Misuse the shim on purpose: reset() shrinks the snapshot vec while the
-    // file is still open. The armed sync must fail without restoring an empty
-    // snapshot (which would truncate the database).
+    // Misuse the shim on purpose: reset() while the file is still open. The
+    // armed sync must fail through the defensive snapshot .get() without
+    // touching the file (R01); reset no longer shrinks the vec, so ids stay
+    // monotonic (R02).
     reset();
     sqlite_fault::fail_next_sync();
     let mut second = prepared.body.clone();

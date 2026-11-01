@@ -202,21 +202,12 @@ impl Store {
             }
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
-        // Only the lock owner writes the manifest, so two racing processes can
-        // never leave a manifest that names a space the database does not.
         let manifest_path = dir.join(MANIFEST_NAME);
-        let manifest_space = if manifest_path.exists() {
-            Some(read_manifest(&manifest_path)?)
-        } else {
-            None
-        };
-        if let Some(existing) = manifest_space
-            && existing != *space
-        {
-            return Err(Error::SpaceMismatch);
-        }
-        if manifest_space.is_none() {
-            write_manifest(&manifest_path, space)?;
+        if manifest_path.exists() {
+            let existing = read_manifest(&manifest_path)?;
+            if existing != *space {
+                return Err(Error::SpaceMismatch);
+            }
         }
         let db_path = dir.join("space.sqlite");
         let conn = if let Some(vfs) = vfs {
@@ -239,11 +230,30 @@ impl Store {
             [],
             |row| row.get(0),
         )?;
-        conn.execute_batch(SCHEMA)?;
-        check_format_meta(&conn, space, db_existed == 1)?;
+        // Schema and the initial format_meta commit together: a kill between
+        // two autocommit statements must not leave a fresh database that fails
+        // open as corrupt forever.
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let schema_result = (|| {
+            conn.execute_batch(SCHEMA)?;
+            check_format_meta(&conn, space, db_existed == 1)
+        })();
+        match schema_result {
+            Ok(()) => conn.execute_batch("COMMIT")?,
+            Err(err) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(err);
+            }
+        }
         let check: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         if check != "ok" {
             return Err(Error::Corrupt(check));
+        }
+        // Only the lock owner writes the manifest, and only after the database
+        // is validated, so a failed open never leaves a manifest naming a space
+        // the database does not.
+        if !manifest_path.exists() {
+            write_manifest(&manifest_path, space)?;
         }
         Ok(Self {
             conn,
@@ -290,6 +300,16 @@ impl Store {
         }
         if !publication.body.native_artifacts.is_empty() {
             return Err(Error::NativeUnchecked);
+        }
+        // SQLite stores INTEGER as a signed i64; reject values that would wrap
+        // on the way into the database.
+        if publication.body.sequence > i64::MAX as u64
+            || publication.body.lamport > i64::MAX as u64
+            || publication.peer > i64::MAX as u64
+        {
+            return Err(Error::Rejected(
+                "integer exceeds the storable i64 range".into(),
+            ));
         }
         let encoded = publication.body.encode()?;
         profile::validate_record(Record::BatchBody, &encoded)?;
@@ -710,7 +730,8 @@ fn check_format_meta(conn: &Connection, space: &SpaceId, db_existed: bool) -> Re
             if major != SCHEMA_MAJOR {
                 return Err(Error::UnsupportedFormat(format!("schema major {major}")));
             }
-            let minor = get("schema_minor")?.unwrap_or_default();
+            let minor = get("schema_minor")?
+                .ok_or_else(|| Error::Corrupt("format_meta is missing schema_minor".into()))?;
             let minor: i64 = minor
                 .parse()
                 .map_err(|_| Error::UnsupportedFormat(minor.clone()))?;
@@ -1107,5 +1128,37 @@ mod tests {
         assert!(sqlite_has_wal_reset_fix("3.54.1"));
         assert!(!sqlite_has_wal_reset_fix("3.51.2"));
         assert!(!sqlite_has_wal_reset_fix("3.47.0"));
+    }
+
+    #[test]
+    fn integers_beyond_i64_are_rejected() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let body = genesis(6);
+        let signature = sign(&body);
+        let mut overflow = signed(&body, &[], &signature);
+        overflow.peer = u64::MAX;
+        let err = store.publish(&overflow).expect_err("peer overflow");
+        assert!(matches!(err, Error::Rejected(_)));
+        assert!(!store.is_published(&body.id().expect("id")).expect("read"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupted_database_fails_open_as_corrupt() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        drop(store);
+        // Flip bytes in the middle of the file: the 100-byte header stays
+        // valid, so open reaches PRAGMA quick_check and reports corruption
+        // instead of failing earlier with "not a database".
+        let db = dir.join("space.sqlite");
+        let mut file = OpenOptions::new().write(true).open(&db).expect("open db");
+        use std::io::{Seek, SeekFrom};
+        file.seek(SeekFrom::Start(8192)).expect("seek");
+        file.write_all(&[0xFFu8; 64]).expect("corrupt");
+        drop(file);
+        assert!(matches!(Store::open(&dir, &SPACE), Err(Error::Corrupt(_))));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
