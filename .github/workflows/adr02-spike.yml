@@ -1,0 +1,44 @@
+name: ADR-02 storage spike (B7)
+
+# I04 B7: rerun the ADR-02 spike kill matrix (crash_matrix + pre_ack_kills per
+# engine binary) on hosted Linux and Windows runners. The spike is an isolated
+# workspace under spikes/adr02-storage with its own lockfile; it is not a
+# member of the main workspace. Hosted runners are VMs, the same evidence class
+# as the approved WSL2 runs; the machine power-cut drill stays a separate open
+# ADR-02 gate.
+
+on:
+  push:
+    branches: [i04-atomic-sqlite-publication]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  spike-kill-matrix:
+    name: Spike kill matrix on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: "1.99.1"
+      - name: Platform info
+        run: |
+          uname -a
+          rustc --version
+      - name: Run the ADR-02 spike crash matrix (all engines)
+        working-directory: spikes/adr02-storage
+        run: |
+          cargo test --release --workspace --locked
