@@ -1,0 +1,11 @@
+[package]
+name = "adr02-redb"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+adr02-protocol = { path = "../../protocol" }
+redb = "=4.4.0"

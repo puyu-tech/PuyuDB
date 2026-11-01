@@ -272,8 +272,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-**137 workspace tests pass:** 104 native research tests, 12 canonical-profile
-integration tests, 15 core unit tests and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
+**176 workspace tests pass:** 104 native research tests, 12 canonical-profile
+integration tests, 42 core unit tests, 12 publication integration tests
+(11 power-loss/fault and 1 process-kill) and 6 CLI process tests. Two long fixtures are intentionally ignored by the default runner and
 have passed explicitly in release mode: the mixed-history delivery gate and
 the all-candidate paste/delete/restore workload fixture. Allocator calibration
 also passes as a separate example test.
@@ -420,6 +421,71 @@ signatures, retained byte components and source fingerprints across platforms.
 The main workspace, dependency lock and DT pin remain unchanged; the experiment
 used a separate generated harness. The 2026-10-26 I02 closure (DT selected)
 changed documentation only; no Rust/build inputs changed after the audited runs.
+
+## I04 in progress: atomic SQLite publication (branch `i04-atomic-sqlite-publication`)
+
+The [I04 plan](plans/I04-atomic-sqlite-publication.md) follows blueprint §18.3,
+§6.2–§6.5 and T04. The [ADR-02 pin](adr/02-i04-pin.md) is accepted: rusqlite
+0.41.1 bundled SQLite 3.54.1, WAL/FULL, fullfsync on Apple, one owning process
+via an OS lock. Done so far on the branch (HEAD CI green; the first B1 push
+failed once on macos-15-intel from a test temp-dir collision, fixed by the
+follow-up commit):
+
+- Publication ledger in `puyudb-core::publication`: staged chunks, one atomic
+  `BEGIN IMMEDIATE … COMMIT` for batch + chunk references + event + outbox,
+  durable ack only after the WAL/FULL commit. Admission verifies signature and
+  key equality, recomputes the batch id, checks the stream step and parent
+  lamports, quarantines on equivocation, and requires staged chunks.
+- Owner lock beside the database, with a short retry before `Busy`.
+- Per-space `manifest.toml` (format, space id, storage/lock profiles, creation
+  time) plus a `format_meta` table (schema major/minor, native codec, space id);
+  open rejects an unknown major format, a manifest/DB space mismatch, and a
+  failed `quick_check`.
+- Fault-injection VFS (`sqlite-fault`): lost sync and torn write leave no
+  publication and no ack; SIGKILL after a staged chunk leaves no publication;
+  an acked batch survives a later armed fault. Tests are serialized around the
+  process-wide VFS state.
+- An audit of this slice (fresh session, adversarial, report not kept in git)
+  confirmed three blockers, all fixed on the branch: `publish` rejects a batch
+  naming a different space; writer streams are keyed by the full
+  `(public_key, branch, writer_epoch, sequence)` tuple per spec §13; the
+  manifest is written only under the owner lock. Majors fixed: exact
+  `lamport = 1 + max(parent lamport)`, bounds-safe VFS snapshot indexing,
+  strict manifest parsing, corruption instead of silent rebind when
+  `format_meta` is emptied. Open items recorded in the
+  [plan](plans/I04-atomic-sqlite-publication.md): parent-closure/minimal
+  frontier checks (B3), WAL-reset regression scenario in the T04 corpus (B6),
+  quarantine not cascading to descendants (I08).
+
+B2 is done on the branch: `artifacts` / `artifact_chunks` / `batch_artifacts`
+(the flat `batch_chunks` table is replaced by the artifact mapping) and
+`content_availability` (`resident` / `intentional-missing` / `lost`).
+`stage_chunk` enforces the 256 KiB raw cap; `publish` binds each artifact
+manifest to the id the signed body commits, requires the chunk list to equal
+the manifests' concatenation, and verifies hydration (per-chunk hash, length,
+streamed raw digest), so a local `Applied` receipt implies `resident`.
+
+B3 is done on the branch: `batch_parents` (with parent→child index) records the
+DAG, and admission checks parent existence, exact `lamport = 1 + max(parent
+lamport)`, `previous` membership in the parent closure, and minimality of the
+parent frontier.
+
+B4 is done on the branch: the `requests` table records
+`(caller, key) → request hash, batch, event cursor`; a repeated identical keyed
+publish returns the stored receipt (including after reopen), a different
+request under the same key is rejected, and a failed publish leaves no row.
+B5 (replication staging schema: `staged_batches` / `staged_artifacts` /
+`peer_receipts`, no apply path) and B6 (disk-full ENOSPC fault injection plus
+the WAL-reset regression scenario as an explicit T04 test) are done.
+
+B7 is done via hosted runners (workflow `adr02-spike.yml`): run `41322417700`
+(2026-11-01) is green on ubuntu-24.04 (all spike engines) and windows-2025
+(pinned rusqlite kill matrix). Two spike-harness portability fixes landed
+(post-kill exit status differs on Windows; directory fsync is Unix-only).
+
+A machine/VM power-cut drill is still required per ADR-02; the VFS model is
+the software power-loss evidence. No projections, branches, native scope,
+checkout, quota, replication, backup or CLI surface exists yet.
 
 ## Limits and next action
 
