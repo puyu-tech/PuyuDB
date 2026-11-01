@@ -146,6 +146,8 @@ fn read_all(real: *mut sqlite3_file) -> Vec<u8> {
         {
             return Vec::new();
         }
+        // shortcut: size/len are cast to c_int, so a file >= 2 GiB truncates;
+        // unreachable at test scale — bound real store sizes before this shim.
         let mut buf = vec![0u8; size as usize];
         if let Some(read) = (*methods).xRead
             && read(real, buf.as_mut_ptr().cast(), size as c_int, 0) != SQLITE_OK
@@ -166,6 +168,7 @@ fn restore(real: *mut sqlite3_file, bytes: &[u8]) {
         if !bytes.is_empty()
             && let Some(write) = (*methods).xWrite
         {
+            // shortcut: same 2 GiB c_int truncation as read_all above.
             let _ = write(real, bytes.as_ptr().cast(), bytes.len() as c_int, 0);
         }
     }
