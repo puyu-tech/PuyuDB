@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS outbox (
   peer INTEGER NOT NULL,
   FOREIGN KEY(batch_id) REFERENCES batches(batch_id)
 );
+CREATE TABLE IF NOT EXISTS requests (
+  caller BLOB NOT NULL,
+  key BLOB NOT NULL,
+  request_hash BLOB NOT NULL,
+  batch_id BLOB,
+  event_cursor INTEGER,
+  PRIMARY KEY(caller, key),
+  FOREIGN KEY(batch_id) REFERENCES batches(batch_id)
+);
 ";
 
 /// Failure of the publication ledger.
@@ -174,6 +183,13 @@ pub struct Publication<'a> {
     pub chunks: &'a [ChunkId],
     /// Outbox peer for this local publication.
     pub peer: u64,
+}
+
+/// One row of the `requests` idempotency table.
+struct RequestRow {
+    hash: Vec<u8>,
+    batch: Option<Vec<u8>>,
+    cursor: Option<i64>,
 }
 
 /// Hydration state of one artifact, distinct from publication.
@@ -344,6 +360,32 @@ impl Store {
     /// A failed admission or a missing chunk leaves no new visible batch. A
     /// missing parent stays pending. `Ok` means the commit returned under WAL/FULL.
     pub fn publish(&self, publication: &Publication<'_>) -> Result<Receipt, Error> {
+        self.publish_inner(publication, None)
+    }
+
+    /// Publish with an idempotency key.
+    ///
+    /// The same `(caller, key)` with the same request content returns the
+    /// stored receipt, also after a reopen (the unknown-after-commit case). A
+    /// different request under the same key is rejected. A request that never
+    /// committed leaves no row, so the key stays usable (cancel-before-publish).
+    ///
+    /// # Errors
+    /// Same as [`Store::publish`], plus [`Error::Rejected`] on key reuse.
+    pub fn publish_keyed(
+        &self,
+        caller: &[u8],
+        key: &[u8],
+        publication: &Publication<'_>,
+    ) -> Result<Receipt, Error> {
+        self.publish_inner(publication, Some((caller, key)))
+    }
+
+    fn publish_inner(
+        &self,
+        publication: &Publication<'_>,
+        idempotency: Option<(&[u8], &[u8])>,
+    ) -> Result<Receipt, Error> {
         if publication.body.space != self.space {
             return Err(Error::Rejected(
                 "batch names a different space than this store".into(),
@@ -407,6 +449,14 @@ impl Store {
                 "chunk list does not match the artifact manifests".into(),
             ));
         }
+        let request_hash = idempotency.map(|_| {
+            profile::request_hash(
+                &encoded,
+                publication.signature,
+                publication.chunks,
+                publication.peer,
+            )
+        });
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         let result = (|| {
             if let Some(cursor) = self.visible_cursor(&batch_id)? {
@@ -415,6 +465,45 @@ impl Store {
                     batch_id,
                     event_cursor: cursor,
                 });
+            }
+            if let (Some((caller, key)), Some(hash)) = (idempotency, &request_hash) {
+                let existing: Option<RequestRow> = self
+                    .conn
+                    .query_row(
+                        "SELECT request_hash, batch_id, event_cursor FROM requests
+                         WHERE caller = ?1 AND key = ?2",
+                        params![caller, key],
+                        |row| {
+                            Ok(RequestRow {
+                                hash: row.get(0)?,
+                                batch: row.get(1)?,
+                                cursor: row.get(2)?,
+                            })
+                        },
+                    )
+                    .ok();
+                match existing {
+                    Some(row) if row.hash.as_slice() != &hash[..] => {
+                        return Err(Error::Rejected(
+                            "idempotency key already used for a different request".into(),
+                        ));
+                    }
+                    Some(RequestRow {
+                        batch: Some(batch),
+                        cursor: Some(cursor),
+                        ..
+                    }) => {
+                        self.conn.execute_batch("ROLLBACK")?;
+                        return Ok(Receipt {
+                            batch_id: BatchId::from_bytes(&batch)
+                                .map_err(|err| Error::Corrupt(err.to_string()))?,
+                            event_cursor: cursor as u64,
+                        });
+                    }
+                    // Same hash without a committed batch: cancelled before
+                    // publish, so this retry may proceed.
+                    _ => {}
+                }
             }
             self.admit_stream(publication.body, &batch_id)?;
             self.admit_parents(publication.body)?;
@@ -519,6 +608,23 @@ impl Store {
                 "INSERT INTO outbox(batch_id, peer) VALUES (?1, ?2)",
                 params![batch_id.as_bytes().as_slice(), publication.peer as i64],
             )?;
+            if let (Some((caller, key)), Some(hash)) = (idempotency, &request_hash) {
+                self.conn.execute(
+                    "INSERT INTO requests(caller, key, request_hash, batch_id, event_cursor)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(caller, key) DO UPDATE SET
+                       request_hash = excluded.request_hash,
+                       batch_id = excluded.batch_id,
+                       event_cursor = excluded.event_cursor",
+                    params![
+                        caller,
+                        key,
+                        hash.as_slice(),
+                        batch_id.as_bytes().as_slice(),
+                        cursor,
+                    ],
+                )?;
+            }
             self.conn.execute_batch("COMMIT")?;
             Ok(Receipt {
                 batch_id,
@@ -738,6 +844,30 @@ impl Store {
             Some("lost") => Some(Availability::Lost),
             Some(other) => return Err(Error::Corrupt(format!("unknown availability {other}"))),
         })
+    }
+
+    /// The committed receipt for an idempotency key, if one exists.
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn receipt_for(&self, caller: &[u8], key: &[u8]) -> Result<Option<Receipt>, Error> {
+        let row: Option<(Vec<u8>, i64)> = self
+            .conn
+            .query_row(
+                "SELECT batch_id, event_cursor FROM requests
+                 WHERE caller = ?1 AND key = ?2 AND batch_id IS NOT NULL",
+                params![caller, key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+        match row {
+            None => Ok(None),
+            Some((batch, cursor)) => Ok(Some(Receipt {
+                batch_id: BatchId::from_bytes(&batch)
+                    .map_err(|err| Error::Corrupt(err.to_string()))?,
+                event_cursor: cursor as u64,
+            })),
+        }
     }
 
     /// Direct parents recorded for one batch.
@@ -1724,6 +1854,57 @@ mod tests {
             .expect_err("minimal frontier");
         assert!(matches!(err, Error::Rejected(_)));
         assert!(!store.is_published(&bad.id().expect("id")).expect("read"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn idempotency_key_returns_the_stored_receipt_and_rejects_reuse() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let f = fixture(6);
+        let ids = stage(&store, &f.chunks);
+        let caller = b"caller-a";
+        let key = b"req-1";
+        let first = store
+            .publish_keyed(caller, key, &publication(&f, &ids))
+            .expect("first");
+        let retry = store
+            .publish_keyed(caller, key, &publication(&f, &ids))
+            .expect("retry");
+        assert_eq!(first, retry);
+        assert_eq!(
+            store.receipt_for(caller, key).expect("receipt"),
+            Some(first)
+        );
+        // A different request under the same key is rejected.
+        let second = child(&f, 2, 2, 8, vec![f.body.id().expect("id")]);
+        let second_ids = stage(&store, &second.chunks);
+        let err = store
+            .publish_keyed(caller, key, &publication(&second, &second_ids))
+            .expect_err("key reuse");
+        assert!(matches!(err, Error::Rejected(_)));
+        // A request that failed before commit leaves no row: the key stays
+        // usable and the retry publishes normally.
+        let third = child(&f, 2, 2, 9, vec![f.body.id().expect("id")]);
+        let unstaged: Vec<ChunkId> = third.manifest.chunks.clone();
+        let key2 = b"req-2";
+        let err = store
+            .publish_keyed(caller, key2, &publication(&third, &unstaged))
+            .expect_err("missing chunk");
+        assert!(matches!(err, Error::MissingChunk));
+        assert_eq!(store.receipt_for(caller, key2).expect("none"), None);
+        let third_ids = stage(&store, &third.chunks);
+        let committed = store
+            .publish_keyed(caller, key2, &publication(&third, &third_ids))
+            .expect("after cancel");
+        assert_eq!(committed.event_cursor, 2);
+        // Unknown-after-commit: a reopen still resolves the stored receipt.
+        drop(store);
+        let store = Store::open(&dir, &SPACE).expect("reopen");
+        let again = store
+            .publish_keyed(caller, key, &publication(&f, &ids))
+            .expect("retry after reopen");
+        assert_eq!(again, first);
         let _ = fs::remove_dir_all(&dir);
     }
 

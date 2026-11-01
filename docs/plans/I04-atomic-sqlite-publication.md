@@ -42,6 +42,11 @@ beside the database.
   requires every parent to be published, `lamport = 1 + max(parent lamport)`,
   `previous` to lie in the parent closure (recursive CTE over `batch_parents`),
   and the parents to form a minimal frontier (no parent an ancestor of another).
+- B4 done: `requests(caller, key, request_hash, batch_id, event_cursor)`;
+  `publish_keyed` returns the stored receipt for a repeated identical request
+  (also after reopen — the unknown-after-commit case), rejects a different
+  request under the same key, and leaves no row when the publish fails, so a
+  cancelled-before-publish key stays usable. `receipt_for` reads the receipt.
 - Spike evidence on `adr02-storage-spike` (`docs/adr/02-storage-spike.md`):
   six engines, boundary/random kill matrices — macOS only, SIGKILL only.
 - Audit of B1 + ledger (`87e1c2b`) found and the follow-up commit fixed three
