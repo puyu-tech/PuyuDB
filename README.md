@@ -10,7 +10,9 @@ PuyuDB is the first project in the **Puyu** ecosystem. It is designed as standal
 
 **Early development — not yet released.**
 
-This repository does not yet contain a working database engine, CLI, server, or SDK. The capabilities described below are project goals, not currently available features. PuyuDB is not ready for production use.
+This repository contains Rust workspace foundations, experimental native text/history validation, and a CLI entry point with help and version output only. It does not yet contain a working database engine, database commands, server, or SDK. The capabilities described below are project goals, not currently available features. PuyuDB is not ready for production use.
+
+See [implementation status](docs/IMPLEMENTATION_STATUS.md) for completed work, verification evidence, and the next milestone.
 
 ## Why PuyuDB?
 
@@ -76,7 +78,20 @@ Correctness, recovery, and compatibility take priority over adding integrations.
 
 ## Installation
 
-There is no installable release yet. Build instructions and usage examples will be added when the first usable components are available.
+There is no installable release yet. To build the development scaffolding, install [Rust via rustup](https://rustup.rs/), then run from the repository root:
+
+```sh
+cargo build --workspace --locked
+cargo run --locked -p puyu-cli -- --help
+cargo run --locked -p puyu-cli -- --version
+cargo run --locked -p puyu-cli -- db --help
+```
+
+The workspace pins Rust 1.99.1 for development and as its minimum supported Rust version (MSRV), using edition 2024. The project follows reviewed, pinned latest stable releases rather than preserving older compiler support. See the [compatibility matrix](docs/COMPATIBILITY.md) for the distinction between local verification, configured CI targets, and product support.
+
+After installing the toolchain and fetching dependencies with `cargo fetch --locked`, `cargo build --workspace --locked --offline` builds without dependency downloads. No account, server, or Puyu-hosted infrastructure is needed.
+
+Only help and version output are available. Bare `puyu` / `puyu db`, unimplemented commands, and unknown flags return usage error code 2; they do not initialize or modify a database.
 
 ## Contributing
 
@@ -84,7 +99,7 @@ Contributions are welcome as the project takes shape, especially around correctn
 
 Before starting a substantial implementation, discuss its scope and expected behavior so that changes follow a consistent design. Future contributions should include relevant tests and documentation, particularly when they affect stored history or compatibility.
 
-Contributor guidelines and a private security-reporting process will be published before the first public release. Do not post credentials, private source code, or sensitive conversation histories in public reports.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for development checks, DCO sign-offs, and provenance requirements, and the [code of conduct](CODE_OF_CONDUCT.md) for participation expectations. Use GitHub Private Vulnerability Reporting as described in [SECURITY.md](SECURITY.md); the channel is enabled, but there is no staffed security response service or guaranteed response time. Do not post credentials, private source code, or sensitive conversation histories in public reports.
 
 ## License
 
