@@ -96,6 +96,29 @@ CREATE TABLE IF NOT EXISTS requests (
   PRIMARY KEY(caller, key),
   FOREIGN KEY(batch_id) REFERENCES batches(batch_id)
 );
+CREATE TABLE IF NOT EXISTS staged_batches (
+  peer INTEGER NOT NULL,
+  batch_id BLOB NOT NULL,
+  body BLOB NOT NULL,
+  received_unix INTEGER NOT NULL,
+  expires_unix INTEGER NOT NULL CHECK(expires_unix >= received_unix),
+  PRIMARY KEY(peer, batch_id)
+);
+CREATE INDEX IF NOT EXISTS staged_batches_expiry ON staged_batches(expires_unix);
+CREATE TABLE IF NOT EXISTS staged_artifacts (
+  peer INTEGER NOT NULL,
+  artifact_id BLOB NOT NULL,
+  verified_bytes INTEGER NOT NULL CHECK(verified_bytes >= 0),
+  received_unix INTEGER NOT NULL,
+  expires_unix INTEGER NOT NULL CHECK(expires_unix >= received_unix),
+  PRIMARY KEY(peer, artifact_id)
+);
+CREATE INDEX IF NOT EXISTS staged_artifacts_expiry ON staged_artifacts(expires_unix);
+CREATE TABLE IF NOT EXISTS peer_receipts (
+  peer INTEGER NOT NULL PRIMARY KEY,
+  stored_cursor INTEGER NOT NULL CHECK(stored_cursor >= 0),
+  applied_cursor INTEGER NOT NULL CHECK(applied_cursor >= 0 AND applied_cursor <= stored_cursor)
+);
 ";
 
 /// Failure of the publication ledger.
@@ -190,6 +213,18 @@ struct RequestRow {
     hash: Vec<u8>,
     batch: Option<Vec<u8>>,
     cursor: Option<i64>,
+}
+
+/// One staged incoming batch from a peer: received but not yet applied
+/// (replication apply is a later issue; only the staging schema exists here).
+#[derive(Clone, Debug)]
+pub struct StagedBatch {
+    /// Canonical batch body bytes as received.
+    pub body: Vec<u8>,
+    /// When the batch was staged.
+    pub received_unix: u64,
+    /// When this staging entry expires.
+    pub expires_unix: u64,
 }
 
 /// Hydration state of one artifact, distinct from publication.
@@ -870,6 +905,184 @@ impl Store {
         }
     }
 
+    /// Stage one incoming batch from a peer and return its batch id (the
+    /// hash of the body). A duplicate `(peer, batch)` is rejected; the entry
+    /// expires `ttl_secs` from now.
+    ///
+    /// # Errors
+    /// Returns [`Error::Rejected`] on a duplicate staging row or an integer
+    /// outside the storable i64 range.
+    pub fn stage_remote_batch(
+        &self,
+        peer: u64,
+        body: &[u8],
+        ttl_secs: u64,
+    ) -> Result<BatchId, Error> {
+        if peer > i64::MAX as u64 || ttl_secs > i64::MAX as u64 {
+            return Err(Error::Rejected(
+                "integer exceeds the storable i64 range".into(),
+            ));
+        }
+        let id = profile::batch_id(body);
+        let now = now_unix()?;
+        let expires = now
+            .checked_add(ttl_secs)
+            .ok_or_else(|| Error::Rejected("expiry overflow".into()))?;
+        self.conn
+            .execute(
+                "INSERT INTO staged_batches(peer, batch_id, body, received_unix, expires_unix)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    peer as i64,
+                    id.as_bytes().as_slice(),
+                    body,
+                    now as i64,
+                    expires as i64,
+                ],
+            )
+            .map_err(|err| constraint_rejected(err, "staged batch already exists for this peer"))?;
+        Ok(id)
+    }
+
+    /// The staged row of one incoming batch, if present.
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn staged_batch(&self, peer: u64, batch: &BatchId) -> Result<Option<StagedBatch>, Error> {
+        let row: Option<(Vec<u8>, i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT body, received_unix, expires_unix FROM staged_batches
+                 WHERE peer = ?1 AND batch_id = ?2",
+                params![peer as i64, batch.as_bytes().as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .ok();
+        Ok(row.map(|(body, received, expires)| StagedBatch {
+            body,
+            received_unix: received as u64,
+            expires_unix: expires as u64,
+        }))
+    }
+
+    /// Stage verified bytes of one incoming artifact from a peer. A duplicate
+    /// `(peer, artifact)` is rejected; the entry expires `ttl_secs` from now.
+    ///
+    /// # Errors
+    /// Returns [`Error::Rejected`] on a duplicate staging row or an integer
+    /// outside the storable i64 range.
+    pub fn stage_remote_artifact(
+        &self,
+        peer: u64,
+        artifact: &ArtifactId,
+        verified_bytes: u64,
+        ttl_secs: u64,
+    ) -> Result<(), Error> {
+        if peer > i64::MAX as u64 || verified_bytes > i64::MAX as u64 || ttl_secs > i64::MAX as u64
+        {
+            return Err(Error::Rejected(
+                "integer exceeds the storable i64 range".into(),
+            ));
+        }
+        let now = now_unix()?;
+        let expires = now
+            .checked_add(ttl_secs)
+            .ok_or_else(|| Error::Rejected("expiry overflow".into()))?;
+        self.conn
+            .execute(
+                "INSERT INTO staged_artifacts(peer, artifact_id, verified_bytes, received_unix, expires_unix)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    peer as i64,
+                    artifact.as_bytes().as_slice(),
+                    verified_bytes as i64,
+                    now as i64,
+                    expires as i64,
+                ],
+            )
+            .map_err(|err| constraint_rejected(err, "staged artifact already exists for this peer"))?;
+        Ok(())
+    }
+
+    /// Verified bytes staged for one incoming artifact, if present.
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn staged_artifact_bytes(
+        &self,
+        peer: u64,
+        artifact: &ArtifactId,
+    ) -> Result<Option<u64>, Error> {
+        let bytes: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT verified_bytes FROM staged_artifacts WHERE peer = ?1 AND artifact_id = ?2",
+                params![peer as i64, artifact.as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(bytes.map(|bytes| bytes as u64))
+    }
+
+    /// Record a peer's stored/applied receipt cursor. Cursors are monotonic
+    /// per peer: a backwards movement is rejected, an equal one is an
+    /// idempotent receipt.
+    ///
+    /// # Errors
+    /// Returns [`Error::Rejected`] when a cursor moves backwards, violates
+    /// `applied <= stored`, or is outside the storable i64 range.
+    pub fn record_peer_receipt(
+        &self,
+        peer: u64,
+        stored_cursor: u64,
+        applied_cursor: u64,
+    ) -> Result<(), Error> {
+        if peer > i64::MAX as u64
+            || stored_cursor > i64::MAX as u64
+            || applied_cursor > i64::MAX as u64
+        {
+            return Err(Error::Rejected(
+                "integer exceeds the storable i64 range".into(),
+            ));
+        }
+        let changed = self
+            .conn
+            .execute(
+                "INSERT INTO peer_receipts(peer, stored_cursor, applied_cursor) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(peer) DO UPDATE SET
+                   stored_cursor = excluded.stored_cursor,
+                   applied_cursor = excluded.applied_cursor
+                 WHERE excluded.stored_cursor >= peer_receipts.stored_cursor
+                   AND excluded.applied_cursor >= peer_receipts.applied_cursor",
+                params![peer as i64, stored_cursor as i64, applied_cursor as i64,],
+            )
+            .map_err(|err| {
+                constraint_rejected(err, "peer receipt violates the cursor constraints")
+            })?;
+        if changed == 0 {
+            return Err(Error::Rejected(
+                "peer receipt cursor moved backwards".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The stored/applied receipt cursor recorded for one peer.
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn peer_receipt(&self, peer: u64) -> Result<Option<(u64, u64)>, Error> {
+        let row: Option<(i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT stored_cursor, applied_cursor FROM peer_receipts WHERE peer = ?1",
+                params![peer as i64],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+        Ok(row.map(|(stored, applied)| (stored as u64, applied as u64)))
+    }
+
     /// Direct parents recorded for one batch.
     ///
     /// # Errors
@@ -907,6 +1120,25 @@ impl Store {
                 ArtifactId::from_bytes(bytes).map_err(|err| Error::Corrupt(err.to_string()))
             })
             .collect()
+    }
+}
+
+fn now_unix() -> Result<u64, Error> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| Error::Rejected(format!("system clock before the unix epoch: {err}")))?
+        .as_secs())
+}
+
+/// Map a constraint violation to a domain rejection; keep other SQLite errors.
+fn constraint_rejected(err: rusqlite::Error, message: &'static str) -> Error {
+    match err {
+        rusqlite::Error::SqliteFailure(ffi, _)
+            if ffi.code == rusqlite::ffi::ErrorCode::ConstraintViolation =>
+        {
+            Error::Rejected(message.into())
+        }
+        other => Error::Sqlite(other),
     }
 }
 
@@ -1945,6 +2177,108 @@ mod tests {
         file.write_all(&[0xFFu8; 64]).expect("corrupt");
         drop(file);
         assert!(matches!(Store::open(&dir, &SPACE), Err(Error::Corrupt(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn staging_tables_exist_and_reject_duplicate_staged_batches() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let tables: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
+                 AND name IN ('staged_batches', 'staged_artifacts', 'peer_receipts')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema");
+        assert_eq!(tables, 3);
+
+        let f = fixture(6);
+        let body = f.body.encode().expect("encode");
+        let id = store.stage_remote_batch(7, &body, 3600).expect("stage");
+        assert_eq!(id, f.body.id().expect("id"));
+        // A duplicate (peer, batch) staging row is rejected.
+        let err = store
+            .stage_remote_batch(7, &body, 3600)
+            .expect_err("duplicate");
+        assert!(matches!(err, Error::Rejected(_)));
+        // The same batch from another peer is a distinct staging row.
+        store
+            .stage_remote_batch(8, &body, 3600)
+            .expect("other peer");
+        let staged = store.staged_batch(7, &id).expect("query");
+        let staged = staged.expect("present");
+        assert_eq!(staged.body, body);
+        assert!(staged.expires_unix >= staged.received_unix);
+        assert!(
+            store
+                .staged_batch(7, &BatchId::from_array([9; 32]))
+                .expect("none")
+                .is_none()
+        );
+
+        // Artifact staging records verified bytes and expiry.
+        let artifact = f.manifest.id().expect("artifact id");
+        store
+            .stage_remote_artifact(7, &artifact, 128, 60)
+            .expect("artifact");
+        assert_eq!(
+            store.staged_artifact_bytes(7, &artifact).expect("bytes"),
+            Some(128)
+        );
+        let err = store
+            .stage_remote_artifact(7, &artifact, 128, 60)
+            .expect_err("duplicate artifact");
+        assert!(matches!(err, Error::Rejected(_)));
+        assert!(
+            store
+                .staged_artifact_bytes(7, &ArtifactId::from_array([9; 32]))
+                .expect("none")
+                .is_none()
+        );
+
+        // Staging rows are durable across a reopen.
+        drop(store);
+        let store = Store::open(&dir, &SPACE).expect("reopen");
+        assert!(store.staged_batch(7, &id).expect("query").is_some());
+        assert_eq!(
+            store.staged_artifact_bytes(7, &artifact).expect("bytes"),
+            Some(128)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn peer_receipt_cursors_are_monotonic_per_peer() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        store.record_peer_receipt(1, 5, 3).expect("first");
+        assert_eq!(store.peer_receipt(1).expect("read"), Some((5, 3)));
+        // An equal receipt is idempotent.
+        store.record_peer_receipt(1, 5, 3).expect("idempotent");
+        // A backwards stored cursor is rejected.
+        let err = store
+            .record_peer_receipt(1, 4, 3)
+            .expect_err("backwards stored");
+        assert!(matches!(err, Error::Rejected(_)));
+        // A backwards applied cursor is rejected.
+        let err = store
+            .record_peer_receipt(1, 5, 2)
+            .expect_err("backwards applied");
+        assert!(matches!(err, Error::Rejected(_)));
+        // applied beyond stored violates the CHECK constraint.
+        let err = store
+            .record_peer_receipt(1, 5, 6)
+            .expect_err("applied beyond stored");
+        assert!(matches!(err, Error::Rejected(_)));
+        // Forward movement is accepted, and peers are independent.
+        store.record_peer_receipt(1, 7, 6).expect("forward");
+        store.record_peer_receipt(2, 1, 1).expect("other peer");
+        assert_eq!(store.peer_receipt(1).expect("read"), Some((7, 6)));
+        assert_eq!(store.peer_receipt(2).expect("read"), Some((1, 1)));
+        assert_eq!(store.peer_receipt(3).expect("none"), None);
         let _ = fs::remove_dir_all(&dir);
     }
 }
