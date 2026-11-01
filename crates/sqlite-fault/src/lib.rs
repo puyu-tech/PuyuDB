@@ -3,8 +3,8 @@
 //! A failed sync restores each file to the bytes from its last successful
 //! sync and then refuses further writes. That is the power-loss model: data
 //! that had not reached a successful `xSync` is gone. A torn write leaves a
-//! short prefix on disk and then does the same. This is not a machine
-//! power-cut.
+//! short prefix on disk, a disk-full write fails without touching the file,
+//! and both then do the same. This is not a machine power-cut.
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::Mutex;
@@ -21,6 +21,8 @@ struct State {
     fail_sync: bool,
     /// Short-write the next `xWrite`, then stop.
     tear_write: bool,
+    /// Fail the next `xWrite` with nothing written (disk full), then stop.
+    fail_write_enospc: bool,
     /// Further writes and syncs fail and do not change the file.
     dead: bool,
     snapshots: Vec<Vec<u8>>,
@@ -29,6 +31,7 @@ struct State {
 static STATE: Mutex<State> = Mutex::new(State {
     fail_sync: false,
     tear_write: false,
+    fail_write_enospc: false,
     dead: false,
     snapshots: Vec::new(),
 });
@@ -65,6 +68,7 @@ pub fn reset() {
     let mut state = STATE.lock().expect("fault state");
     state.fail_sync = false;
     state.tear_write = false;
+    state.fail_write_enospc = false;
     state.dead = false;
 }
 
@@ -79,6 +83,14 @@ pub fn fail_next_sync() {
 pub fn tear_next_write() {
     let mut state = STATE.lock().expect("fault state");
     state.tear_write = true;
+    state.dead = false;
+}
+
+/// The next `xWrite` fails with `SQLITE_IOERR` and writes nothing: disk full
+/// leaves no torn prefix, unlike [`tear_next_write`]. Then the VFS goes dead.
+pub fn fail_next_write_enospc() {
+    let mut state = STATE.lock().expect("fault state");
+    state.fail_write_enospc = true;
     state.dead = false;
 }
 
@@ -209,6 +221,13 @@ unsafe extern "C" fn x_write(
     let tear = {
         let mut state = STATE.lock().expect("fault state");
         if state.dead {
+            return SQLITE_IOERR;
+        }
+        if state.fail_write_enospc {
+            // Disk full: the write fails and no byte reaches the file, so
+            // unlike a torn write there is no short prefix on disk.
+            state.fail_write_enospc = false;
+            state.dead = true;
             return SQLITE_IOERR;
         }
         if state.tear_write {
