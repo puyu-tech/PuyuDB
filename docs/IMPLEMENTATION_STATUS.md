@@ -464,8 +464,12 @@ manifest to the id the signed body commits, requires the chunk list to equal
 the manifests' concatenation, and verifies hydration (per-chunk hash, length,
 streamed raw digest), so a local `Applied` receipt implies `resident`.
 
-Still open inside I04: `batch_parents` plus parent-closure/minimal-frontier
-admission checks (B3), `requests` idempotency (B4), replication staging tables
+B3 is done on the branch: `batch_parents` (with parent→child index) records the
+DAG, and admission checks parent existence, exact `lamport = 1 + max(parent
+lamport)`, `previous` membership in the parent closure, and minimality of the
+parent frontier.
+
+Still open inside I04: `requests` idempotency (B4), replication staging tables
 (B5), disk-full fault injection plus the WAL-reset regression scenario (B6),
 Windows/Linux spike reruns (B7). A
 machine/VM power-cut drill is still required per ADR-02; the VFS model is the

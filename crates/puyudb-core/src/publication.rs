@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS batch_artifacts (
   FOREIGN KEY(batch_id) REFERENCES batches(batch_id),
   FOREIGN KEY(artifact_id) REFERENCES artifacts(id)
 );
+CREATE TABLE IF NOT EXISTS batch_parents (
+  child BLOB NOT NULL,
+  parent BLOB NOT NULL,
+  PRIMARY KEY(child, parent),
+  FOREIGN KEY(child) REFERENCES batches(batch_id),
+  FOREIGN KEY(parent) REFERENCES batches(batch_id)
+);
+CREATE INDEX IF NOT EXISTS batch_parents_parent ON batch_parents(parent);
 CREATE TABLE IF NOT EXISTS content_availability (
   artifact_id BLOB PRIMARY KEY,
   state TEXT NOT NULL CHECK(state IN ('resident', 'intentional-missing', 'lost')),
@@ -492,6 +500,12 @@ impl Store {
                     ],
                 )?;
             }
+            for parent in &publication.body.parents {
+                self.conn.execute(
+                    "INSERT INTO batch_parents(child, parent) VALUES (?1, ?2)",
+                    params![batch_id.as_bytes().as_slice(), parent.as_bytes().as_slice(),],
+                )?;
+            }
             let cursor: i64 = self.conn.query_row(
                 "SELECT COALESCE(MAX(cursor), 0) + 1 FROM events",
                 [],
@@ -592,6 +606,11 @@ impl Store {
                     "a batch without parents has lamport 1".into(),
                 ));
             }
+            if body.previous.is_some() {
+                return Err(Error::Rejected(
+                    "previous must lie in the parent closure, which is empty".into(),
+                ));
+            }
             return Ok(());
         }
         let mut max_parent = 0u64;
@@ -614,7 +633,60 @@ impl Store {
                 "lamport must equal 1 + max(parent lamport)".into(),
             ));
         }
+        // §13: a declared `previous` must already be in the intent-base
+        // closure, i.e. reachable from the parents through the DAG.
+        if let Some(previous) = &body.previous
+            && !self.closure_contains(&body.parents, previous)?
+        {
+            return Err(Error::Rejected(
+                "previous is not in the parent closure".into(),
+            ));
+        }
+        // Parents must denote a minimal frontier: no parent may be an
+        // ancestor of another parent.
+        for (index, parent) in body.parents.iter().enumerate() {
+            let seeds: Vec<BatchId> = body
+                .parents
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != index)
+                .map(|(_, p)| *p)
+                .collect();
+            if self.closure_contains(&seeds, parent)? {
+                return Err(Error::Rejected("parents are not a minimal frontier".into()));
+            }
+        }
         Ok(())
+    }
+
+    /// Whether `target` is a member of the ancestor closure of `seeds`
+    /// (seeds included), traversed through `batch_parents`.
+    fn closure_contains(&self, seeds: &[BatchId], target: &BatchId) -> Result<bool, Error> {
+        if seeds.is_empty() {
+            return Ok(false);
+        }
+        let values = (1..=seeds.len())
+            .map(|i| format!("(?{i})"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let target_param = seeds.len() + 1;
+        let sql = format!(
+            "WITH RECURSIVE anc(x) AS (
+               SELECT column1 FROM (VALUES {values})
+               UNION
+               SELECT bp.parent FROM batch_parents bp JOIN anc ON bp.child = anc.x
+             )
+             SELECT EXISTS(SELECT 1 FROM anc WHERE x = ?{target_param})"
+        );
+        let mut all: Vec<&[u8]> = seeds
+            .iter()
+            .map(|seed| seed.as_bytes().as_slice())
+            .collect();
+        all.push(target.as_bytes().as_slice());
+        let found: i64 = self
+            .conn
+            .query_row(&sql, rusqlite::params_from_iter(all), |row| row.get(0))?;
+        Ok(found == 1)
     }
 
     /// Whether this batch id is a visible publication.
@@ -666,6 +738,24 @@ impl Store {
             Some("lost") => Some(Availability::Lost),
             Some(other) => return Err(Error::Corrupt(format!("unknown availability {other}"))),
         })
+    }
+
+    /// Direct parents recorded for one batch.
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn parents_of(&self, batch: &BatchId) -> Result<Vec<BatchId>, Error> {
+        let mut rows = self
+            .conn
+            .prepare("SELECT parent FROM batch_parents WHERE child = ?1")?;
+        let ids = rows
+            .query_map(params![batch.as_bytes().as_slice()], |row| {
+                row.get::<_, Vec<u8>>(0)
+            })?
+            .collect::<Result<Vec<Vec<u8>>, rusqlite::Error>>()?;
+        ids.iter()
+            .map(|bytes| BatchId::from_bytes(bytes).map_err(|err| Error::Corrupt(err.to_string())))
+            .collect()
     }
 
     /// Artifact ids one published batch references, in body order.
@@ -1504,6 +1594,136 @@ mod tests {
             .publish(&publication(&wrong, &wrong_ids))
             .expect_err("lamport");
         assert!(matches!(err, Error::Rejected(_)));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Publish `f` and return its batch id.
+    fn publish_fixture(store: &Store, f: &Fixture) -> BatchId {
+        let ids = stage(store, &f.chunks);
+        store
+            .publish(&publication(f, &ids))
+            .expect("publish fixture");
+        f.body.id().expect("id")
+    }
+
+    /// A root batch on another branch, so it shares no history with `fixture`.
+    fn other_branch_root(byte: u8, branch_byte: u8) -> Fixture {
+        let mut f = fixture(byte);
+        f.body.branch = BranchId::from_array([branch_byte; 16]);
+        f.body.metadata = f.manifest.id().expect("artifact id");
+        f.signature = sign(&f.body);
+        f
+    }
+
+    #[test]
+    fn parents_are_recorded_and_previous_must_be_in_the_closure() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let first = fixture(6);
+        let first_id = publish_fixture(&store, &first);
+        let second = child(&first, 2, 2, 8, vec![first_id]);
+        let second_id = publish_fixture(&store, &second);
+        assert_eq!(
+            store.parents_of(&second_id).expect("parents"),
+            vec![first_id]
+        );
+        // An unrelated root on another branch gives a batch outside every
+        // closure that only contains the main-stream history.
+        let root_b = other_branch_root(13, 5);
+        let root_b_id = publish_fixture(&store, &root_b);
+        // previous outside the parent closure is rejected.
+        let (manifest, chunks) = frame("metadata-v1", &[15]);
+        let mut bad = root_b.body.clone();
+        bad.sequence = 2;
+        bad.lamport = 2;
+        bad.previous = Some(second_id);
+        bad.parents = vec![root_b_id];
+        bad.metadata = manifest.id().expect("artifact id");
+        let bad_sig = sign(&bad);
+        let ids = stage(&store, &chunks);
+        let err = store
+            .publish(&Publication {
+                body: &bad,
+                signature_key: &bad.public_key,
+                signature: &bad_sig,
+                artifacts: std::slice::from_ref(&manifest),
+                chunks: &ids,
+                peer: 1,
+            })
+            .expect_err("closure");
+        assert!(matches!(err, Error::Rejected(_)));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parents_must_form_a_minimal_frontier() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let first = fixture(6);
+        let first_id = publish_fixture(&store, &first);
+        let second = child(&first, 2, 2, 8, vec![first_id]);
+        let second_id = publish_fixture(&store, &second);
+        let root_b = other_branch_root(13, 5);
+        let root_b_id = publish_fixture(&store, &root_b);
+        // A minimal merge frontier: two unrelated heads, previous = one head.
+        let root_c = other_branch_root(14, 6);
+        let root_c_id = publish_fixture(&store, &root_c);
+        let mid = child(&root_c, 2, 2, 15, vec![root_c_id]);
+        let mid_id = publish_fixture(&store, &mid);
+        let (mm, mc) = frame("metadata-v1", &[16]);
+        let mut merge = mid.body.clone();
+        merge.sequence = 3;
+        merge.lamport = 3; // 1 + max(mid 2, root_b 1)
+        merge.previous = Some(mid_id);
+        let mut parents = vec![root_b_id, mid_id];
+        parents.sort();
+        merge.parents = parents;
+        merge.metadata = mm.id().expect("artifact id");
+        let merge_sig = sign(&merge);
+        let merge_ids = stage(&store, &mc);
+        store
+            .publish(&Publication {
+                body: &merge,
+                signature_key: &merge.public_key,
+                signature: &merge_sig,
+                artifacts: std::slice::from_ref(&mm),
+                chunks: &merge_ids,
+                peer: 1,
+            })
+            .expect("minimal merge");
+        assert_eq!(
+            store
+                .parents_of(&merge.id().expect("id"))
+                .expect("parents")
+                .len(),
+            2
+        );
+        // Non-minimal: first is an ancestor of second, so [first, second] is
+        // not a frontier. Same stream as first/second keeps the lamport and
+        // stream-step checks consistent (both expect 3).
+        let (nm, nc) = frame("metadata-v1", &[17]);
+        let mut bad = first.body.clone();
+        bad.sequence = 3;
+        bad.lamport = 3;
+        bad.previous = Some(second_id);
+        let mut bad_parents = vec![first_id, second_id];
+        bad_parents.sort();
+        bad.parents = bad_parents;
+        bad.metadata = nm.id().expect("artifact id");
+        let bad_sig = sign(&bad);
+        let bad_ids = stage(&store, &nc);
+        let err = store
+            .publish(&Publication {
+                body: &bad,
+                signature_key: &bad.public_key,
+                signature: &bad_sig,
+                artifacts: std::slice::from_ref(&nm),
+                chunks: &bad_ids,
+                peer: 1,
+            })
+            .expect_err("minimal frontier");
+        assert!(matches!(err, Error::Rejected(_)));
+        assert!(!store.is_published(&bad.id().expect("id")).expect("read"));
         let _ = fs::remove_dir_all(&dir);
     }
 
