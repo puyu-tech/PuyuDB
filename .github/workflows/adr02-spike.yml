@@ -38,7 +38,16 @@ jobs:
         run: |
           uname -a
           rustc --version
-      - name: Run the ADR-02 spike crash matrix (all engines)
+      # The ADR-02 pin is rusqlite/bundled: its kill matrix runs on every OS.
+      - name: Run the ADR-02 spike crash matrix (pinned rusqlite engine)
         working-directory: spikes/adr02-storage
         run: |
-          cargo test --release --workspace --locked
+          cargo test --release -p adr02-rusqlite --locked
+      # All comparison engines on Linux. (On Windows the harness's kill-status
+      # check trips on TerminateProcess exit code 1; the pinned engine is what
+      # B7 needs there.)
+      - name: Run the full spike crash matrix (all engines)
+        if: matrix.os == 'ubuntu-24.04'
+        working-directory: spikes/adr02-storage
+        run: |
+          cargo test --release --workspace --locked --no-fail-fast
