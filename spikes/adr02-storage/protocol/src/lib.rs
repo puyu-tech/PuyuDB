@@ -5,7 +5,7 @@
 //! contain unacked publications. It must not contain a partial one.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -553,11 +553,16 @@ fn kill_before_ack(bin: &str, seed: u64, at: KillAt) {
             }
         }
     }
-    kill_child(&mut child);
-    let status = child.wait().expect("wait");
-    if let Some(code) = status.code().filter(|code| *code != 0) {
-        panic!("create-wait exited {code} before kill for seed {seed}");
+    // A child that exited on its own BEFORE the kill is a real failure. After
+    // the kill, Unix reports no exit code (signal) and Windows reports 1
+    // (TerminateProcess), so the post-kill status is not diagnostic.
+    if let Ok(Some(status)) = child.try_wait() {
+        kill_child(&mut child);
+        let _ = child.wait();
+        panic!("create-wait exited {status} before kill for seed {seed}");
     }
+    kill_child(&mut child);
+    let _ = child.wait().expect("wait");
     let output = Command::new(bin)
         .args([
             "--cmd",
@@ -693,15 +698,25 @@ pub fn crash_matrix(bin: &str) {
         if signaled.is_err() {
             kill_child(&mut child);
             let _ = child.wait();
-            panic!("no ACK before random kill for {bin} seed {seed}: {signaled:?}");
+            let mut stderr_text = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut stderr_text);
+            }
+            panic!(
+                "no ACK before random kill for {bin} seed {seed}: {signaled:?} child stderr: {stderr_text}"
+            );
         }
         let delay = Duration::from_millis(5 + (seed % 47));
         thread::sleep(delay);
-        kill_child(&mut child);
-        let status = child.wait().expect("wait");
-        if let Some(code) = status.code().filter(|code| *code != 0) {
-            panic!("loop exited {code} before kill for seed {seed}");
+        // Same portability rule as in kill_before_ack: only a pre-kill exit is
+        // a failure; the post-kill status differs between Unix and Windows.
+        if let Ok(Some(status)) = child.try_wait() {
+            kill_child(&mut child);
+            let _ = child.wait();
+            panic!("loop exited {status} before kill for seed {seed}");
         }
+        kill_child(&mut child);
+        let _ = child.wait().expect("wait");
         verify_dir(bin, &dir, false);
         let _ = fs::remove_dir_all(&dir);
     }
