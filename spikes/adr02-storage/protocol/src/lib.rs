@@ -901,9 +901,20 @@ fn hold_owner_lock(dir: &Path) -> Result<(), String> {
 fn record_ack(file: &mut File, dir: &Path, root: u64) -> Result<(), String> {
     writeln!(file, "{root}").map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;
-    File::open(dir)
-        .and_then(|dir| dir.sync_all())
-        .map_err(|e| e.to_string())?;
+    // Fsync the directory so the ack-log entry itself is durable. Windows
+    // cannot open a directory handle (File::open on a dir is
+    // ERROR_ACCESS_DENIED), so this is Unix-only; the file fsync above is the
+    // durable part on Windows.
+    #[cfg(unix)]
+    {
+        File::open(dir)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+    }
     Ok(())
 }
 
