@@ -27,7 +27,7 @@ beside the database.
   and stage, disarmed publish, acked batch surviving a later armed fault;
   serialized around the global VFS state), `tests/publication_crash.rs`
   (SIGKILL after staged chunk → no publication).
-- B1 done (`64f0136` plus the audit-fix commit): manifest + `format_meta`.
+- B1 done (`c1232b4` plus the audit-fix commit): manifest + `format_meta`.
 - B2 done: artifact layer — `artifacts` / `artifact_chunks` / `batch_artifacts`
   (the flat `batch_chunks` table is replaced by the artifact mapping) plus
   `content_availability` (`resident` / `intentional-missing` / `lost`).
@@ -65,7 +65,7 @@ beside the database.
   Windows). Hosted runners are VMs — same evidence class as the approved
   WSL2 runs. The machine/VM power-cut drill remains a separate open ADR-02
   gate.
-- Follow-up audit of B2–B6 (fresh session over `e38f462..e199854`) found two
+- Follow-up audit of B2–B6 (fresh session over `0407906..026c30f`) found two
   majors, both fixed: keyed idempotency now checks the `requests` row before
   the already-published shortcut, rejects key reuse even when the new batch is
   already published, and stops returning a receipt once its batch is
@@ -76,7 +76,7 @@ beside the database.
   and idempotency caller/key are size-capped.
 - Spike evidence on `adr02-storage-spike` (`docs/adr/02-storage-spike.md`):
   six engines, boundary/random kill matrices — macOS only, SIGKILL only.
-- Audit of B1 + ledger (`87e1c2b`) found and the follow-up commit fixed three
+- Audit of B1 + ledger (`46a6dbb`) found and the follow-up commit fixed three
   blockers: `publish` now rejects a batch naming another space (the store
   keeps its `space`); a writer stream is keyed by the full
   `(public_key, branch, writer_epoch, sequence)` tuple per spec §13, so two
