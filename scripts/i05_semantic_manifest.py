@@ -13,7 +13,9 @@ Not a production codec or admission path.
 
 CLI: ``python3 scripts/i05_semantic_manifest.py`` verifies the committed
 fixtures under ``tests/fixtures/metadata-v1/`` and exits nonzero on any
-mismatch; ``--write`` regenerates them from the builders below.
+mismatch, on a resolution lacking its §9 same-batch effect, or on a manifest
+whose conflicts disagree with the recomputed cut; ``--write`` regenerates
+them from the builders below.
 """
 
 from __future__ import annotations
@@ -691,6 +693,9 @@ def _participants(*writes) -> list:
 
 CONFLICT_PATHS = {"kind": 0, "file": FILE_A.hex(), "epochs": [],
                   "participants": _participants((BATCH_A, 0), (BATCH_B, 0))}
+# §9 as derived by projection.rs conflicts_impl: a kind-1 delete_edit
+# conflict's epochs hold the edited epoch only, never every maximal epoch
+# selection of the file.
 CONFLICT_DELETE_EDIT = {"kind": 1, "file": FILE_A.hex(),
                         "epochs": [EPOCH_OPAQUE_A.hex()],
                         "participants": _participants((BATCH_A, 0), (BATCH_B, 0))}
@@ -709,8 +714,18 @@ def _entry(file_id, live, paths, epochs, contents, modes, conflicts) -> dict:
             "modes": modes, "conflicts": [item.hex() for item in conflicts]}
 
 
-ENTRY_A_RESOLVED = _entry(FILE_A, [0, 1], ["docs/renamed.md"],
-                          [EPOCH_TEXT, EPOCH_OPAQUE_A], [], [0], [CID_DELETE_EDIT])
+# Pre-resolution cut of the delete-concurrent-edit scenario: the deletion and
+# the epoch selection are concurrent, so both liveness alternatives and both
+# epoch selections stay maximal and the kind-1 conflict is listed.
+ENTRY_A_CONFLICTED = _entry(FILE_A, [0, 1], ["docs/renamed.md"],
+                            [EPOCH_TEXT, EPOCH_OPAQUE_A], [], [0],
+                            [CID_DELETE_EDIT])
+# Post-resolution cut: the resolution batch's fresh Alive and tag-3 writes
+# supersede the conflicted alternatives, and the recomputed cut carries no
+# ConflictId (tag8_resolution_publishes_fresh_assignment_and_supersedes_alternatives
+# in crates/puyudb-core/src/publication.rs).
+ENTRY_A_RESOLVED = _entry(FILE_A, [1], ["docs/renamed.md"], [EPOCH_OPAQUE_A],
+                          [], [0], [])
 ENTRY_B_OPAQUE = _entry(FILE_B, [1], ["assets/logo.bin"], [EPOCH_OPAQUE_B],
                         [OPAQUE_ARTIFACT], [0], [])
 
@@ -771,12 +786,13 @@ def build_scenarios() -> dict:
     delete_edit = _scenario(
         "delete-concurrent-edit",
         "Batch A deleted file A while batch B concurrently selected a new "
-        "opaque epoch: kind-1 delete_edit naming that epoch; file B carries an "
-        "opaque value assignment in the same cut.",
+        "opaque epoch: a kind-1 delete_edit whose epochs hold the edited "
+        "epoch only (not every maximal epoch selection of the file); file B "
+        "carries an opaque value assignment in the same cut.",
         [{"tag": 3, "file": FILE_A.hex(), "epoch": DESC_OPAQUE_A}],
         [], [DESC_OPAQUE_A, DESC_OPAQUE_B], [CONFLICT_DELETE_EDIT],
         {"space": SPACE.hex(),
-         "entries": [ENTRY_A_RESOLVED, ENTRY_B_OPAQUE]})
+         "entries": [ENTRY_A_CONFLICTED, ENTRY_B_OPAQUE]})
     mode_conflict = _scenario(
         "mode-conflict",
         "Batch A set mode 1 (executable) while batch B concurrently set mode "
@@ -791,13 +807,16 @@ def build_scenarios() -> dict:
     resolution = _scenario(
         "resolution",
         "Batch B resolves the delete_edit conflict by retaining the opaque "
-        "epoch (resolution tag 2) and asserts provenance over batch A; it also "
-        "re-asserts liveness, associates a SHA-256 Git object, emits a context "
-        "event and assigns file B's opaque value. The resolved conflict stays "
-        "auditable in the manifest.",
+        "epoch (resolution tag 2) with the fresh tag-3 selection of that epoch "
+        "in the same batch — the required same-batch effect of §9 — and asserts "
+        "provenance over batch A; it also re-asserts liveness, associates a "
+        "SHA-256 Git object, emits a context event and assigns file B's opaque "
+        "value. The fresh writes supersede the conflicted alternatives, so the "
+        "recomputed cut — and the manifest — carries no ConflictId.",
         [{"tag": 2, "file": FILE_A.hex(), "live": 1},
          {"tag": 8, "conflict": CID_DELETE_EDIT.hex(), "resolution": 2,
           "payload": EPOCH_OPAQUE_A.hex()},
+         {"tag": 3, "file": FILE_A.hex(), "epoch": DESC_OPAQUE_A},
          {"tag": 9, "sources": [BATCH_A.hex()], "relation": 1, "detail": None},
          {"tag": 6, "repository": REPOSITORY.hex(),
           "oid": {"algorithm": 2, "digest": OID_SHA256.hex()},
@@ -816,7 +835,12 @@ def build_scenarios() -> dict:
         "plan": "docs/plans/I05-native-text-projections.md",
         "scope": "I05 P5 golden fixtures: metadata operations, ConflictV1 and "
                  "SemanticManifestV1 at five scenario cuts, with expected "
-                 "canonical hex and digests computed by this module alone.",
+                 "canonical hex and digests computed by this module alone. "
+                 "The hex and digests are record-encoding goldens (§1.1/§7/§8/"
+                 "§9/§11); the scenarios additionally pin derivation semantics "
+                 "(the §9 same-batch effect of a resolution, the recomputed cut "
+                 "after a resolution, the delete_edit epoch set) that the Rust "
+                 "projection cross-checks as P9 (T01-T03 parity).",
         "scenarios": [create_rename, concurrent_paths, delete_edit,
                       mode_conflict, resolution],
     }
@@ -828,9 +852,9 @@ def build_negatives() -> dict:
     separator must change the digest."""
     delete_edit_body = encode_conflict(CONFLICT_DELETE_EDIT)
     manifest = {"space": SPACE.hex(),
-                "entries": [ENTRY_A_RESOLVED, ENTRY_B_OPAQUE]}
+                "entries": [ENTRY_A_CONFLICTED, ENTRY_B_OPAQUE]}
     manifest_body = semantic_manifest(manifest)
-    entry_a = file_entry(ENTRY_A_RESOLVED)
+    entry_a = file_entry(ENTRY_A_CONFLICTED)
     entry_b = file_entry(ENTRY_B_OPAQUE)
     bigger, smaller = sorted([entry_a, entry_b],
                              key=lambda body: decode(body)[1], reverse=True)
@@ -922,6 +946,30 @@ def build_negatives() -> dict:
 # Fixture verification (re-encode from the frozen layouts, compare every hex)
 # --------------------------------------------------------------------------
 
+def _has_fresh_effect(op: dict, operations: list) -> bool:
+    """§9: each resolution tag requires a fresh same-batch effect, the same
+    rule the Rust admission enforces (has_live_op / has_epoch_op in
+    validate_resolutions). Tag 4 (choose an alternative) is not exercised by
+    the corpus."""
+    resolution = op["resolution"]
+    if resolution == 0:
+        return any(o["tag"] == 2 and o["live"] == 0 for o in operations)
+    if resolution == 1:
+        return any(o["tag"] == 2 and o["live"] == 1 for o in operations)
+    if resolution in (2, 3):
+        target = op["payload"] if resolution == 2 else op["payload"][0]
+        has_epoch = any(
+            o["tag"] == 3
+            and epoch_id(encode_epoch_descriptor(o["epoch"])).hex() == target
+            for o in operations)
+        if resolution == 2:
+            return has_epoch
+        detail = op["payload"][1]
+        return has_epoch and any(o["tag"] == 9 and o["detail"] == detail
+                                 for o in operations)
+    return True
+
+
 def verify_scenarios(doc: dict) -> list:
     failures = []
     for scenario in doc["scenarios"]:
@@ -967,6 +1015,21 @@ def verify_scenarios(doc: dict) -> list:
             validate_record("semantic_manifest", body)
         except ProfileError as error:
             failures.append(f"{name}: semantic manifest rejected: {error}")
+        # §9: a resolution operation must carry its required same-batch effect.
+        for op in scenario["operations"]:
+            if op["tag"] == 8 and not _has_fresh_effect(op, scenario["operations"]):
+                failures.append(f"{name}: resolution tag {op['resolution']} lacks "
+                                f"its required same-batch effect")
+        # The manifest's per-entry conflicts must equal the conflicts
+        # recomputed at the scenario's cut.
+        derived = {}
+        for conflict_rec in scenario["conflicts"]:
+            derived.setdefault(conflict_rec["file"], set()).add(
+                conflict_rec["conflict_id"])
+        for entry in manifest["entries"]:
+            if set(entry["conflicts"]) != derived.get(entry["file"], set()):
+                failures.append(f"{name}: manifest conflicts for file "
+                                f"{entry['file'][:8]} do not match the recomputed cut")
     return failures
 
 

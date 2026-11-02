@@ -274,7 +274,7 @@
       "operations_hex": [
         "830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f6"
       ],
-      "summary": "Batch A deleted file A while batch B concurrently selected a new opaque epoch: kind-1 delete_edit naming that epoch; file B carries an opaque value assignment in the same cut."
+      "summary": "Batch A deleted file A while batch B concurrently selected a new opaque epoch: a kind-1 delete_edit whose epochs hold the edited epoch only (not every maximal epoch selection of the file); file B carries an opaque value assignment in the same cut."
     },
     {
       "artifact_hex": "830182830750d907cb47e817827e96939a5e119e11a302830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a3501b2600d5fd2dee544782e84958faae71025820122025713f3d3434ff12516eb6b19a179920fe506d063aaf0935e0186e603f68f6f680",
@@ -367,7 +367,7 @@
       "summary": "Batch A set mode 1 (executable) while batch B concurrently set mode 2 (symlink entry) and selected the symlink-target epoch: register conflict on the mode field, both modes maximal."
     },
     {
-      "artifact_hex": "830186830250d907cb47e817827e96939a5e119e11a3018408582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b3334302582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face84098158208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d01f685065022094506e6097aa086082cd38b4cc02e83010258203328bd6bc325689e0651811fc21ce69dae9a7495e0ce2a880e1f1fca384b24b758202ab8b11204c4c5f2445c1f1bcae003104e3216047f40ff9a8ae5a691075c99c7008405015046cf3b4eb05144af1859bc4613c2d70b49c2b23d1276c72d1e3984045052d2cca457b04b0828992da5f30a3f5158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b785820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04814ce41bb61efa35dbf3f3bc061c",
+      "artifact_hex": "830187830250d907cb47e817827e96939a5e119e11a3018408582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b3334302582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f684098158208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d01f685065022094506e6097aa086082cd38b4cc02e83010258203328bd6bc325689e0651811fc21ce69dae9a7495e0ce2a880e1f1fca384b24b758202ab8b11204c4c5f2445c1f1bcae003104e3216047f40ff9a8ae5a691075c99c7008405015046cf3b4eb05144af1859bc4613c2d70b49c2b23d1276c72d1e3984045052d2cca457b04b0828992da5f30a3f5158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b785820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04814ce41bb61efa35dbf3f3bc061c",
       "conflicts": [],
       "context_assertions": [
         "e41bb61efa35dbf3f3bc061c"
@@ -387,20 +387,16 @@
         }
       ],
       "manifest": {
-        "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe8288015052d2cca457b04b0828992da5f30a3f518101816f6173736574732f6c6f676f2e62696e8158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78815820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04810080880150d907cb47e817827e96939a5e119e11a3820001816f646f63732f72656e616d65642e6d6482582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810081582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+        "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe8288015052d2cca457b04b0828992da5f30a3f518101816f6173736574732f6c6f676f2e62696e8158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78815820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04810080880150d907cb47e817827e96939a5e119e11a38101816f646f63732f72656e616d65642e6d6481582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810080",
         "entries": [
           {
-            "conflicts": [
-              "77727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343"
-            ],
+            "conflicts": [],
             "contents": [],
             "epochs": [
-              "16ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed",
               "74db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face"
             ],
             "file": "d907cb47e817827e96939a5e119e11a3",
             "live": [
-              0,
               1
             ],
             "modes": [
@@ -430,7 +426,7 @@
             ]
           }
         ],
-        "semantic_manifest_id": "b21a0e775f2d688574dcd7f6985905dc391631df8be3633bfd61bfb7969cbf58",
+        "semantic_manifest_id": "841b904a9402f07551fb0862938841669fa38bdcebc6fe7ed855754f50f97857",
         "space": "8dac40750fe9d57d04c8143c26a342fe"
       },
       "name": "resolution",
@@ -445,6 +441,18 @@
           "payload": "74db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face",
           "resolution": 2,
           "tag": 8
+        },
+        {
+          "epoch": {
+            "baseline": "0b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 1,
+            "nonce": "db656a9e10ff8dd257840acd614edd62",
+            "oid": null,
+            "seed_profile": null
+          },
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "tag": 3
         },
         {
           "detail": null,
@@ -480,14 +488,15 @@
       "operations_hex": [
         "830250d907cb47e817827e96939a5e119e11a301",
         "8408582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b3334302582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face",
+        "830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f6",
         "84098158208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d01f6",
         "85065022094506e6097aa086082cd38b4cc02e83010258203328bd6bc325689e0651811fc21ce69dae9a7495e0ce2a880e1f1fca384b24b758202ab8b11204c4c5f2445c1f1bcae003104e3216047f40ff9a8ae5a691075c99c700",
         "8405015046cf3b4eb05144af1859bc4613c2d70b49c2b23d1276c72d1e39",
         "84045052d2cca457b04b0828992da5f30a3f5158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b785820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04"
       ],
-      "summary": "Batch B resolves the delete_edit conflict by retaining the opaque epoch (resolution tag 2) and asserts provenance over batch A; it also re-asserts liveness, associates a SHA-256 Git object, emits a context event and assigns file B's opaque value. The resolved conflict stays auditable in the manifest."
+      "summary": "Batch B resolves the delete_edit conflict by retaining the opaque epoch (resolution tag 2) with the fresh tag-3 selection of that epoch in the same batch \u2014 the required same-batch effect of \u00a79 \u2014 and asserts provenance over batch A; it also re-asserts liveness, associates a SHA-256 Git object, emits a context event and assigns file B's opaque value. The fresh writes supersede the conflicted alternatives, so the recomputed cut \u2014 and the manifest \u2014 carries no ConflictId."
     }
   ],
-  "scope": "I05 P5 golden fixtures: metadata operations, ConflictV1 and SemanticManifestV1 at five scenario cuts, with expected canonical hex and digests computed by this module alone.",
+  "scope": "I05 P5 golden fixtures: metadata operations, ConflictV1 and SemanticManifestV1 at five scenario cuts, with expected canonical hex and digests computed by this module alone. The hex and digests are record-encoding goldens (\u00a71.1/\u00a77/\u00a78/\u00a79/\u00a711); the scenarios additionally pin derivation semantics (the \u00a79 same-batch effect of a resolution, the recomputed cut after a resolution, the delete_edit epoch set) that the Rust projection cross-checks as P9 (T01-T03 parity).",
   "spec": "docs/spec/canonical-profile-v1.md"
 }

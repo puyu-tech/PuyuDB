@@ -18,19 +18,38 @@ and `projection.rs` must reproduce these bytes.
 | `scenarios.json` | 5 metadata-artifact scenarios (create+rename, concurrent path alternatives, delete+concurrent edit, mode conflict, resolution) — structured operations plus the expected canonical hex of each operation, the artifact, epoch descriptors, conflict records, the manifest, and every `EpochId` / `ConflictId` / `SemanticManifestId` |
 | `negative.json` | 10 negative cases: unsorted participants / epochs / entries / paths (rejected and hash-diverging), wrong and cross domain separators (hash-diverging), and unassigned registry tags |
 
-Provenance:
+## Two kinds of goldens
 
-- Every body is hand-encoded from the frozen layouts by
-  `scripts/i05_semantic_manifest.py`; no CBOR library and no Rust code is
-  involved, so agreement with the codec is evidence about the specification.
-- Inputs are deterministic (`sha256` of fixed labels), so regeneration is
-  idempotent and the committed files must match the generator exactly
-  (asserted by `test_i05_semantic_manifest.py`).
-- The validator re-implements the canonical CBOR subset (§1.1) with strict
-  minimal-encoding and full-exhaustion checks, and rejects non-canonical
-  forms rather than normalizing them.
+**Record-encoding goldens** — all the hex and digests above, plus the 10
+negative cases. These are pure §1.1/§7.1/§7.2/§8/§9/§11 encodings: every body is
+hand-encoded from the frozen layouts by `scripts/i05_semantic_manifest.py`
+with no CBOR library and no Rust code, the validator re-implements the
+canonical CBOR subset (§1.1) with strict minimal-encoding and full-exhaustion
+checks and rejects non-canonical forms rather than normalizing them, and the
+inputs are deterministic (`sha256` of fixed labels), so regeneration is
+idempotent and the committed files must match the generator exactly (asserted
+by `test_i05_semantic_manifest.py`). Agreement with the Rust codec is
+therefore evidence about the specification, not about a shared dependency.
 
-Deliberately not covered here, because it needs a history database rather
-than one record: register evaluation, causal supersession and conflict
-derivation itself — `crates/puyudb-core/src/projection.rs` owns those and its
-tests must agree with these golden bytes.
+**Derivation-semantics goldens** — the semantic facts pinned inside the
+scenarios, which mirror the derivation rules implemented in
+`crates/puyudb-core/src/projection.rs`:
+
+- a tag-8 resolution with tag 2 (RetainEpoch) carries the fresh same-batch
+  tag-3 selection of the retained epoch — the "Required same-batch effect:
+  New selection of that epoch" of spec §9, enforced in Rust by `has_epoch_op`
+  in `validate_resolutions` — and the validator rejects any scenario whose
+  resolution lacks its same-batch effect;
+- after that resolution the recomputed cut carries no `ConflictId`: the
+  manifest entry's `conflicts` list is empty and matches the scenario's
+  derived-conflicts list, as `tag8_resolution_publishes_fresh_assignment_and_supersedes_alternatives`
+  (`crates/puyudb-core/src/publication.rs`) proves for the Rust path;
+- a kind-1 `delete_edit` conflict's `epochs` hold the edited epoch only, not
+  every maximal epoch selection of the file (`conflicts_impl`).
+
+The full Rust cross-check of these derivation semantics — re-deriving every
+scenario cut from a history database in `crates/puyudb-core/src/projection.rs`
+and comparing the derived conflicts and `SemanticManifestId` against these
+golden bytes, i.e. the T01–T03 parity evidence — is a **P9 deliverable**
+(`docs/plans/I05-native-text-projections.md`, P9), not part of this corpus:
+it needs a history database rather than a single record.

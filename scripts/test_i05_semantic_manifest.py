@@ -109,6 +109,49 @@ class ScenarioFixtureTests(unittest.TestCase):
         self.assertEqual(manifest.verify_fixtures(), [])
 
 
+class DerivationSemanticsTests(unittest.TestCase):
+    """GATE B audit M4: the derivation semantics the corpus blesses must agree
+    with the Rust rules in crates/puyudb-core/src/projection.rs."""
+
+    def _scenario(self, name):
+        return {s["name"]: s for s in load("scenarios.json")["scenarios"]}[name]
+
+    def _entry(self, scenario, file_hex):
+        return {e["file"]: e for e in scenario["manifest"]["entries"]}[file_hex]
+
+    def test_resolution_batch_carries_the_fresh_tag3_epoch_write(self):
+        scenario = self._scenario("resolution")
+        resolutions = [op for op in scenario["operations"] if op["tag"] == 8]
+        self.assertEqual(len(resolutions), 1)
+        op = resolutions[0]
+        self.assertEqual(op["resolution"], 2)
+        fresh = [o for o in scenario["operations"] if o["tag"] == 3 and
+                 manifest.epoch_id(manifest.encode_epoch_descriptor(o["epoch"])).hex()
+                 == op["payload"]]
+        self.assertEqual(len(fresh), 1,
+                         "spec §9 / validate_resolutions: tag 2 requires a new "
+                         "selection of that epoch in the same batch")
+
+    def test_resolved_conflict_disappears_from_the_recomputed_cut(self):
+        scenario = self._scenario("resolution")
+        self.assertEqual(scenario["conflicts"], [])
+        entry = self._entry(scenario, manifest.FILE_A.hex())
+        self.assertEqual(entry["conflicts"], [],
+                         "tag8_resolution_publishes_fresh_assignment_and_"
+                         "supersedes_alternatives: the resolved ConflictId is "
+                         "absent from the recomputed cut")
+
+    def test_delete_edit_conflict_names_the_edited_epoch_only(self):
+        scenario = self._scenario("delete-concurrent-edit")
+        kind_one = [c for c in scenario["conflicts"] if c["kind"] == 1]
+        self.assertEqual(len(kind_one), 1)
+        entry = self._entry(scenario, manifest.FILE_A.hex())
+        self.assertEqual(kind_one[0]["epochs"], [manifest.EPOCH_OPAQUE_A.hex()])
+        self.assertNotEqual(kind_one[0]["epochs"], entry["epochs"],
+                            "conflicts_impl: delete_edit epochs are the edited "
+                            "epoch, not every maximal epoch selection of the file")
+
+
 class NegativeFixtureTests(unittest.TestCase):
     def test_every_case_matches_its_declared_expectation(self):
         failures = manifest.verify_negatives(load("negative.json"))
