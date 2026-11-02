@@ -1750,6 +1750,11 @@ mod tests {
         }
     }
 
+    /// Parents must be sorted unique (§13); order the two heads bytewise.
+    fn sorted_parents(a: BatchId, b: BatchId) -> Vec<BatchId> {
+        if a <= b { vec![a, b] } else { vec![b, a] }
+    }
+
     /// A child of `parent` on another writer stream (key `seed`), so it is
     /// causally concurrent with the first stream's children of the same parent.
     fn nth_writer_child(
@@ -1798,13 +1803,32 @@ mod tests {
     }
 
     fn opaque_epoch(file: u8) -> profile::EpochDescriptor {
+        opaque_epoch_with(file, file)
+    }
+
+    fn opaque_epoch_with(file: u8, nonce: u8) -> profile::EpochDescriptor {
         profile::EpochDescriptor {
             file: FileId::from_array([file; 16]),
-            nonce: GenerationNonce::from_array([file; 16]),
+            nonce: GenerationNonce::from_array([nonce; 16]),
             kind: profile::EpochKind::Opaque,
             baseline: ArtifactId::from_array([file; 32]),
             seed_profile: None,
             git_oid: None,
+        }
+    }
+
+    fn epoch_op(file: u8, epoch: &profile::EpochDescriptor) -> profile::Operation {
+        profile::Operation::Epoch {
+            file: FileId::from_array([file; 16]),
+            epoch: epoch.clone(),
+        }
+    }
+
+    fn provenance_op(detail: Option<ArtifactId>) -> profile::Operation {
+        profile::Operation::Provenance {
+            sources: vec![BatchId::from_array([0x42; 32])],
+            relation: 0,
+            detail,
         }
     }
 
@@ -3779,6 +3803,172 @@ mod tests {
         let after = store.register_at(&[head_id]).expect("register");
         assert!(!after.iter().any(|w| w.field == Field::Mode));
         assert_eq!(register_paths(&after), vec![(0, "b.txt".to_owned())]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // GATE B re-audit: RetainEpoch/Incorporate admission (tags 2/3)
+    // ------------------------------------------------------------------
+
+    /// Root creates file 1 with opaque epoch O1; S selects opaque epoch O2;
+    /// E concurrently assigns an opaque value to O1. The cut [S, E] derives an
+    /// epoch_edit conflict with participants (S's epoch write, E's opaque write).
+    fn epoch_edit_scenario(
+        dir: &std::path::Path,
+    ) -> (Store, Fixture, BatchId, BatchId, profile::Conflict) {
+        let store = Store::open(dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.bin", opaque_epoch_with(1, 1))]);
+        let root_id = publish_fixture(&store, &root);
+        let select = child_ops(
+            &root,
+            2,
+            2,
+            vec![epoch_op(1, &opaque_epoch_with(1, 2))],
+            vec![root_id],
+            101,
+        );
+        let edit = second_writer_child(&root, vec![opaque_op(1, &opaque_epoch_with(1, 1))], 102);
+        let s = publish_fixture(&store, &select);
+        let e = publish_fixture(&store, &edit);
+        let conflict = store
+            .conflicts_at(&[s, e])
+            .expect("conflicts")
+            .into_iter()
+            .find(|c| c.kind == profile::ConflictKind::EpochEdit)
+            .expect("epoch_edit");
+        (store, select, s, e, conflict)
+    }
+
+    #[test]
+    fn retain_epoch_resolution_names_the_selected_epoch_and_supersedes() {
+        let dir = temp();
+        let (store, select, s, e, conflict) = epoch_edit_scenario(&dir);
+        let selected_epoch = opaque_epoch_with(1, 2).id().expect("id");
+        assert_eq!(conflict.epochs.len(), 2);
+        let conflict_id = conflict.id().expect("id");
+        let resolution = child_ops(
+            &select,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::RetainEpoch(selected_epoch),
+                ),
+                epoch_op(1, &opaque_epoch_with(1, 2)),
+            ],
+            sorted_parents(s, e),
+            103,
+        );
+        let r = publish_fixture(&store, &resolution);
+        let register = store.register_at(&[r]).expect("register");
+        let epochs: Vec<_> = register
+            .iter()
+            .filter(|w| w.field == Field::Epoch)
+            .filter_map(|w| match &w.value {
+                FieldValue::Epoch(d) => Some(d.id().expect("id")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(epochs, vec![selected_epoch]);
+        assert!(store.conflicts_at(&[r]).expect("conflicts").is_empty());
+        // Negative: RetainEpoch naming the edited (not selected) epoch.
+        let wrong = child_ops(
+            &select,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::RetainEpoch(opaque_epoch_with(1, 1).id().expect("id")),
+                ),
+                epoch_op(1, &opaque_epoch_with(1, 1)),
+            ],
+            sorted_parents(s, e),
+            104,
+        );
+        let ids = stage(&store, &wrong.chunks);
+        assert!(store.publish(&publication(&wrong, &ids)).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn incorporate_requires_a_new_epoch_and_provenance() {
+        let dir = temp();
+        let (store, select, s, e, conflict) = epoch_edit_scenario(&dir);
+        let conflict_id = conflict.id().expect("id");
+        let new_epoch = opaque_epoch_with(1, 3);
+        let provenance = ArtifactId::from_array([0x77; 32]);
+        // Valid incorporation: fresh explicit new epoch + provenance op.
+        let good = child_ops(
+            &select,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::Incorporate {
+                        epoch: new_epoch.id().expect("id"),
+                        provenance,
+                    },
+                ),
+                epoch_op(1, &new_epoch),
+                provenance_op(Some(provenance)),
+            ],
+            sorted_parents(s, e),
+            105,
+        );
+        publish_fixture(&store, &good);
+        // Negative: naming an epoch already declared anywhere in the closure,
+        // even the superseded create-time epoch O1.
+        for (bad_epoch, salt) in [
+            (opaque_epoch_with(1, 1), 106u8),
+            (opaque_epoch_with(1, 2), 107u8),
+        ] {
+            let bad = child_ops(
+                &select,
+                3,
+                3,
+                vec![
+                    resolution_op(
+                        conflict_id,
+                        profile::Resolution::Incorporate {
+                            epoch: bad_epoch.id().expect("id"),
+                            provenance,
+                        },
+                    ),
+                    epoch_op(1, &bad_epoch),
+                    provenance_op(Some(provenance)),
+                ],
+                sorted_parents(s, e),
+                salt,
+            );
+            let ids = stage(&store, &bad.chunks);
+            assert!(
+                store.publish(&publication(&bad, &ids)).is_err(),
+                "incorporate of already-declared epoch accepted"
+            );
+        }
+        // Negative: missing the provenance operation.
+        let no_prov = child_ops(
+            &select,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::Incorporate {
+                        epoch: new_epoch.id().expect("id"),
+                        provenance,
+                    },
+                ),
+                epoch_op(1, &new_epoch),
+            ],
+            sorted_parents(s, e),
+            108,
+        );
+        let ids = stage(&store, &no_prov.chunks);
+        assert!(store.publish(&publication(&no_prov, &ids)).is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 }

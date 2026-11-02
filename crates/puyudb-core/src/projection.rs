@@ -485,6 +485,22 @@ fn validate_resolutions(
                 }
             }
             Resolution::RetainEpoch(epoch) => {
+                // §9 tag 2 retains the SELECTED epoch: the payload must be the
+                // epoch of the conflict's epoch-selection participant, not any
+                // declared epoch.
+                let selected = found.participants.iter().find(|participant| {
+                    register.iter().any(|w| {
+                        &w.write == *participant
+                            && w.field == Field::Epoch
+                            && matches!(&w.value, FieldValue::Epoch(d)
+                                if d.id().map(|id| id == *epoch).unwrap_or(false))
+                    })
+                });
+                if selected.is_none() {
+                    return Err(Error::InvalidOperation(
+                        "retain-epoch payload is not the conflict's selected epoch".into(),
+                    ));
+                }
                 if !has_epoch_op(metadata, file, epoch)? {
                     return Err(Error::InvalidOperation(
                         "retain-epoch resolution lacks a fresh selection of that epoch in the same batch".into(),
@@ -493,14 +509,17 @@ fn validate_resolutions(
             }
             Resolution::Incorporate { epoch, provenance } => {
                 // Incorporation requires an explicit NEW epoch, not a
-                // relabeling of one already declared for the file (§22.2).
-                let already_declared = register.iter().any(|w| {
+                // relabeling of one already declared for the file anywhere in
+                // the parent closure — including causally superseded (no
+                // longer maximal) declarations (§22.2).
+                let declared_anywhere = load_writes(conn, parents)?.iter().any(|w| {
                     w.file == file
-                        && w.field == Field::Epoch
-                        && matches!(&w.value, FieldValue::Epoch(d)
-                            if d.id().map(|id| id == *epoch).unwrap_or(false))
+                        && w.field == Field::Epoch.tag()
+                        && decode_epoch_value(&w.value)
+                            .map(|d| d.id().map(|id| id == *epoch).unwrap_or(false))
+                            .unwrap_or(false)
                 });
-                if already_declared {
+                if declared_anywhere {
                     return Err(Error::InvalidOperation(
                         "incorporation must name a new epoch not already declared for the file"
                             .into(),
