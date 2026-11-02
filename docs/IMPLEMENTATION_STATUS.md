@@ -538,3 +538,15 @@ registers at a cut: supersession within the batch closure and within one batch,
 maximal alternatives in stable bytewise `(batch, op_index)` order, quarantined
 batches excluded, arrival-order independent. `publish` still refuses native
 artifacts (`NativeUnchecked`); that lifts only in I05 phase 3.
+
+Phase 2 (plan P3-P5) landed on the same branch: file projections
+(`files_at`/`paths_at`/`prefix_conflicts_at`/`branch_heads` computed at a cut;
+`files_current`/`paths_current` stay rebuildable read-time accelerations until
+a frontier table lands in I08/I12), liveness with no implicit resurrection,
+path collision sets and prefix conflicts reported but never auto-resolved,
+cross-field conflict derivation (`register`/`delete_edit`/`epoch_edit` with
+stable `ConflictId`s, recomputed from history per spec §9), tag-8 resolution
+admission (conflict visible at the parent cut, all participants observed, and
+a fresh corresponding field assignment in the same batch), and the canonical
+`SemanticManifestV1` at a cut with a golden-pinned `SemanticManifestId`
+(identical across two independent replicas in both publish orders).

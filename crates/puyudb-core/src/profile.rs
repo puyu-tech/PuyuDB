@@ -575,7 +575,9 @@ pub enum ConflictKind {
 }
 
 impl ConflictKind {
-    const fn tag(self) -> u64 {
+    /// Assigned registry tag of this kind.
+    #[must_use]
+    pub const fn tag(self) -> u64 {
         match self {
             Self::Register => 0,
             Self::DeleteEdit => 1,

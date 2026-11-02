@@ -23,19 +23,23 @@
 //!
 //! Projections see visible history only: quarantined batches (writer
 //! equivocation) are not history and their writes are excluded everywhere;
-//! a cut naming one is an explicit error at the boundary, while a quarantine
-//! inside an otherwise visible closure simply drops that batch's writes.
+//! a cut naming one is an explicit error at the boundary. A quarantine inside
+//! an otherwise visible closure cuts causality at that node: the
+//! quarantined batch's exclusive ancestors become invisible below any
+//! descendant cut (writes reachable through another visible head still
+//! surface as concurrent alternatives). This semantic is deliberate
+//! (quarantine = not visible history) and pinned by tests.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::Connection;
 use thiserror::Error;
 
 use crate::canon::{self, Item};
-use crate::identity::{ArtifactId, BatchId, FileId};
+use crate::identity::{ArtifactId, BatchId, BranchId, ConflictId, EpochId, FileId, SpaceId};
 use crate::profile::{
-    self, EpochDescriptor, EpochKind, LiveTag, MetadataArtifact, ModeTag, Operation, Path,
-    WriteIdent,
+    self, Conflict, ConflictKind, EpochDescriptor, EpochKind, FileEntry, LiveTag, MetadataArtifact,
+    ModeTag, Operation, Path, Resolution, SemanticManifest, WriteIdent,
 };
 
 /// Projection tables added on top of the I04 ledger schema.
@@ -127,8 +131,13 @@ pub enum FieldValue {
     Live(LiveTag),
     /// Full epoch descriptor.
     Epoch(EpochDescriptor),
-    /// Opaque content artifact.
-    Content(ArtifactId),
+    /// Opaque content assignment: the declared epoch and the content artifact.
+    Content {
+        /// Declared opaque epoch the value belongs to.
+        epoch: EpochId,
+        /// Content artifact.
+        artifact: ArtifactId,
+    },
     /// Mode tag.
     Mode(ModeTag),
 }
@@ -140,7 +149,11 @@ impl FieldValue {
             Self::Path(path) => canon::write_text(&mut out, path.as_str())?,
             Self::Live(tag) => canon::write_uint(&mut out, tag.tag())?,
             Self::Epoch(descriptor) => out.extend_from_slice(&descriptor.encode()?),
-            Self::Content(artifact) => canon::write_bytes(&mut out, artifact.as_bytes())?,
+            Self::Content { epoch, artifact } => {
+                canon::write_array_header(&mut out, 2)?;
+                canon::write_bytes(&mut out, epoch.as_bytes())?;
+                canon::write_bytes(&mut out, artifact.as_bytes())?;
+            }
             Self::Mode(tag) => canon::write_uint(&mut out, tag.tag())?,
         }
         Ok(out)
@@ -165,12 +178,26 @@ impl FieldValue {
                 _ => return Err(Error::Encoding("live value is not a uint".into())),
             },
             Field::Epoch => Self::Epoch(EpochDescriptor::decode(&item)?),
-            Field::Content => match &item {
-                Item::Bytes(raw) if raw.len() == ArtifactId::WIDTH => Self::Content(
-                    ArtifactId::from_bytes(raw).map_err(|err| Error::Encoding(err.to_string()))?,
-                ),
-                _ => return Err(Error::Encoding("content value is not bytes32".into())),
-            },
+            Field::Content => {
+                let pair = match &item {
+                    Item::Array(items) if items.len() == 2 => items,
+                    _ => return Err(Error::Encoding("content value is not a pair".into())),
+                };
+                let fixed32 = |item: &Item| -> Result<[u8; 32], Error> {
+                    match item {
+                        Item::Bytes(raw) if raw.len() == 32 => {
+                            let mut out = [0u8; 32];
+                            out.copy_from_slice(raw);
+                            Ok(out)
+                        }
+                        _ => Err(Error::Encoding("content pair member is not bytes32".into())),
+                    }
+                };
+                Self::Content {
+                    epoch: EpochId::from_array(fixed32(&pair[0])?),
+                    artifact: ArtifactId::from_array(fixed32(&pair[1])?),
+                }
+            }
             Field::Mode => match &item {
                 Item::Uint(tag) => Self::Mode(
                     ModeTag::from_tag(*tag)
@@ -193,6 +220,8 @@ pub struct RegisterWrite {
     pub write: WriteIdent,
     /// Assigned value.
     pub value: FieldValue,
+    /// Metadata operation tag that produced the write (§7.1).
+    pub op_tag: u64,
 }
 
 /// Store one published batch's field writes in `field_writes`.
@@ -226,9 +255,15 @@ pub(crate) fn record_batch(
             Operation::Path { path, .. } => &[(Field::Path, FieldValue::Path(path.clone()))],
             Operation::Live { live, .. } => &[(Field::Live, FieldValue::Live(*live))],
             Operation::Epoch { epoch, .. } => &[(Field::Epoch, FieldValue::Epoch(epoch.clone()))],
-            Operation::Opaque { artifact, .. } => {
-                &[(Field::Content, FieldValue::Content(*artifact))]
-            }
+            Operation::Opaque {
+                epoch, artifact, ..
+            } => &[(
+                Field::Content,
+                FieldValue::Content {
+                    epoch: *epoch,
+                    artifact: *artifact,
+                },
+            )],
             Operation::Mode { mode, .. } => &[(Field::Mode, FieldValue::Mode(*mode))],
             // Context events, Git associations, resolutions and provenance
             // assertions write no file register field.
@@ -292,7 +327,7 @@ pub(crate) fn validate_against_history(
     }
     let history = load_writes(conn, parents)?;
     let mut created: HashSet<FileId> = HashSet::new();
-    let mut epochs: HashMap<(FileId, crate::identity::EpochId), EpochKind> = HashMap::new();
+    let mut epochs: HashMap<(FileId, EpochId), EpochKind> = HashMap::new();
     for write in &history {
         if write.op_tag == 0 {
             created.insert(write.file);
@@ -363,7 +398,153 @@ pub(crate) fn validate_against_history(
             | Operation::Provenance { .. } => {}
         }
     }
+    // Tag-8 resolutions are validated against the conflicts visible at the
+    // parent cut (P4); skipped entirely when the batch carries none, so the
+    // common publish path pays no conflict-derivation cost.
+    if metadata
+        .operations
+        .iter()
+        .any(|op| matches!(op, Operation::Resolution { .. }))
+    {
+        validate_resolutions(conn, parents, metadata)?;
+    }
     Ok(())
+}
+
+/// Validate tag-8 resolution operations against the parent cut (§9, §22.2):
+/// the named conflict must be visible at the parent cut, the parents must
+/// observe every named participant, and the same batch must publish the fresh
+/// corresponding field assignment (acceptance-only records are insufficient).
+fn validate_resolutions(
+    conn: &Connection,
+    parents: &[BatchId],
+    metadata: &MetadataArtifact,
+) -> Result<(), Error> {
+    let conflicts = conflicts_impl(conn, parents)?;
+    let register = register_impl(conn, parents)?;
+    let ancestors = ancestor_map(conn, parents)?;
+    let mut closure: HashSet<BatchId> = parents.iter().copied().collect();
+    for set in ancestors.values() {
+        closure.extend(set.iter().copied());
+    }
+    for operation in &metadata.operations {
+        let Operation::Resolution {
+            conflict,
+            resolution,
+        } = operation
+        else {
+            continue;
+        };
+        let found = conflicts
+            .iter()
+            .find(|c| matches!(c.id(), Ok(id) if id == *conflict))
+            .ok_or_else(|| {
+                Error::InvalidOperation(
+                    "resolution names a conflict not visible at the parent cut".into(),
+                )
+            })?;
+        for participant in &found.participants {
+            if !closure.contains(&participant.batch) {
+                return Err(Error::InvalidOperation(
+                    "resolution parents do not observe a named participant".into(),
+                ));
+            }
+        }
+        let file = found.file;
+        match resolution {
+            Resolution::RetainDelete => {
+                if !has_live_op(metadata, file, LiveTag::Deleted) {
+                    return Err(Error::InvalidOperation(
+                        "retain-delete resolution lacks a fresh Deleted assignment in the same batch".into(),
+                    ));
+                }
+            }
+            Resolution::RestoreEdit => {
+                if !has_live_op(metadata, file, LiveTag::Alive) {
+                    return Err(Error::InvalidOperation(
+                        "restore-edit resolution lacks a fresh Alive assignment in the same batch"
+                            .into(),
+                    ));
+                }
+            }
+            Resolution::RetainEpoch(epoch) => {
+                if !has_epoch_op(metadata, file, epoch)? {
+                    return Err(Error::InvalidOperation(
+                        "retain-epoch resolution lacks a fresh selection of that epoch in the same batch".into(),
+                    ));
+                }
+            }
+            Resolution::Incorporate { epoch, provenance } => {
+                if !has_epoch_op(metadata, file, epoch)? {
+                    return Err(Error::InvalidOperation(
+                        "incorporation lacks the fresh explicit epoch write in the same batch"
+                            .into(),
+                    ));
+                }
+                if !metadata.operations.iter().any(|op| {
+                    matches!(
+                        op,
+                        Operation::Provenance { detail: Some(d), .. } if d == provenance
+                    )
+                }) {
+                    return Err(Error::InvalidOperation(
+                        "incorporation lacks the provenance operation in the same batch".into(),
+                    ));
+                }
+            }
+            Resolution::Choose { field, write } => {
+                if !found.participants.contains(write) {
+                    return Err(Error::InvalidOperation(
+                        "chosen alternative is not a participant of the named conflict".into(),
+                    ));
+                }
+                let Some(chosen) = register.iter().find(|w| &w.write == write) else {
+                    return Err(Error::InvalidOperation(
+                        "chosen write identity is not visible at the parent cut".into(),
+                    ));
+                };
+                let matches_fresh_op = |op: &Operation| match (field, op) {
+                    (0, Operation::Path { file: f, path }) => {
+                        *f == file && matches!(&chosen.value, FieldValue::Path(p) if p == path)
+                    }
+                    (
+                        1,
+                        Operation::Opaque {
+                            file: f,
+                            epoch,
+                            artifact,
+                        },
+                    ) => {
+                        *f == file
+                            && matches!(&chosen.value, FieldValue::Content { epoch: e, artifact: a } if e == epoch && a == artifact)
+                    }
+                    (2, Operation::Mode { file: f, mode }) => {
+                        *f == file && matches!(&chosen.value, FieldValue::Mode(m) if m == mode)
+                    }
+                    _ => false,
+                };
+                if !metadata.operations.iter().any(matches_fresh_op) {
+                    return Err(Error::InvalidOperation(
+                        "choose-alternative resolution lacks the fresh write of the chosen value in the same batch".into(),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn has_live_op(metadata: &MetadataArtifact, file: FileId, live: LiveTag) -> bool {
+    metadata
+        .operations
+        .iter()
+        .any(|op| matches!(op, Operation::Live { file: f, live: l } if *f == file && *l == live))
+}
+
+fn has_epoch_op(metadata: &MetadataArtifact, file: FileId, epoch: &EpochId) -> Result<bool, Error> {
+    Ok(metadata.operations.iter().any(|op| {
+        matches!(op, Operation::Epoch { file: f, epoch: d } if *f == file && matches!(d.id(), Ok(id) if id == *epoch))
+    }))
 }
 
 /// Maximal MV-register writes visible at a cut, one entry per surviving
@@ -379,14 +560,26 @@ pub(crate) fn validate_against_history(
 /// Returns [`Error::Encoding`] when the cut exceeds the frontier cap, and
 /// SQLite/profile errors when history cannot be read.
 pub fn register_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<RegisterWrite>, Error> {
+    check_cut(conn, cut)?;
+    register_impl(conn, cut)
+}
+
+/// Public cut gate: non-empty, within the frontier cap, duplicate-free, and
+/// naming only visible publications. Unknown or quarantined members are an
+/// explicit failure, never an approximate view (§5.2).
+fn check_cut(conn: &Connection, cut: &[BatchId]) -> Result<(), Error> {
     if cut.is_empty() {
-        return Ok(Vec::new());
+        return Ok(());
     }
     if cut.len() > profile::MAX_FRONTIER_HEADS {
         return Err(Error::Encoding("cut exceeds the frontier cap".into()));
     }
-    // A cut must name visible publications: unknown or quarantined members are
-    // an explicit failure, never an approximate view (§5.2).
+    // A frontier is sorted unique (§5.2); duplicates are a caller bug and must
+    // not degrade into a misleading visibility error below.
+    let unique: HashSet<&BatchId> = cut.iter().collect();
+    if unique.len() != cut.len() {
+        return Err(Error::Encoding("cut contains duplicate heads".into()));
+    }
     for chunk in cut.chunks(SEED_CHUNK) {
         let values = values_list(chunk.len());
         let sql = format!(
@@ -405,9 +598,21 @@ pub fn register_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<RegisterWri
             ));
         }
     }
+    Ok(())
+}
+
+/// Register evaluation without the public cut-visibility gate, for internal
+/// derivations (conflict derivation at a batch's parent cut) where the seeds
+/// are already known to be admitted.
+pub(crate) fn register_impl(
+    conn: &Connection,
+    cut: &[BatchId],
+) -> Result<Vec<RegisterWrite>, Error> {
     let ancestors = ancestor_map(conn, cut)?;
     let writes = load_writes(conn, cut)?;
-    let mut groups: HashMap<(FileId, u64), Vec<(WriteIdent, FieldValue)>> = HashMap::new();
+    /// One candidate write in a group: identity, decoded value, operation tag.
+    type Candidate = (WriteIdent, FieldValue, u64);
+    let mut groups: HashMap<(FileId, u64), Vec<Candidate>> = HashMap::new();
     for write in writes {
         let field = Field::from_tag(write.field)
             .ok_or_else(|| Error::Encoding("unknown field tag in field_writes".into()))?;
@@ -418,6 +623,7 @@ pub fn register_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<RegisterWri
                 operation_index: write.op_index,
             },
             value,
+            write.op_tag,
         ));
     }
     let mut out = Vec::new();
@@ -425,17 +631,18 @@ pub fn register_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<RegisterWri
         let Some(field) = Field::from_tag(field_tag) else {
             continue;
         };
-        entries.sort_by_key(|(write, _)| *write);
-        for (write, value) in &entries {
+        entries.sort_by_key(|(write, _, _)| *write);
+        for (write, value, op_tag) in &entries {
             let dominated = entries
                 .iter()
-                .any(|(other, _)| supersedes(other, write, &ancestors));
+                .any(|(other, _, _)| supersedes(other, write, &ancestors));
             if !dominated {
                 out.push(RegisterWrite {
                     file,
                     field,
                     write: *write,
                     value: value.clone(),
+                    op_tag: *op_tag,
                 });
             }
         }
@@ -612,4 +819,365 @@ fn load_writes(conn: &Connection, seeds: &[BatchId]) -> Result<Vec<RawWrite>, Er
         }
     }
     Ok(out)
+}
+
+// --------------------------------------------------------------------------
+// I05 P3/P4/P5: file projections, conflicts, semantic manifest
+// --------------------------------------------------------------------------
+
+/// One file's derived projection at a cut: the maximal alternatives of every
+/// register field. Deleted files keep their entry and their content (§7.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileProjection {
+    /// File identity.
+    pub file: FileId,
+    /// Maximal liveness alternatives (sorted by tag).
+    pub live: Vec<LiveTag>,
+    /// Maximal path alternatives (sorted by raw UTF-8 bytes).
+    pub paths: Vec<Path>,
+    /// Maximal epoch alternatives (sorted by identity).
+    pub epochs: Vec<EpochId>,
+    /// Maximal opaque content alternatives (sorted by artifact identity).
+    pub contents: Vec<ArtifactId>,
+    /// Maximal mode alternatives (sorted by tag).
+    pub modes: Vec<ModeTag>,
+}
+
+/// Per-file register projections at a cut, sorted by raw `FileId` bytes.
+///
+/// # Errors
+/// Same cut gate as [`register_at`], plus SQLite/profile errors.
+pub fn files_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<FileProjection>, Error> {
+    check_cut(conn, cut)?;
+    files_impl(conn, cut)
+}
+
+pub(crate) fn files_impl(conn: &Connection, cut: &[BatchId]) -> Result<Vec<FileProjection>, Error> {
+    let register = register_impl(conn, cut)?;
+    let mut by_file: HashMap<FileId, FileProjection> = HashMap::new();
+    for write in register {
+        let entry = by_file.entry(write.file).or_insert_with(|| FileProjection {
+            file: write.file,
+            live: Vec::new(),
+            paths: Vec::new(),
+            epochs: Vec::new(),
+            contents: Vec::new(),
+            modes: Vec::new(),
+        });
+        match write.value {
+            FieldValue::Live(tag) => entry.live.push(tag),
+            FieldValue::Path(path) => entry.paths.push(path),
+            FieldValue::Epoch(descriptor) => entry.epochs.push(descriptor.id()?),
+            FieldValue::Content { artifact, .. } => entry.contents.push(artifact),
+            FieldValue::Mode(tag) => entry.modes.push(tag),
+        }
+    }
+    let mut out: Vec<FileProjection> = by_file.into_values().collect();
+    for projection in &mut out {
+        projection.live.sort_by_key(|tag| tag.tag());
+        projection.live.dedup();
+        projection.paths.sort();
+        projection.paths.dedup();
+        projection.epochs.sort();
+        projection.epochs.dedup();
+        projection.contents.sort();
+        projection.contents.dedup();
+        projection.modes.sort_by_key(|tag| tag.tag());
+        projection.modes.dedup();
+    }
+    out.sort_by_key(|projection| projection.file);
+    Ok(out)
+}
+
+/// The `paths_current` projection at a cut: each path of a currently alive file
+/// mapped to its sorted collision set of files. Two files assigned the same
+/// path form a collision set that is never auto-resolved (§5.6); a file whose
+/// maximal liveness is only `Deleted` has no current path. Deleted files keep
+/// their semantic-manifest entry but drop out of the current path view.
+///
+/// # Errors
+/// Same cut gate as [`register_at`].
+pub fn paths_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<(Path, Vec<FileId>)>, Error> {
+    let files = files_impl(conn, cut)?;
+    let mut map: BTreeMap<String, Vec<FileId>> = BTreeMap::new();
+    for projection in files {
+        if !projection.live.contains(&LiveTag::Alive) {
+            continue;
+        }
+        for path in &projection.paths {
+            map.entry(path.as_str().to_owned())
+                .or_default()
+                .push(projection.file);
+        }
+    }
+    map.into_iter()
+        .map(|(text, mut files)| {
+            files.sort();
+            Ok::<_, Error>((Path::new(&text)?, files))
+        })
+        .collect()
+}
+
+/// File/directory prefix conflicts at a cut, e.g. `a` and `a/b` (§5.6): pairs
+/// of current paths where one is a strict path-prefix of the other. These are
+/// collision sets, reported, never auto-resolved or renamed.
+///
+/// # Errors
+/// Same cut gate as [`register_at`].
+pub fn prefix_conflicts_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<(Path, Path)>, Error> {
+    let paths = paths_at(conn, cut)?;
+    let keys: Vec<&str> = paths.iter().map(|(path, _)| path.as_str()).collect();
+    let mut out = Vec::new();
+    for (path, _) in &paths {
+        let prefix = format!("{}/", path.as_str());
+        let start = keys.partition_point(|key| *key < prefix.as_str());
+        let matching = keys[start..]
+            .iter()
+            .take_while(|key| key.starts_with(&prefix))
+            .count();
+        for other in &paths[start..start + matching] {
+            out.push((path.clone(), other.0.clone()));
+        }
+    }
+    Ok(out)
+}
+
+/// Current heads of one branch: visible batches on the branch that are not an
+/// ancestor of another visible batch on the same branch. Until a frontier
+/// table lands (I08/I12), the `files_current`/`paths_current` branch views are
+/// computed from these heads on read; they stay rebuildable accelerations
+/// (§6.3), never authoritative state.
+///
+/// # Errors
+/// Returns a SQLite error if the read fails.
+pub fn branch_heads(conn: &Connection, branch: &BranchId) -> Result<Vec<BatchId>, Error> {
+    let sql = "
+        WITH RECURSIVE h(x) AS (
+          SELECT batch_id FROM batches WHERE branch = ?1 AND quarantined = 0
+        ),
+        d(root, x) AS (
+          SELECT h.x, bp.child FROM h JOIN batch_parents bp ON bp.parent = h.x
+          UNION
+          SELECT d.root, bp.child FROM d JOIN batch_parents bp ON bp.parent = d.x
+        )
+        SELECT h.x FROM h
+        WHERE NOT EXISTS (
+          SELECT 1 FROM d JOIN batches b ON b.batch_id = d.x
+          WHERE d.root = h.x AND d.x != h.x AND b.branch = ?1 AND b.quarantined = 0
+        )
+        ORDER BY h.x";
+    let mut statement = conn.prepare(sql)?;
+    let rows = statement.query_map([branch.as_bytes().as_slice()], |row| {
+        row.get::<_, Vec<u8>>(0)
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let bytes = row?;
+        out.push(BatchId::from_bytes(&bytes).map_err(|err| Error::Encoding(err.to_string()))?);
+    }
+    Ok(out)
+}
+
+/// Conflicts visible at a cut, recomputed from history (§9) — never persisted
+/// as arrival-dependent flags. Kind 0 register alternatives, kind 1
+/// `delete_edit`, kind 2 `epoch_edit`, each with a stable `ConflictId` that is
+/// independent of delivery order because participants and epochs are sorted.
+///
+/// # Errors
+/// Same cut gate as [`register_at`].
+pub fn conflicts_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<Conflict>, Error> {
+    check_cut(conn, cut)?;
+    conflicts_impl(conn, cut)
+}
+
+pub(crate) fn conflicts_impl(conn: &Connection, cut: &[BatchId]) -> Result<Vec<Conflict>, Error> {
+    let register = register_impl(conn, cut)?;
+    let ancestors = ancestor_map(conn, cut)?;
+    let mut by_file: HashMap<FileId, Vec<&RegisterWrite>> = HashMap::new();
+    for write in &register {
+        by_file.entry(write.file).or_default().push(write);
+    }
+    let concurrent = |a: &BatchId, b: &BatchId| -> bool {
+        let a_before_b = ancestors.get(a).is_some_and(|set| set.contains(b));
+        let b_before_a = ancestors.get(b).is_some_and(|set| set.contains(a));
+        !a_before_b && !b_before_a
+    };
+    let all_writes = load_writes(conn, cut)?;
+    let mut out: Vec<Conflict> = Vec::new();
+    for (file, writes) in &by_file {
+        let group = |field: Field| -> Vec<&RegisterWrite> {
+            writes
+                .iter()
+                .copied()
+                .filter(|w| w.field == field)
+                .collect()
+        };
+        // Kind 0: concurrent maximal register alternatives.
+        for field in [
+            Field::Path,
+            Field::Live,
+            Field::Epoch,
+            Field::Content,
+            Field::Mode,
+        ] {
+            let entries = group(field);
+            if entries.len() >= 2 {
+                out.push(Conflict {
+                    kind: ConflictKind::Register,
+                    file: *file,
+                    epochs: Vec::new(),
+                    participants: entries.iter().map(|w| w.write).collect(),
+                });
+            }
+        }
+        // Kind 1: delete_edit — each maximal deletion assignment against each
+        // causally concurrent edit-producing write (epoch or opaque content)
+        // whose base cut saw the file alive (§22.2).
+        let deleted: Vec<&RegisterWrite> = group(Field::Live)
+            .into_iter()
+            .filter(|w| w.value == FieldValue::Live(LiveTag::Deleted))
+            .collect();
+        let edits: Vec<&RegisterWrite> = writes
+            .iter()
+            .copied()
+            .filter(|w| w.op_tag == 3 || w.op_tag == 4)
+            .collect();
+        let mut epoch_ids: Vec<EpochId> = Vec::new();
+        for write in group(Field::Epoch) {
+            if let FieldValue::Epoch(descriptor) = &write.value {
+                epoch_ids.push(descriptor.id()?);
+            }
+        }
+        epoch_ids.sort();
+        epoch_ids.dedup();
+        for deletion in &deleted {
+            for edit in &edits {
+                if !concurrent(&deletion.write.batch, &edit.write.batch) {
+                    continue;
+                }
+                if !edit_base_saw_alive(conn, &edit.write.batch, *file)? {
+                    continue;
+                }
+                let mut participants = vec![deletion.write, edit.write];
+                participants.sort();
+                out.push(Conflict {
+                    kind: ConflictKind::DeleteEdit,
+                    file: *file,
+                    epochs: epoch_ids.clone(),
+                    participants,
+                });
+            }
+        }
+        // Kind 2: epoch_edit — each maximal selected epoch against a concurrent
+        // opaque assignment to another previously declared epoch (§22.2).
+        for selection in group(Field::Epoch) {
+            let FieldValue::Epoch(descriptor) = &selection.value else {
+                continue;
+            };
+            let selected = descriptor.id()?;
+            for edit in &edits {
+                let FieldValue::Content { epoch, .. } = &edit.value else {
+                    continue;
+                };
+                if *epoch == selected || !concurrent(&selection.write.batch, &edit.write.batch) {
+                    continue;
+                }
+                // The edited epoch must have been declared earlier in the closure.
+                let declared = all_writes.iter().any(|w| {
+                    w.field == Field::Epoch.tag()
+                        && decode_epoch_value(&w.value)
+                            .map(|d| d.id().map(|id| id == *epoch).unwrap_or(false))
+                            .unwrap_or(false)
+                });
+                if !declared {
+                    continue;
+                }
+                let mut epochs = vec![selected, *epoch];
+                epochs.sort();
+                epochs.dedup();
+                let mut participants = vec![selection.write, edit.write];
+                participants.sort();
+                out.push(Conflict {
+                    kind: ConflictKind::EpochEdit,
+                    file: *file,
+                    epochs,
+                    participants,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        (
+            a.kind.tag(),
+            a.file,
+            a.epochs.clone(),
+            a.participants.clone(),
+        )
+            .cmp(&(
+                b.kind.tag(),
+                b.file,
+                b.epochs.clone(),
+                b.participants.clone(),
+            ))
+    });
+    Ok(out)
+}
+
+/// Whether the parent cut of `batch` saw `file` alive: the maximal liveness
+/// alternatives at that cut contain `Alive` (§22.2 delete/edit rule).
+fn edit_base_saw_alive(conn: &Connection, batch: &BatchId, file: FileId) -> Result<bool, Error> {
+    let mut statement = conn.prepare("SELECT parent FROM batch_parents WHERE child = ?1")?;
+    let rows = statement.query_map([batch.as_bytes().as_slice()], |row| {
+        row.get::<_, Vec<u8>>(0)
+    })?;
+    let mut parents = Vec::new();
+    for row in rows {
+        let bytes = row?;
+        parents.push(BatchId::from_bytes(&bytes).map_err(|err| Error::Encoding(err.to_string()))?);
+    }
+    let register = register_impl(conn, &parents)?;
+    Ok(register.iter().any(|w| {
+        w.file == file && w.field == Field::Live && w.value == FieldValue::Live(LiveTag::Alive)
+    }))
+}
+
+/// The canonical `SemanticManifestV1` at a cut (§7.2): the T02/T13 comparison
+/// unit. Entries are sorted by raw `FileId` and every inner array is sorted
+/// and deduplicated by `FileEntry::encode`, so the `SemanticManifestId` never
+/// depends on arrival order, cache contents, or chunk boundaries.
+///
+/// # Errors
+/// Same cut gate as [`register_at`].
+pub fn semantic_manifest_at(
+    conn: &Connection,
+    space: &SpaceId,
+    cut: &[BatchId],
+) -> Result<SemanticManifest, Error> {
+    check_cut(conn, cut)?;
+    let files = files_impl(conn, cut)?;
+    let conflicts = conflicts_impl(conn, cut)?;
+    let mut entries = Vec::with_capacity(files.len());
+    for projection in files {
+        let mut ids: Vec<ConflictId> = Vec::new();
+        for conflict in &conflicts {
+            if conflict.file == projection.file {
+                ids.push(conflict.id()?);
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        entries.push(FileEntry {
+            file: projection.file,
+            live: projection.live,
+            paths: projection.paths,
+            epochs: projection.epochs,
+            contents: projection.contents,
+            modes: projection.modes,
+            conflicts: ids,
+        });
+    }
+    Ok(SemanticManifest {
+        space: *space,
+        entries,
+    })
 }

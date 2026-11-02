@@ -911,6 +911,72 @@ impl Store {
         Ok(projection::register_at(&self.conn, cut)?)
     }
 
+    /// Per-file register projections at a cut (I05 P3).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn files_at(&self, cut: &[BatchId]) -> Result<Vec<projection::FileProjection>, Error> {
+        Ok(projection::files_at(&self.conn, cut)?)
+    }
+
+    /// The `paths_current` projection at a cut: path → sorted collision set of
+    /// alive files. Collision sets are never auto-resolved (§5.6).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn paths_at(
+        &self,
+        cut: &[BatchId],
+    ) -> Result<Vec<(profile::Path, Vec<crate::identity::FileId>)>, Error> {
+        Ok(projection::paths_at(&self.conn, cut)?)
+    }
+
+    /// File/directory prefix conflicts at a cut (`a` vs `a/b`), reported, never
+    /// auto-resolved (§5.6).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn prefix_conflicts_at(
+        &self,
+        cut: &[BatchId],
+    ) -> Result<Vec<(profile::Path, profile::Path)>, Error> {
+        Ok(projection::prefix_conflicts_at(&self.conn, cut)?)
+    }
+
+    /// Current heads of one branch (I05 P3; computed on read until a frontier
+    /// table lands in I08/I12).
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn branch_heads(&self, branch: &BranchId) -> Result<Vec<BatchId>, Error> {
+        Ok(projection::branch_heads(&self.conn, branch)?)
+    }
+
+    /// Conflicts visible at a cut, recomputed from history with stable
+    /// `ConflictId`s (I05 P4, §9).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn conflicts_at(&self, cut: &[BatchId]) -> Result<Vec<profile::Conflict>, Error> {
+        Ok(projection::conflicts_at(&self.conn, cut)?)
+    }
+
+    /// The canonical `SemanticManifestV1` at a cut (I05 P5, §7.2); call
+    /// `SemanticManifest::id` for the T02/T13 comparison hash.
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn semantic_manifest_at(
+        &self,
+        cut: &[BatchId],
+    ) -> Result<profile::SemanticManifest, Error> {
+        Ok(projection::semantic_manifest_at(
+            &self.conn,
+            &self.space,
+            cut,
+        )?)
+    }
+
     /// Whether this batch id is a visible publication.
     ///
     /// # Errors
@@ -1760,6 +1826,23 @@ mod tests {
             file: FileId::from_array([file; 16]),
             epoch: epoch.id().expect("epoch id"),
             artifact: ArtifactId::from_array([file.wrapping_add(100); 32]),
+        }
+    }
+
+    fn mode_op(file: u8, mode: profile::ModeTag) -> profile::Operation {
+        profile::Operation::Mode {
+            file: FileId::from_array([file; 16]),
+            mode,
+        }
+    }
+
+    fn resolution_op(
+        conflict: crate::identity::ConflictId,
+        resolution: profile::Resolution,
+    ) -> profile::Operation {
+        profile::Operation::Resolution {
+            conflict,
+            resolution,
         }
     }
 
@@ -2897,10 +2980,8 @@ mod tests {
         let id = publish_fixture(&store, &good);
         let register = store.register_at(&[id]).expect("register");
         assert!(
-            register
-                .iter()
-                .any(|w| w.field == Field::Content
-                    && matches!(&w.value, FieldValue::Content(a) if *a == ArtifactId::from_array([101; 32])))
+            register.iter().any(|w| w.field == Field::Content
+                && matches!(&w.value, FieldValue::Content { artifact, .. } if *artifact == ArtifactId::from_array([101; 32])))
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -3074,5 +3155,391 @@ mod tests {
                 .expect("read")
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn newer_schema_minor_is_rejected() {
+        let dir = temp();
+        {
+            let store = Store::open(&dir, &SPACE).expect("open");
+            store
+                .conn
+                .execute(
+                    "UPDATE format_meta SET value = '2' WHERE key = 'schema_minor'",
+                    [],
+                )
+                .expect("bump minor");
+        }
+        let result = Store::open(&dir, &SPACE);
+        assert!(matches!(result, Err(Error::UnsupportedFormat(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // I05 P3: file projections, liveness, collision sets
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn paths_at_reports_collision_sets_and_prefix_conflicts() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![
+            create_op(1, "a", text_epoch(1)),
+            create_op(2, "d", text_epoch(2)),
+        ]);
+        let root_id = publish_fixture(&store, &root);
+        // A concurrent writer creates another file at the same path "a" and a
+        // file under the "a/..." prefix.
+        let rival = second_writer_child(
+            &root,
+            vec![
+                create_op(3, "a", text_epoch(3)),
+                create_op(4, "a/b", text_epoch(4)),
+            ],
+            72,
+        );
+        let rival_id = publish_fixture(&store, &rival);
+        let paths = store.paths_at(&[root_id, rival_id]).expect("paths");
+        let as_map: std::collections::BTreeMap<&str, Vec<FileId>> = paths
+            .iter()
+            .map(|(p, fs)| (p.as_str(), fs.clone()))
+            .collect();
+        // The collision set at "a" holds both files, sorted; nothing is
+        // auto-resolved or renamed.
+        assert_eq!(
+            as_map.get("a").expect("collision set"),
+            &vec![FileId::from_array([1; 16]), FileId::from_array([3; 16])]
+        );
+        assert_eq!(
+            as_map.get("a/b").expect("prefix child"),
+            &vec![FileId::from_array([4; 16])]
+        );
+        assert_eq!(
+            as_map.get("d").expect("plain path"),
+            &vec![FileId::from_array([2; 16])]
+        );
+        let prefix = store
+            .prefix_conflicts_at(&[root_id, rival_id])
+            .expect("prefix conflicts");
+        assert_eq!(
+            prefix,
+            vec![(
+                profile::Path::new("a").expect("path"),
+                profile::Path::new("a/b").expect("path")
+            )]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deletion_hides_current_path_but_never_implicitly_resurrects() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let del = child_ops(
+            &root,
+            2,
+            2,
+            vec![live_op(1, profile::LiveTag::Deleted)],
+            vec![root_id],
+            73,
+        );
+        let del_id = publish_fixture(&store, &del);
+        // A later path edit does not resurrect the deleted file.
+        let edit = child_ops(&del, 3, 3, vec![path_op(1, "b.txt")], vec![del_id], 74);
+        let edit_id = publish_fixture(&store, &edit);
+        let files = store.files_at(&[edit_id]).expect("files");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].live, vec![profile::LiveTag::Deleted]);
+        // No current path while deleted...
+        assert!(store.paths_at(&[edit_id]).expect("paths").is_empty());
+        // ...but the semantic manifest keeps the entry with its content.
+        let manifest = store.semantic_manifest_at(&[edit_id]).expect("manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].live, vec![profile::LiveTag::Deleted]);
+        assert_eq!(
+            manifest.entries[0].paths,
+            vec![profile::Path::new("b.txt").expect("path")]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn branch_heads_track_the_branch_tip() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let child = child_ops(&root, 2, 2, vec![], vec![root_id], 75);
+        let child_id = publish_fixture(&store, &child);
+        let heads = store.branch_heads(&root.body.branch).expect("heads");
+        assert_eq!(heads, vec![child_id]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // I05 P4: conflict derivation and tag-8 resolution admission
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn register_conflicts_have_stable_ids_across_arrival_orders() {
+        let build = |dir: &std::path::Path| {
+            let store = Store::open(dir, &SPACE).expect("open");
+            let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+            let root_id = publish_fixture(&store, &root);
+            let first = child_ops(&root, 2, 2, vec![path_op(1, "x.txt")], vec![root_id], 76);
+            let second = second_writer_child(&root, vec![path_op(1, "y.txt")], 77);
+            (store, first, second)
+        };
+        let dir_a = temp();
+        let (store_a, first, second) = build(&dir_a);
+        let a = publish_fixture(&store_a, &first);
+        let b = publish_fixture(&store_a, &second);
+        let dir_b = temp();
+        let (store_b, first_b, second_b) = build(&dir_b);
+        let b2 = publish_fixture(&store_b, &second_b);
+        let a2 = publish_fixture(&store_b, &first_b);
+        let conflicts_a = store_a.conflicts_at(&[a, b]).expect("conflicts a");
+        let conflicts_b = store_b.conflicts_at(&[a2, b2]).expect("conflicts b");
+        assert_eq!(conflicts_a, conflicts_b);
+        assert_eq!(conflicts_a.len(), 1);
+        let conflict = &conflicts_a[0];
+        assert_eq!(conflict.kind, profile::ConflictKind::Register);
+        assert_eq!(conflict.file, FileId::from_array([1; 16]));
+        assert_eq!(conflict.participants.len(), 2);
+        assert!(conflict.participants[0] < conflict.participants[1]);
+        let id_a = conflict.id().expect("id");
+        assert_eq!(id_a, conflicts_b[0].id().expect("id"));
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
+    }
+
+    #[test]
+    fn delete_edit_conflict_is_derived_from_concurrent_delete_and_edit() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.bin", opaque_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let delete = child_ops(
+            &root,
+            2,
+            2,
+            vec![live_op(1, profile::LiveTag::Deleted)],
+            vec![root_id],
+            78,
+        );
+        let edit = second_writer_child(&root, vec![opaque_op(1, &opaque_epoch(1))], 79);
+        let del_id = publish_fixture(&store, &delete);
+        let edit_id = publish_fixture(&store, &edit);
+        let conflicts = store.conflicts_at(&[del_id, edit_id]).expect("conflicts");
+        let kinds: Vec<profile::ConflictKind> = conflicts.iter().map(|c| c.kind).collect();
+        assert!(kinds.contains(&profile::ConflictKind::DeleteEdit));
+        let conflict = conflicts
+            .iter()
+            .find(|c| c.kind == profile::ConflictKind::DeleteEdit)
+            .expect("delete_edit");
+        assert_eq!(conflict.file, FileId::from_array([1; 16]));
+        assert_eq!(conflict.participants.len(), 2);
+        assert_eq!(conflict.epochs, vec![opaque_epoch(1).id().expect("id")]);
+        // No conflict at the root cut: nothing concurrent there.
+        assert!(store.conflicts_at(&[root_id]).expect("root").is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn mode_conflict_scenario(dir: &std::path::Path) -> (Store, Fixture, BatchId, BatchId) {
+        let store = Store::open(dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let first = child_ops(
+            &root,
+            2,
+            2,
+            vec![mode_op(1, profile::ModeTag::Executable)],
+            vec![root_id],
+            80,
+        );
+        let second = second_writer_child(&root, vec![mode_op(1, profile::ModeTag::Symlink)], 81);
+        let a = publish_fixture(&store, &first);
+        let b = publish_fixture(&store, &second);
+        (store, first, a, b)
+    }
+
+    #[test]
+    fn tag8_resolution_publishes_fresh_assignment_and_supersedes_alternatives() {
+        let dir = temp();
+        let (store, first, a, b) = mode_conflict_scenario(&dir);
+        let conflicts = store.conflicts_at(&[a, b]).expect("conflicts");
+        assert_eq!(conflicts.len(), 1);
+        let conflict_id = conflicts[0].id().expect("id");
+        // The resolution names the conflict, chooses the first writer's mode
+        // write, and publishes a fresh Mode op in the same batch.
+        let chosen = conflicts[0].participants[0];
+        let resolution = child_ops(
+            &first,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::Choose {
+                        field: 2,
+                        write: chosen,
+                    },
+                ),
+                mode_op(1, profile::ModeTag::Executable),
+            ],
+            vec![a, b],
+            82,
+        );
+        let r = publish_fixture(&store, &resolution);
+        let register = store.register_at(&[r]).expect("register");
+        let modes: Vec<profile::ModeTag> = register
+            .iter()
+            .filter(|w| w.field == Field::Mode)
+            .filter_map(|w| match &w.value {
+                FieldValue::Mode(m) => Some(*m),
+                _ => None,
+            })
+            .collect();
+        // The resolution's fresh write supersedes both alternatives.
+        assert_eq!(modes, vec![profile::ModeTag::Executable]);
+        assert!(store.conflicts_at(&[r]).expect("conflicts").is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tag8_resolution_negatives_are_rejected() {
+        let dir = temp();
+        let (store, first, a, b) = mode_conflict_scenario(&dir);
+        let conflicts = store.conflicts_at(&[a, b]).expect("conflicts");
+        let conflict_id = conflicts[0].id().expect("id");
+        let chosen = conflicts[0].participants[0];
+        // Unknown conflict id.
+        let unknown = child_ops(
+            &first,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    crate::identity::ConflictId::from_array([0xee; 32]),
+                    profile::Resolution::Choose {
+                        field: 2,
+                        write: chosen,
+                    },
+                ),
+                mode_op(1, profile::ModeTag::Executable),
+            ],
+            vec![a, b],
+            83,
+        );
+        let ids = stage(&store, &unknown.chunks);
+        assert!(store.publish(&publication(&unknown, &ids)).is_err());
+        // Resolution without the fresh same-batch field assignment.
+        let bare = child_ops(
+            &first,
+            3,
+            3,
+            vec![resolution_op(
+                conflict_id,
+                profile::Resolution::Choose {
+                    field: 2,
+                    write: chosen,
+                },
+            )],
+            vec![a, b],
+            84,
+        );
+        let ids = stage(&store, &bare.chunks);
+        assert!(store.publish(&publication(&bare, &ids)).is_err());
+        // Parents that do not observe every participant: the conflict is not
+        // visible at that parent cut.
+        let partial = child_ops(
+            &first,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::Choose {
+                        field: 2,
+                        write: chosen,
+                    },
+                ),
+                mode_op(1, profile::ModeTag::Executable),
+            ],
+            vec![a],
+            85,
+        );
+        let ids = stage(&store, &partial.chunks);
+        assert!(store.publish(&publication(&partial, &ids)).is_err());
+        assert!(
+            !store
+                .is_published(&partial.body.id().expect("id"))
+                .expect("read")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // I05 P5: semantic manifest
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn semantic_manifest_id_is_identical_across_two_independent_replicas() {
+        let build = |dir: &std::path::Path| {
+            let store = Store::open(dir, &SPACE).expect("open");
+            let root = fixture_ops(vec![
+                create_op(1, "a.txt", text_epoch(1)),
+                create_op(2, "b.bin", opaque_epoch(2)),
+            ]);
+            let root_id = publish_fixture(&store, &root);
+            let rename = child_ops(
+                &root,
+                2,
+                2,
+                vec![path_op(1, "renamed.txt")],
+                vec![root_id],
+                86,
+            );
+            let delete =
+                second_writer_child(&root, vec![live_op(2, profile::LiveTag::Deleted)], 87);
+            (store, rename, delete)
+        };
+        let dir_a = temp();
+        let (store_a, rename, delete) = build(&dir_a);
+        let r = publish_fixture(&store_a, &rename);
+        let d = publish_fixture(&store_a, &delete);
+        let dir_b = temp();
+        let (store_b, rename_b, delete_b) = build(&dir_b);
+        let d2 = publish_fixture(&store_b, &delete_b);
+        let r2 = publish_fixture(&store_b, &rename_b);
+        assert_eq!((r, d), (r2, d2));
+        let manifest_a = store_a.semantic_manifest_at(&[r, d]).expect("manifest a");
+        let manifest_b = store_b.semantic_manifest_at(&[r2, d2]).expect("manifest b");
+        assert_eq!(manifest_a, manifest_b);
+        let id_a = manifest_a.id().expect("id a");
+        let id_b = manifest_b.id().expect("id b");
+        assert_eq!(id_a, id_b);
+        // Golden pin: this exact scenario must always hash to this id
+        // (cross-process golden vectors live under tests/fixtures/metadata-v1).
+        assert_eq!(
+            crate::identity::hex(&id_a),
+            "179f197962d2e51b23521c193c2bd81b4b3d45a826dbd80b080a5e68229766fb"
+        );
+        // Two entries: the deleted file keeps its entry and content.
+        assert_eq!(manifest_a.entries.len(), 2);
+        let deleted = manifest_a
+            .entries
+            .iter()
+            .find(|e| e.file == FileId::from_array([2; 16]))
+            .expect("deleted entry");
+        assert_eq!(deleted.live, vec![profile::LiveTag::Deleted]);
+        assert_eq!(
+            deleted.paths,
+            vec![profile::Path::new("b.bin").expect("path")]
+        );
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
     }
 }
