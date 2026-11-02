@@ -2929,11 +2929,83 @@ mod tests {
             .expect_err("equivocation");
         assert!(matches!(err, Error::Equivocation));
         assert!(!store.is_published(&first_id).expect("quarantined"));
-        // A cut naming the quarantined batch sees no history at all, and the
-        // root cut no longer contains the quarantined write's effects.
-        assert!(store.register_at(&[first_id]).expect("cut").is_empty());
+        // A cut naming the quarantined batch is an explicit failure, never an
+        // approximate view (§5.2); the root cut is unaffected.
+        assert!(store.register_at(&[first_id]).is_err());
         let register = store.register_at(&[root_id]).expect("register");
         assert_eq!(register_paths(&register), vec![(0, "a.txt".to_owned())]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn supersession_works_at_any_closure_depth_not_only_the_head() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let mid = child_ops(&root, 2, 2, vec![path_op(1, "mid.txt")], vec![root_id], 67);
+        let mid_id = publish_fixture(&store, &mid);
+        let head = child_ops(&mid, 3, 3, vec![path_op(1, "head.txt")], vec![mid_id], 68);
+        let head_id = publish_fixture(&store, &head);
+        // The mid batch is not a cut head, yet its write must supersede the
+        // root's, and the head's must supersede the mid's: exactly one maximal
+        // path alternative at every cut.
+        for (cut, expected) in [
+            (vec![root_id], "a.txt"),
+            (vec![mid_id], "mid.txt"),
+            (vec![head_id], "head.txt"),
+        ] {
+            let register = store.register_at(&cut).expect("register");
+            assert_eq!(
+                register_paths(&register),
+                vec![(0, expected.to_owned())],
+                "cut {cut:?}"
+            );
+        }
+        // An unknown batch id in the cut is an explicit error, not a smaller view.
+        assert!(
+            store
+                .register_at(&[BatchId::from_array([0xee; 32])])
+                .is_err()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn epoch_descriptor_naming_another_file_is_rejected() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        // Create: descriptor.file != op file.
+        let mut wrong = text_epoch(1);
+        wrong.file = FileId::from_array([2; 16]);
+        let bad_create = fixture_ops(vec![create_op(1, "a.txt", wrong)]);
+        let ids = stage(&store, &bad_create.chunks);
+        assert!(store.publish(&publication(&bad_create, &ids)).is_err());
+        // Epoch select on a real file: descriptor.file != op file.
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let bad_select = child_ops(
+            &root,
+            2,
+            2,
+            vec![profile::Operation::Epoch {
+                file: FileId::from_array([1; 16]),
+                epoch: {
+                    let mut d = text_epoch(2);
+                    d.file = FileId::from_array([3; 16]);
+                    d
+                },
+            }],
+            vec![root_id],
+            69,
+        );
+        let ids = stage(&store, &bad_select.chunks);
+        assert!(store.publish(&publication(&bad_select, &ids)).is_err());
+        assert!(
+            !store
+                .is_published(&bad_select.body.id().expect("id"))
+                .expect("read")
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

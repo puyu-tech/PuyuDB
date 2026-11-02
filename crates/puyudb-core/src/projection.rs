@@ -12,8 +12,14 @@
 //!
 //! Storage is the `field_writes` table ("metadata truth extracted from immutable
 //! batches", §6.3); evaluation at a cut recomputes maxima from history, so the
-//! result never depends on arrival order. Register evaluation is O(candidate
-//! history) initially (§5.8); indexing is deliberately not built yet.
+//! result never depends on arrival order. Register evaluation is O(closure x
+//! writes) per read initially; §5.8 defers indexed causal dominance, so that
+//! indexing is deliberately not built yet.
+//!
+//! All closure walks happen inside SQL recursive CTEs keyed by the seed list
+//! only: the bundled SQLite accepts at most 32,766 bind variables per
+//! statement, so seed lists are chunked well below that and the (unbounded)
+//! ancestor closure is never turned into bind parameters.
 
 use std::collections::{HashMap, HashSet};
 
@@ -276,13 +282,10 @@ pub(crate) fn validate_against_history(
     parents: &[BatchId],
     metadata: &MetadataArtifact,
 ) -> Result<(), Error> {
-    let ancestors = ancestor_map(conn, parents)?;
-    let mut members: HashSet<BatchId> = HashSet::new();
-    for set in ancestors.values() {
-        members.extend(set.iter().copied());
+    if parents.len() > profile::MAX_BATCH_PARENTS {
+        return Err(Error::Encoding("parents exceed the batch cap".into()));
     }
-    let member_vec: Vec<BatchId> = members.iter().copied().collect();
-    let history = load_writes(conn, &member_vec)?;
+    let history = load_writes(conn, parents)?;
     let mut created: HashSet<FileId> = HashSet::new();
     let mut epochs: HashMap<(FileId, crate::identity::EpochId), EpochKind> = HashMap::new();
     for write in &history {
@@ -374,13 +377,31 @@ pub fn register_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<RegisterWri
     if cut.is_empty() {
         return Ok(Vec::new());
     }
-    let ancestors = ancestor_map(conn, cut)?;
-    let mut members: HashSet<BatchId> = HashSet::new();
-    for set in ancestors.values() {
-        members.extend(set.iter().copied());
+    if cut.len() > profile::MAX_FRONTIER_HEADS {
+        return Err(Error::Encoding("cut exceeds the frontier cap".into()));
     }
-    let member_vec: Vec<BatchId> = members.iter().copied().collect();
-    let writes = load_writes(conn, &member_vec)?;
+    // A cut must name visible publications: unknown or quarantined members are
+    // an explicit failure, never an approximate view (§5.2).
+    for chunk in cut.chunks(SEED_CHUNK) {
+        let values = values_list(chunk.len());
+        let sql = format!(
+            "SELECT COUNT(*) FROM batches b
+             WHERE b.quarantined = 0 AND b.batch_id IN (SELECT column1 FROM (VALUES {values}))"
+        );
+        let params: Vec<&[u8]> = chunk
+            .iter()
+            .map(|seed| seed.as_bytes().as_slice())
+            .collect();
+        let visible: i64 =
+            conn.query_row(&sql, rusqlite::params_from_iter(params), |row| row.get(0))?;
+        if visible != chunk.len() as i64 {
+            return Err(Error::Encoding(
+                "cut names a batch that is not a visible publication".into(),
+            ));
+        }
+    }
+    let ancestors = ancestor_map(conn, cut)?;
+    let writes = load_writes(conn, cut)?;
     let mut groups: HashMap<(FileId, u64), Vec<(WriteIdent, FieldValue)>> = HashMap::new();
     for write in writes {
         let field = Field::from_tag(write.field)
@@ -449,8 +470,30 @@ fn decode_epoch_value(bytes: &[u8]) -> Result<EpochDescriptor, Error> {
     Ok(EpochDescriptor::decode(&item)?)
 }
 
-/// Map each visible seed batch to its ancestor closure (itself included).
-/// Quarantined batches are not visible history and are excluded.
+/// Bind-variable budget per statement. The bundled SQLite accepts at most
+/// 32,766 variables per statement, so seed lists are chunked well below that;
+/// the ancestor closure itself is always walked inside the SQL CTE, never
+/// turned into bind parameters.
+const SEED_CHUNK: usize = 16_384;
+
+fn values_list(count: usize) -> String {
+    (1..=count)
+        .map(|i| format!("(?{i})"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn seed_params(chunk: &[BatchId]) -> Vec<&[u8]> {
+    chunk
+        .iter()
+        .map(|seed| seed.as_bytes().as_slice())
+        .collect()
+}
+
+/// Map every batch in the closure of `seeds` to its own ancestor closure
+/// (itself included), so supersession can be checked for any writing batch,
+/// not only the seeds. Quarantined batches are not visible history and are
+/// excluded at the seed and at every recursive step.
 fn ancestor_map(
     conn: &Connection,
     seeds: &[BatchId],
@@ -461,89 +504,103 @@ fn ancestor_map(
     if seeds.len() > profile::MAX_FRONTIER_HEADS {
         return Err(Error::Encoding("seed set exceeds the frontier cap".into()));
     }
-    let values = (1..=seeds.len())
-        .map(|i| format!("(?{i})"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        "WITH RECURSIVE h(x) AS (
-           SELECT column1 FROM (VALUES {values}) v
-           JOIN batches b ON b.batch_id = v.column1 AND b.quarantined = 0
-         ),
-         cl(root, node) AS (
-           SELECT x, x FROM h
-           UNION
-           SELECT cl.root, bp.parent FROM cl
-           JOIN batch_parents bp ON bp.child = cl.node
-           JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
-         )
-         SELECT root, node FROM cl"
-    );
-    let mut statement = conn.prepare(&sql)?;
-    let params: Vec<&[u8]> = seeds
-        .iter()
-        .map(|seed| seed.as_bytes().as_slice())
-        .collect();
-    let rows = statement.query_map(rusqlite::params_from_iter(params), |row| {
-        Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?))
-    })?;
     let mut map: HashMap<BatchId, HashSet<BatchId>> = HashMap::new();
-    for row in rows {
-        let (root, node) = row?;
-        let root = BatchId::from_bytes(&root).map_err(|err| Error::Encoding(err.to_string()))?;
-        let node = BatchId::from_bytes(&node).map_err(|err| Error::Encoding(err.to_string()))?;
-        map.entry(root).or_default().insert(node);
+    for chunk in seeds.chunks(SEED_CHUNK) {
+        let values = values_list(chunk.len());
+        let sql = format!(
+            "WITH RECURSIVE h(x) AS (
+               SELECT column1 FROM (VALUES {values}) v
+               JOIN batches b ON b.batch_id = v.column1 AND b.quarantined = 0
+             ),
+             mem(x) AS (
+               SELECT x FROM h
+               UNION
+               SELECT bp.parent FROM mem
+               JOIN batch_parents bp ON bp.child = mem.x
+               JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
+             ),
+             cl(root, node) AS (
+               SELECT x, x FROM mem
+               UNION
+               SELECT cl.root, bp.parent FROM cl
+               JOIN batch_parents bp ON bp.child = cl.node
+               JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
+             )
+             SELECT root, node FROM cl"
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(seed_params(chunk)), |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+        for row in rows {
+            let (root, node) = row?;
+            let root =
+                BatchId::from_bytes(&root).map_err(|err| Error::Encoding(err.to_string()))?;
+            let node =
+                BatchId::from_bytes(&node).map_err(|err| Error::Encoding(err.to_string()))?;
+            map.entry(root).or_default().insert(node);
+        }
     }
     Ok(map)
 }
 
-/// Load every visible field write whose batch is in `batches`.
-fn load_writes(conn: &Connection, batches: &[BatchId]) -> Result<Vec<RawWrite>, Error> {
-    if batches.is_empty() {
+/// Load every visible field write whose batch lies in the closure of `seeds`.
+/// The closure is computed by the SQL CTE, so only the seeds are bound.
+fn load_writes(conn: &Connection, seeds: &[BatchId]) -> Result<Vec<RawWrite>, Error> {
+    if seeds.is_empty() {
         return Ok(Vec::new());
     }
-    if batches.len() > profile::MAX_FRONTIER_HEADS {
-        return Err(Error::Encoding("batch set exceeds the frontier cap".into()));
-    }
-    let values = (1..=batches.len())
-        .map(|i| format!("(?{i})"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        "SELECT fw.file, fw.field, fw.op_tag, fw.batch_id, fw.op_index, fw.value
-         FROM field_writes fw
-         JOIN batches b ON b.batch_id = fw.batch_id AND b.quarantined = 0
-         WHERE fw.batch_id IN (SELECT column1 FROM (VALUES {values}))"
-    );
-    let mut statement = conn.prepare(&sql)?;
-    let params: Vec<&[u8]> = batches
-        .iter()
-        .map(|batch| batch.as_bytes().as_slice())
-        .collect();
-    let rows = statement.query_map(rusqlite::params_from_iter(params), |row| {
-        Ok((
-            row.get::<_, Vec<u8>>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, i64>(2)?,
-            row.get::<_, Vec<u8>>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, Vec<u8>>(5)?,
-        ))
-    })?;
     let mut out = Vec::new();
-    for row in rows {
-        let (file, field, op_tag, batch, op_index, value) = row?;
-        if field < 0 || op_tag < 0 || op_index < 0 {
-            return Err(Error::Encoding("negative integer in field_writes".into()));
+    let mut seen: HashSet<(FileId, u64, BatchId, u64)> = HashSet::new();
+    for chunk in seeds.chunks(SEED_CHUNK) {
+        let values = values_list(chunk.len());
+        let sql = format!(
+            "WITH RECURSIVE cl(node) AS (
+               SELECT column1 FROM (VALUES {values}) v
+               JOIN batches b ON b.batch_id = v.column1 AND b.quarantined = 0
+               UNION
+               SELECT bp.parent FROM cl
+               JOIN batch_parents bp ON bp.child = cl.node
+               JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
+             )
+             SELECT fw.file, fw.field, fw.op_tag, fw.batch_id, fw.op_index, fw.value
+             FROM field_writes fw
+             JOIN cl ON cl.node = fw.batch_id
+             JOIN batches b ON b.batch_id = fw.batch_id AND b.quarantined = 0"
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(seed_params(chunk)), |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, Vec<u8>>(5)?,
+            ))
+        })?;
+        for row in rows {
+            let (file, field, op_tag, batch, op_index, value) = row?;
+            if field < 0 || op_tag < 0 || op_index < 0 {
+                return Err(Error::Encoding("negative integer in field_writes".into()));
+            }
+            let file = FileId::from_bytes(&file).map_err(|err| Error::Encoding(err.to_string()))?;
+            let batch =
+                BatchId::from_bytes(&batch).map_err(|err| Error::Encoding(err.to_string()))?;
+            // Overlapping closures of different seed chunks can yield the same
+            // write twice; each write identity is stored once.
+            if !seen.insert((file, field as u64, batch, op_index as u64)) {
+                continue;
+            }
+            out.push(RawWrite {
+                file,
+                field: field as u64,
+                op_tag: op_tag as u64,
+                batch,
+                op_index: op_index as u64,
+                value,
+            });
         }
-        out.push(RawWrite {
-            file: FileId::from_bytes(&file).map_err(|err| Error::Encoding(err.to_string()))?,
-            field: field as u64,
-            op_tag: op_tag as u64,
-            batch: BatchId::from_bytes(&batch).map_err(|err| Error::Encoding(err.to_string()))?,
-            op_index: op_index as u64,
-            value,
-        });
     }
     Ok(out)
 }
