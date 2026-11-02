@@ -1,0 +1,502 @@
+{
+  "generated_by": "scripts/i05_semantic_manifest.py",
+  "plan": "docs/plans/I05-native-text-projections.md",
+  "profile": 1,
+  "scenarios": [
+    {
+      "artifact_hex": "83018286005022094506e6097aa086082cd38b4cc02e50d907cb47e817827e96939a5e119e11a36d646f63732f6e6f7465732e6d6400870150d907cb47e817827e96939a5e119e11a350e3ed679f43cb7632fb9a38d6b73b5d8400582082d6668f74525552a7b8993dfc450043bdcc347a900dabf8eaeb02e598e7c1466a64742d746578742d7631830101548aec2040dcde6c6ecaa21dfd3eaf69c0494986bf830150d907cb47e817827e96939a5e119e11a36f646f63732f72656e616d65642e6d6480",
+      "conflicts": [],
+      "context_assertions": [],
+      "epochs": [
+        {
+          "body_hex": "870150d907cb47e817827e96939a5e119e11a350e3ed679f43cb7632fb9a38d6b73b5d8400582082d6668f74525552a7b8993dfc450043bdcc347a900dabf8eaeb02e598e7c1466a64742d746578742d7631830101548aec2040dcde6c6ecaa21dfd3eaf69c0494986bf",
+          "descriptor": {
+            "baseline": "82d6668f74525552a7b8993dfc450043bdcc347a900dabf8eaeb02e598e7c146",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 0,
+            "nonce": "e3ed679f43cb7632fb9a38d6b73b5d84",
+            "oid": {
+              "algorithm": 1,
+              "digest": "8aec2040dcde6c6ecaa21dfd3eaf69c0494986bf"
+            },
+            "seed_profile": "dt-text-v1"
+          },
+          "epoch_id": "16ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed"
+        }
+      ],
+      "manifest": {
+        "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe81880150d907cb47e817827e96939a5e119e11a38101816f646f63732f72656e616d65642e6d6481582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed80810080",
+        "entries": [
+          {
+            "conflicts": [],
+            "contents": [],
+            "epochs": [
+              "16ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed"
+            ],
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "live": [
+              1
+            ],
+            "modes": [
+              0
+            ],
+            "paths": [
+              "docs/renamed.md"
+            ]
+          }
+        ],
+        "semantic_manifest_id": "7cc5429740bebbef1bd2833199bc7b62b73a1c772d460a919d737e7634ff2482",
+        "space": "8dac40750fe9d57d04c8143c26a342fe"
+      },
+      "name": "create-rename",
+      "operations": [
+        {
+          "epoch": {
+            "baseline": "82d6668f74525552a7b8993dfc450043bdcc347a900dabf8eaeb02e598e7c146",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 0,
+            "nonce": "e3ed679f43cb7632fb9a38d6b73b5d84",
+            "oid": {
+              "algorithm": 1,
+              "digest": "8aec2040dcde6c6ecaa21dfd3eaf69c0494986bf"
+            },
+            "seed_profile": "dt-text-v1"
+          },
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "mode": 0,
+          "path": "docs/notes.md",
+          "repository": "22094506e6097aa086082cd38b4cc02e",
+          "tag": 0
+        },
+        {
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "path": "docs/renamed.md",
+          "tag": 1
+        }
+      ],
+      "operations_hex": [
+        "86005022094506e6097aa086082cd38b4cc02e50d907cb47e817827e96939a5e119e11a36d646f63732f6e6f7465732e6d6400870150d907cb47e817827e96939a5e119e11a350e3ed679f43cb7632fb9a38d6b73b5d8400582082d6668f74525552a7b8993dfc450043bdcc347a900dabf8eaeb02e598e7c1466a64742d746578742d7631830101548aec2040dcde6c6ecaa21dfd3eaf69c0494986bf",
+        "830150d907cb47e817827e96939a5e119e11a36f646f63732f72656e616d65642e6d64"
+      ],
+      "summary": "One batch creates file A at docs/notes.md (text epoch with a SHA-1 Git OID) and causally renames it to docs/renamed.md; no conflict."
+    },
+    {
+      "artifact_hex": "830181830150d907cb47e817827e96939a5e119e11a369646f63732f622e6d6480",
+      "conflicts": [
+        {
+          "body_hex": "85010050d907cb47e817827e96939a5e119e11a380828258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25008258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d00",
+          "conflict_id": "f1095f33b3ab7ecfb09fbc56e36e20f2f1f42532d627d078ce61b124e0fb48d6",
+          "epochs": [],
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "kind": 0,
+          "participants": [
+            {
+              "batch": "5f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25",
+              "index": 0
+            },
+            {
+              "batch": "8400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d",
+              "index": 0
+            }
+          ]
+        }
+      ],
+      "context_assertions": [],
+      "epochs": [
+        {
+          "body_hex": "870150d907cb47e817827e96939a5e119e11a350e3ed679f43cb7632fb9a38d6b73b5d8400582082d6668f74525552a7b8993dfc450043bdcc347a900dabf8eaeb02e598e7c1466a64742d746578742d7631830101548aec2040dcde6c6ecaa21dfd3eaf69c0494986bf",
+          "descriptor": {
+            "baseline": "82d6668f74525552a7b8993dfc450043bdcc347a900dabf8eaeb02e598e7c146",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 0,
+            "nonce": "e3ed679f43cb7632fb9a38d6b73b5d84",
+            "oid": {
+              "algorithm": 1,
+              "digest": "8aec2040dcde6c6ecaa21dfd3eaf69c0494986bf"
+            },
+            "seed_profile": "dt-text-v1"
+          },
+          "epoch_id": "16ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed"
+        }
+      ],
+      "manifest": {
+        "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe81880150d907cb47e817827e96939a5e119e11a381018269646f63732f612e6d6469646f63732f622e6d6481582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed808100815820f1095f33b3ab7ecfb09fbc56e36e20f2f1f42532d627d078ce61b124e0fb48d6",
+        "entries": [
+          {
+            "conflicts": [
+              "f1095f33b3ab7ecfb09fbc56e36e20f2f1f42532d627d078ce61b124e0fb48d6"
+            ],
+            "contents": [],
+            "epochs": [
+              "16ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed"
+            ],
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "live": [
+              1
+            ],
+            "modes": [
+              0
+            ],
+            "paths": [
+              "docs/a.md",
+              "docs/b.md"
+            ]
+          }
+        ],
+        "semantic_manifest_id": "2b864d7a238e7d90e9bf13235ea49d1180dbff0456456c79a3ae3fe928fc5712",
+        "space": "8dac40750fe9d57d04c8143c26a342fe"
+      },
+      "name": "concurrent-path-alternatives",
+      "operations": [
+        {
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "path": "docs/b.md",
+          "tag": 1
+        }
+      ],
+      "operations_hex": [
+        "830150d907cb47e817827e96939a5e119e11a369646f63732f622e6d64"
+      ],
+      "summary": "Batch A assigned docs/a.md while batch B concurrently assigned docs/b.md: a kind-0 register conflict and two maximal path alternatives in the manifest."
+    },
+    {
+      "artifact_hex": "830181830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f680",
+      "conflicts": [
+        {
+          "body_hex": "85010150d907cb47e817827e96939a5e119e11a381582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face828258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25008258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d00",
+          "conflict_id": "77727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+          "epochs": [
+            "74db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face"
+          ],
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "kind": 1,
+          "participants": [
+            {
+              "batch": "5f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25",
+              "index": 0
+            },
+            {
+              "batch": "8400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d",
+              "index": 0
+            }
+          ]
+        }
+      ],
+      "context_assertions": [],
+      "epochs": [
+        {
+          "body_hex": "870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f6",
+          "descriptor": {
+            "baseline": "0b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 1,
+            "nonce": "db656a9e10ff8dd257840acd614edd62",
+            "oid": null,
+            "seed_profile": null
+          },
+          "epoch_id": "74db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face"
+        },
+        {
+          "body_hex": "87015052d2cca457b04b0828992da5f30a3f5150db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f6",
+          "descriptor": {
+            "baseline": "0b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1",
+            "file": "52d2cca457b04b0828992da5f30a3f51",
+            "kind": 1,
+            "nonce": "db656a9e10ff8dd257840acd614edd62",
+            "oid": null,
+            "seed_profile": null
+          },
+          "epoch_id": "2c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78"
+        }
+      ],
+      "manifest": {
+        "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe8288015052d2cca457b04b0828992da5f30a3f518101816f6173736574732f6c6f676f2e62696e8158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78815820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04810080880150d907cb47e817827e96939a5e119e11a3820001816f646f63732f72656e616d65642e6d6482582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810081582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+        "entries": [
+          {
+            "conflicts": [
+              "77727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343"
+            ],
+            "contents": [],
+            "epochs": [
+              "16ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed",
+              "74db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face"
+            ],
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "live": [
+              0,
+              1
+            ],
+            "modes": [
+              0
+            ],
+            "paths": [
+              "docs/renamed.md"
+            ]
+          },
+          {
+            "conflicts": [],
+            "contents": [
+              "f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04"
+            ],
+            "epochs": [
+              "2c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78"
+            ],
+            "file": "52d2cca457b04b0828992da5f30a3f51",
+            "live": [
+              1
+            ],
+            "modes": [
+              0
+            ],
+            "paths": [
+              "assets/logo.bin"
+            ]
+          }
+        ],
+        "semantic_manifest_id": "b21a0e775f2d688574dcd7f6985905dc391631df8be3633bfd61bfb7969cbf58",
+        "space": "8dac40750fe9d57d04c8143c26a342fe"
+      },
+      "name": "delete-concurrent-edit",
+      "operations": [
+        {
+          "epoch": {
+            "baseline": "0b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 1,
+            "nonce": "db656a9e10ff8dd257840acd614edd62",
+            "oid": null,
+            "seed_profile": null
+          },
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "tag": 3
+        }
+      ],
+      "operations_hex": [
+        "830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f6"
+      ],
+      "summary": "Batch A deleted file A while batch B concurrently selected a new opaque epoch: a kind-1 delete_edit whose epochs hold the edited epoch only (not every maximal epoch selection of the file); file B carries an opaque value assignment in the same cut."
+    },
+    {
+      "artifact_hex": "830182830750d907cb47e817827e96939a5e119e11a302830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a3501b2600d5fd2dee544782e84958faae71025820122025713f3d3434ff12516eb6b19a179920fe506d063aaf0935e0186e603f68f6f680",
+      "conflicts": [
+        {
+          "body_hex": "85010050d907cb47e817827e96939a5e119e11a380828258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25008258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d00",
+          "conflict_id": "f1095f33b3ab7ecfb09fbc56e36e20f2f1f42532d627d078ce61b124e0fb48d6",
+          "epochs": [],
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "kind": 0,
+          "participants": [
+            {
+              "batch": "5f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25",
+              "index": 0
+            },
+            {
+              "batch": "8400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d",
+              "index": 0
+            }
+          ]
+        }
+      ],
+      "context_assertions": [],
+      "epochs": [
+        {
+          "body_hex": "870150d907cb47e817827e96939a5e119e11a3501b2600d5fd2dee544782e84958faae71025820122025713f3d3434ff12516eb6b19a179920fe506d063aaf0935e0186e603f68f6f6",
+          "descriptor": {
+            "baseline": "122025713f3d3434ff12516eb6b19a179920fe506d063aaf0935e0186e603f68",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 2,
+            "nonce": "1b2600d5fd2dee544782e84958faae71",
+            "oid": null,
+            "seed_profile": null
+          },
+          "epoch_id": "b5646877d4f25ccde34ee901083bc6bb936c7e98db07f005a3002b1161b735cf"
+        }
+      ],
+      "manifest": {
+        "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe81880150d907cb47e817827e96939a5e119e11a38101816f646f63732f72656e616d65642e6d6482582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed5820b5646877d4f25ccde34ee901083bc6bb936c7e98db07f005a3002b1161b735cf80820102815820f1095f33b3ab7ecfb09fbc56e36e20f2f1f42532d627d078ce61b124e0fb48d6",
+        "entries": [
+          {
+            "conflicts": [
+              "f1095f33b3ab7ecfb09fbc56e36e20f2f1f42532d627d078ce61b124e0fb48d6"
+            ],
+            "contents": [],
+            "epochs": [
+              "16ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed",
+              "b5646877d4f25ccde34ee901083bc6bb936c7e98db07f005a3002b1161b735cf"
+            ],
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "live": [
+              1
+            ],
+            "modes": [
+              1,
+              2
+            ],
+            "paths": [
+              "docs/renamed.md"
+            ]
+          }
+        ],
+        "semantic_manifest_id": "d983b91f5aa4fcf21f9e934da85eab9aa9b9f1750f57d770418d3abc545821b0",
+        "space": "8dac40750fe9d57d04c8143c26a342fe"
+      },
+      "name": "mode-conflict",
+      "operations": [
+        {
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "mode": 2,
+          "tag": 7
+        },
+        {
+          "epoch": {
+            "baseline": "122025713f3d3434ff12516eb6b19a179920fe506d063aaf0935e0186e603f68",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 2,
+            "nonce": "1b2600d5fd2dee544782e84958faae71",
+            "oid": null,
+            "seed_profile": null
+          },
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "tag": 3
+        }
+      ],
+      "operations_hex": [
+        "830750d907cb47e817827e96939a5e119e11a302",
+        "830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a3501b2600d5fd2dee544782e84958faae71025820122025713f3d3434ff12516eb6b19a179920fe506d063aaf0935e0186e603f68f6f6"
+      ],
+      "summary": "Batch A set mode 1 (executable) while batch B concurrently set mode 2 (symlink entry) and selected the symlink-target epoch: register conflict on the mode field, both modes maximal."
+    },
+    {
+      "artifact_hex": "830187830250d907cb47e817827e96939a5e119e11a3008408582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b3334300f6830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f684098158208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d01f685065022094506e6097aa086082cd38b4cc02e83010258203328bd6bc325689e0651811fc21ce69dae9a7495e0ce2a880e1f1fca384b24b758202ab8b11204c4c5f2445c1f1bcae003104e3216047f40ff9a8ae5a691075c99c7008405015046cf3b4eb05144af1859bc4613c2d70b49c2b23d1276c72d1e3984045052d2cca457b04b0828992da5f30a3f5158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b785820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04814ce41bb61efa35dbf3f3bc061c",
+      "conflicts": [],
+      "context_assertions": [
+        "e41bb61efa35dbf3f3bc061c"
+      ],
+      "epochs": [
+        {
+          "body_hex": "870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f6",
+          "descriptor": {
+            "baseline": "0b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 1,
+            "nonce": "db656a9e10ff8dd257840acd614edd62",
+            "oid": null,
+            "seed_profile": null
+          },
+          "epoch_id": "74db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face"
+        }
+      ],
+      "manifest": {
+        "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe8288015052d2cca457b04b0828992da5f30a3f518101816f6173736574732f6c6f676f2e62696e8158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78815820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04810080880150d907cb47e817827e96939a5e119e11a38100816f646f63732f72656e616d65642e6d6481582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810080",
+        "entries": [
+          {
+            "conflicts": [],
+            "contents": [],
+            "epochs": [
+              "74db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face"
+            ],
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "live": [
+              0
+            ],
+            "modes": [
+              0
+            ],
+            "paths": [
+              "docs/renamed.md"
+            ]
+          },
+          {
+            "conflicts": [],
+            "contents": [
+              "f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04"
+            ],
+            "epochs": [
+              "2c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78"
+            ],
+            "file": "52d2cca457b04b0828992da5f30a3f51",
+            "live": [
+              1
+            ],
+            "modes": [
+              0
+            ],
+            "paths": [
+              "assets/logo.bin"
+            ]
+          }
+        ],
+        "semantic_manifest_id": "3d39fda9f134ce24f15ba9299e4185ed0cdaaffc663bb568bc7a884718446c71",
+        "space": "8dac40750fe9d57d04c8143c26a342fe"
+      },
+      "name": "resolution",
+      "operations": [
+        {
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "live": 0,
+          "tag": 2
+        },
+        {
+          "conflict": "77727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+          "payload": null,
+          "resolution": 0,
+          "tag": 8
+        },
+        {
+          "epoch": {
+            "baseline": "0b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1",
+            "file": "d907cb47e817827e96939a5e119e11a3",
+            "kind": 1,
+            "nonce": "db656a9e10ff8dd257840acd614edd62",
+            "oid": null,
+            "seed_profile": null
+          },
+          "file": "d907cb47e817827e96939a5e119e11a3",
+          "tag": 3
+        },
+        {
+          "detail": null,
+          "relation": 1,
+          "sources": [
+            "8400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d"
+          ],
+          "tag": 9
+        },
+        {
+          "oid": {
+            "algorithm": 2,
+            "digest": "3328bd6bc325689e0651811fc21ce69dae9a7495e0ce2a880e1f1fca384b24b7"
+          },
+          "relation": 0,
+          "repository": "22094506e6097aa086082cd38b4cc02e",
+          "tag": 6,
+          "version": "2ab8b11204c4c5f2445c1f1bcae003104e3216047f40ff9a8ae5a691075c99c7"
+        },
+        {
+          "bytes": "c2b23d1276c72d1e39",
+          "event": "46cf3b4eb05144af1859bc4613c2d70b",
+          "schema": 1,
+          "tag": 5
+        },
+        {
+          "artifact": "f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04",
+          "epoch": "2c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78",
+          "file": "52d2cca457b04b0828992da5f30a3f51",
+          "tag": 4
+        }
+      ],
+      "operations_hex": [
+        "830250d907cb47e817827e96939a5e119e11a300",
+        "8408582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b3334300f6",
+        "830350d907cb47e817827e96939a5e119e11a3870150d907cb47e817827e96939a5e119e11a350db656a9e10ff8dd257840acd614edd620158200b36c14adc626445979c89692b81dbc4bcf7786ace2629b0eedea64923883bc1f6f6",
+        "84098158208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d01f6",
+        "85065022094506e6097aa086082cd38b4cc02e83010258203328bd6bc325689e0651811fc21ce69dae9a7495e0ce2a880e1f1fca384b24b758202ab8b11204c4c5f2445c1f1bcae003104e3216047f40ff9a8ae5a691075c99c700",
+        "8405015046cf3b4eb05144af1859bc4613c2d70b49c2b23d1276c72d1e39",
+        "84045052d2cca457b04b0828992da5f30a3f5158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b785820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04"
+      ],
+      "summary": "Batch B resolves the delete_edit conflict by retaining the deletion (resolution tag 0, RetainDelete) with the required fresh tag-2 Deleted liveness assignment in the same batch \u2014 the 'New Deleted liveness assignment' same-batch effect of \u00a79 \u2014 and still selects the opaque epoch (tag 3); it also asserts provenance over batch A, associates a SHA-256 Git object, emits a context event and assigns file B's opaque value. The fresh writes supersede the conflicted alternatives, so the recomputed cut \u2014 and the manifest \u2014 carries no ConflictId; the deleted file keeps its entry with live Deleted."
+    }
+  ],
+  "scope": "I05 P5 golden fixtures: metadata operations, ConflictV1 and SemanticManifestV1 at five scenario cuts, with expected canonical hex and digests computed by this module alone. The hex and digests are record-encoding goldens (\u00a71.1/\u00a77/\u00a78/\u00a79/\u00a711); the scenarios additionally pin derivation semantics (the \u00a79 same-batch effect of a resolution, the recomputed cut after a resolution, the delete_edit epoch set) that the Rust projection cross-checks as P9 (T01-T03 parity).",
+  "spec": "docs/spec/canonical-profile-v1.md"
+}

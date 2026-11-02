@@ -5,10 +5,21 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use puyudb_core::identity::{BranchId, ChunkId, SpaceId, WriterEpoch};
-use puyudb_core::profile::{self, ArtifactManifest, BatchBody, chunk_id};
+use puyudb_core::profile::{self, ArtifactManifest, BatchBody, MetadataArtifact, chunk_id};
 use puyudb_core::publication::{Publication, Store};
 
 const SPACE: SpaceId = SpaceId::from_array([1; 16]);
+
+/// A valid metadata artifact payload carrying `distinct` in one context
+/// assertion, so fixture artifacts stay content-distinct.
+fn metadata_payload(distinct: &[u8]) -> Vec<u8> {
+    MetadataArtifact {
+        operations: Vec::new(),
+        context_assertions: vec![distinct.to_vec()],
+    }
+    .encode()
+    .expect("metadata artifact")
+}
 
 fn child_dir() -> Option<PathBuf> {
     std::env::var_os("PUYU_PUBLICATION_CRASH").map(PathBuf::from)
@@ -56,8 +67,8 @@ fn kill_after_staged_chunk_leaves_no_publication() {
 
     let store = Store::open(&dir, &SPACE).expect("reopen");
     assert_eq!(store.staged_without_publication().expect("staged"), 1);
-    let payload = b"crash-metadata";
-    let manifest = ArtifactManifest::for_payload("metadata-v1", payload).expect("manifest");
+    let payload = metadata_payload(b"crash-metadata");
+    let manifest = ArtifactManifest::for_payload("metadata-v1", &payload).expect("manifest");
     let mut chunk_ids: Vec<ChunkId> = Vec::new();
     for c in payload.chunks(profile::CHUNK_RAW_BYTES) {
         let id = chunk_id(c);

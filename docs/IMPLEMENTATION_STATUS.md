@@ -522,3 +522,85 @@ revisited when available and before Linux production support/performance
 claims/I36. Remote tests used the maintainer's authorized existing
 Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
 configuration, not executed platform evidence.
+
+## I05 in progress: native and file projections (branch `i05-native-text-projections`)
+
+Plan copied to `docs/plans/I05-native-text-projections.md`. Phase 1 (plan P1-P2)
+landed: the metadata artifact payload is now strictly validated and decoded at
+admission (`MetadataArtifact::decode`, `Operation::decode` in `profile.rs`;
+operation tags 0-9, caps, `relation_tag` width-only opaque, path rules per §11),
+and each published batch's field writes are stored in the new `field_writes`
+table (`projection.rs`, schema minor 1) in the same atomic commit. Admission
+rejects duplicate creates, operations on files not created in the parent cut,
+mismatched epoch descriptors, and opaque values on non-opaque epochs with
+`invalid_operation`. `Store::register_at(cut)` evaluates the causal MV
+registers at a cut: supersession within the batch closure and within one batch,
+maximal alternatives in stable bytewise `(batch, op_index)` order, quarantined
+batches excluded, arrival-order independent. `publish` still refuses native
+artifacts (`NativeUnchecked`); that lifts only in I05 phase 3.
+
+Phase 2 (plan P3-P5) landed on the same branch: file projections
+(`files_at`/`paths_at`/`prefix_conflicts_at`/`branch_heads` computed at a cut;
+`files_current`/`paths_current` stay rebuildable read-time accelerations until
+a frontier table lands in I08/I12), liveness with no implicit resurrection,
+path collision sets and prefix conflicts reported but never auto-resolved,
+cross-field conflict derivation (`register`/`delete_edit`/`epoch_edit` with
+stable `ConflictId`s, recomputed from history per spec §9), tag-8 resolution
+admission (conflict visible at the parent cut, all participants observed, and
+a fresh corresponding field assignment in the same batch), and the canonical
+`SemanticManifestV1` at a cut with a golden-pinned `SemanticManifestId`
+(identical across two independent replicas in both publish orders).
+
+Phase 2 GATE B audit fixes landed: paths_at/prefix_conflicts_at now run the
+same cut gate as register_at (no approximate views); kind-1 delete_edit
+conflicts carry only the edited epoch in `epochs` so unrelated concurrent
+epoch selections cannot change the ConflictId; tag-8 admission now enforces
+the §22.2 kind<->tag correspondence (0/1 on delete_edit, 2/3 on epoch_edit,
+4 on register conflicts, plus the field-tag match for Choose and the
+new-epoch requirement for Incorporate); branch_heads no longer walks through
+quarantined batches; the golden corpus resolution scenario was corrected to
+tag 0 + fresh Deleted assignment. Quarantine-inside-closure semantics pinned
+by tests.
+
+GATE B re-audit round 2: RetainEpoch/Incorporate admission fixes (0f39929)
+plus non-vacuous negatives (fresh writer stream per negative, asserting the
+specific invalid_operation gate) landed as the follow-up commit; the
+Incorporate check scans all epoch declarations in the parent closure, and
+RetainEpoch must name the conflict's selected epoch. Tag-2/tag-3 positive
+tests assert post-resolution cuts (epochs == [selected/new], conflicts empty).
+
+Phase 3 (plan P6-P8) landed: epoch lifecycle reads (epochs_at retains and
+lists old epochs after a reset), the native_changes table (schema minor 2,
+seed = NULL producer, unique non-seed producer), seed registration with
+§12.4 validation (empty baseline ⇒ zero-length seed; otherwise seed-actor-only
+ops and text == baseline), native admission with the §12.5 scope checks
+(writer-derived actor name, insert/delete only, actor-sequence continuity,
+all native parents within the batch parent cut, root creation only in the
+seed) — NativeUnchecked is now lifted and replaced by invalid_native_scope —
+and native text reads (text_at / text_at_version over seed + closure changes,
+arrival-order independent, Kahn application). The production dt-text-v1
+binding lives in puyudb-crdt::dt_text (core depends on crdt per §4.3); T01/T02
+evidence includes DT-vs-AM slow-reference parity and convergence across
+application orders, plus two-store SemanticManifestId equality from phase 2.
+UTF-8 byte-offset positions are boundary-checked helpers (§5.5).
+
+GATE C audit fixes landed: empty-baseline epochs read "" and accept edits
+(zero-length seed handled in build_log); native changes are applied in
+producer topological order (deterministic, causal — not SQL row order);
+closure_of uses a dedicated plain closure walk (the write-batch-rooted
+ancestor_map is only for supersession — native-only batches have no field
+writes); native artifact slots are kind-checked (native-change-v1 only);
+text_at gates that the epoch is a declared text epoch at the cut;
+text_at_version removed (replica-local DT LVs must not cross the boundary
+until I08); seeds must be exactly the seed actor's first operation with a
+text-baseline-v1 baseline. New tests: empty-baseline read+edit, dependent
+chain across two stores, sequence restart, smuggled seed actor, two native
+artifacts for one epoch.
+
+GATE C round 2 (365284c, docs in 9ded4ec): the §12.5 actor-sequence continuity check was
+restored explicitly (spans sorted, first seq_start == writer frontier last
+index + 1, contiguous) with a forged-gap negative test; the pinned fork's
+frontier convention (last used index, not next) is probe-pinned by
+dt_text::tests::frontier_convention_is_last_used_index and the spec §12.4
+sentence corrected to match the pinned rev; metadata-id-in-native-slots
+rejected; add_remote_insert marked doc(hidden).

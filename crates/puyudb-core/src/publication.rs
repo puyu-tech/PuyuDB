@@ -19,6 +19,7 @@ use thiserror::Error;
 use crate::canon::{self, Item};
 use crate::identity::{ArtifactId, BatchId, BranchId, ChunkId, SpaceId, WriterEpoch};
 use crate::profile::{self, ArtifactManifest, BatchBody, Record, chunk_id};
+use crate::projection;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS format_meta (
@@ -154,9 +155,12 @@ pub enum Error {
     /// Two batches claim one stream position. Neither stays published.
     #[error("writer equivocation")]
     Equivocation,
-    /// Native scope is not checked by this ledger yet.
-    #[error("native scope is not checked")]
-    NativeUnchecked,
+    /// A native change violated the §12.5 scope rules at admission.
+    #[error("invalid_native_scope: {0}")]
+    InvalidNativeScope(String),
+    /// A metadata projection or register admission failed.
+    #[error("{0}")]
+    Projection(#[from] projection::Error),
     /// The space manifest is unreadable or not a v1 space manifest.
     #[error("space manifest: {0}")]
     Manifest(String),
@@ -174,7 +178,9 @@ pub enum Error {
 /// Schema major written to `format_meta`. Readers reject any other major.
 const SCHEMA_MAJOR: i64 = 1;
 /// Schema minor written to `format_meta`. Readers reject a newer minor.
-const SCHEMA_MINOR: i64 = 0;
+/// Minor 1 adds the I05 `field_writes` register table; minor 2 adds
+/// `native_changes`.
+const SCHEMA_MINOR: i64 = 2;
 /// Frozen native codec recorded in `format_meta`.
 const NATIVE_CODEC: &str = "dt-text-v1";
 /// `format` value of the per-space manifest.
@@ -337,6 +343,8 @@ impl Store {
         conn.execute_batch("BEGIN IMMEDIATE")?;
         let schema_result = (|| {
             conn.execute_batch(SCHEMA)?;
+            conn.execute_batch(projection::SCHEMA)?;
+            conn.execute_batch(crate::native::SCHEMA)?;
             check_format_meta(&conn, space, db_existed == 1)
         })();
         match schema_result {
@@ -387,6 +395,99 @@ impl Store {
             return Err(Error::Rejected("wal checkpoint was busy".into()));
         }
         Ok(())
+    }
+
+    /// Stage a complete content-addressed artifact (manifest + chunks) and
+    /// register its `artifacts` row, without referencing it from any batch.
+    /// This is the local analog of replicated staging and is how baseline and
+    /// seed artifacts become resident before publication (I05 P7).
+    /// Idempotent for byte-identical artifacts.
+    ///
+    /// # Errors
+    /// Returns [`Error::MissingChunk`]/[`Error::Rejected`] when a chunk is not
+    /// staged or the payload does not match the manifest.
+    pub fn stage_artifact(
+        &self,
+        manifest: &ArtifactManifest,
+        chunks: &[ChunkId],
+    ) -> Result<(), Error> {
+        let encoded = manifest.encode()?;
+        profile::validate_record(Record::ArtifactManifest, &encoded)?;
+        let id = manifest.id()?;
+        if manifest.chunks.len() != chunks.len()
+            || manifest
+                .chunks
+                .iter()
+                .zip(chunks)
+                .any(|(expected, given)| expected != given)
+        {
+            return Err(Error::Rejected(
+                "chunk list does not match the artifact manifest".into(),
+            ));
+        }
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| {
+            let mut payload: Vec<u8> = Vec::new();
+            for chunk in chunks {
+                let bytes: Vec<u8> = self
+                    .conn
+                    .query_row(
+                        "SELECT bytes FROM chunks WHERE id = ?1",
+                        params![chunk.as_bytes().as_slice()],
+                        |row| row.get(0),
+                    )
+                    .map_err(|_| Error::MissingChunk)?;
+                if chunk_id(&bytes) != *chunk {
+                    return Err(Error::Rejected(
+                        "stored chunk does not hash to its id".into(),
+                    ));
+                }
+                payload.extend_from_slice(&bytes);
+            }
+            if payload.len() as u64 != manifest.raw_length
+                || profile::raw_digest(&manifest.kind, &payload) != manifest.raw_digest
+            {
+                return Err(Error::Rejected(
+                    "artifact payload does not match its manifest".into(),
+                ));
+            }
+            self.conn.execute(
+                "INSERT OR IGNORE INTO artifacts(id, kind, raw_length, raw_digest, manifest)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    id.as_bytes().as_slice(),
+                    manifest.kind.as_str(),
+                    manifest.raw_length as i64,
+                    manifest.raw_digest.as_slice(),
+                    encoded,
+                ],
+            )?;
+            for (ordinal, chunk) in manifest.chunks.iter().enumerate() {
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO artifact_chunks(artifact_id, ordinal, chunk_id) VALUES (?1, ?2, ?3)",
+                    params![
+                        id.as_bytes().as_slice(),
+                        ordinal as i64,
+                        chunk.as_bytes().as_slice(),
+                    ],
+                )?;
+            }
+            self.conn.execute(
+                "INSERT OR IGNORE INTO content_availability(artifact_id, state) VALUES (?1, 'resident')",
+                params![id.as_bytes().as_slice()],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
     }
 
     /// Durably stage one chunk. Idempotent when the same bytes are staged again.
@@ -450,9 +551,6 @@ impl Store {
                 "batch names a different space than this store".into(),
             ));
         }
-        if !publication.body.native_artifacts.is_empty() {
-            return Err(Error::NativeUnchecked);
-        }
         // SQLite stores INTEGER as a signed i64; reject values that would wrap
         // on the way into the database.
         if publication.body.sequence > i64::MAX as u64
@@ -491,6 +589,20 @@ impl Store {
                     "artifact id does not match the batch body".into(),
                 ));
             }
+            // §6.3: the native slots of the body carry native-change-v1
+            // artifacts only; anything else there (including a duplicate of
+            // the metadata artifact id) is rejected, not skipped.
+            if want != &publication.body.metadata {
+                if manifest.kind != "native-change-v1" {
+                    return Err(Error::Rejected(
+                        "native artifact slot does not carry a native-change-v1 artifact".into(),
+                    ));
+                }
+            } else if publication.body.native_artifacts.contains(want) {
+                return Err(Error::Rejected(
+                    "metadata artifact id must not appear in the native artifact slots".into(),
+                ));
+            }
             encoded_artifacts.push((id, bytes));
         }
         let expected_chunks: Vec<&ChunkId> = publication
@@ -517,6 +629,8 @@ impl Store {
             )
         });
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let mut metadata_payload: Option<Vec<u8>> = None;
+        let mut native_payloads: Vec<(ArtifactId, Vec<u8>)> = Vec::new();
         let result = (|| {
             // The keyed path checks the requests row first: key reuse must be
             // rejected even when the new request's batch is already published,
@@ -613,6 +727,13 @@ impl Store {
                         "artifact payload does not match its manifest".into(),
                     ));
                 }
+                if artifact_id == &publication.body.metadata {
+                    // raw_length was capped by manifest validation before this
+                    // concatenation, so the allocation is bounded.
+                    metadata_payload = Some(payload.concat());
+                } else if manifest.kind == "native-change-v1" {
+                    native_payloads.push((*artifact_id, payload.concat()));
+                }
                 // Content-addressed rows are shared: a second batch carrying a
                 // byte-identical artifact must not hit the PK. Hydration was
                 // just re-verified inside this transaction, so ignoring the
@@ -643,6 +764,19 @@ impl Store {
                     params![artifact_id.as_bytes().as_slice()],
                 )?;
             }
+            // I05 P1: the metadata artifact payload is itself a canonical
+            // record; validate it, decode it, and check its operations against
+            // the parent-cut history before anything is inserted.
+            let metadata_bytes = metadata_payload.take().ok_or_else(|| {
+                Error::Rejected("metadata artifact payload was not verified".into())
+            })?;
+            profile::validate_record(Record::MetadataArtifact, &metadata_bytes)?;
+            let metadata = profile::MetadataArtifact::decode(&metadata_bytes)?;
+            projection::validate_against_history(&self.conn, &publication.body.parents, &metadata)?;
+            // I05 P7: native scope admission per §12.5 (only now is
+            // NativeUnchecked lifted).
+            let native_pairs =
+                crate::native::check_native(&self.conn, publication.body, &native_payloads)?;
             self.conn.execute(
                 "INSERT INTO batches(batch_id, public_key, branch, writer_epoch, sequence, lamport, body, quarantined)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
@@ -656,6 +790,11 @@ impl Store {
                     encoded,
                 ],
             )?;
+            // I05 P2: extract the batch's field writes into the MV register in
+            // the same atomic commit.
+            projection::record_batch(&self.conn, &batch_id, &metadata)?;
+            // I05 P7: record the validated native changes in the same commit.
+            crate::native::record_native(&self.conn, &batch_id, &native_pairs)?;
             for (ordinal, (artifact_id, _)) in encoded_artifacts.iter().enumerate() {
                 self.conn.execute(
                     "INSERT INTO batch_artifacts(batch_id, ordinal, artifact_id) VALUES (?1, ?2, ?3)",
@@ -870,6 +1009,144 @@ impl Store {
             .conn
             .query_row(&sql, rusqlite::params_from_iter(all), |row| row.get(0))?;
         Ok(found == 1)
+    }
+
+    /// Maximal MV-register writes visible at a cut (I05 P2).
+    ///
+    /// `cut` is a frontier; heads are included. Within each `(file, field)`
+    /// group the surviving alternatives are ordered by stable bytewise write
+    /// identity, so the first entry is the smallest-identity display
+    /// representative. The result depends only on the closure of `cut`, never
+    /// on arrival order.
+    ///
+    /// # Errors
+    /// Returns [`Error::Projection`] when the cut exceeds the frontier cap or
+    /// history cannot be read.
+    pub fn register_at(&self, cut: &[BatchId]) -> Result<Vec<projection::RegisterWrite>, Error> {
+        Ok(projection::register_at(&self.conn, cut)?)
+    }
+
+    /// Per-file register projections at a cut (I05 P3).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn files_at(&self, cut: &[BatchId]) -> Result<Vec<projection::FileProjection>, Error> {
+        Ok(projection::files_at(&self.conn, cut)?)
+    }
+
+    /// The `paths_current` projection at a cut: path → sorted collision set of
+    /// alive files. Collision sets are never auto-resolved (§5.6).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn paths_at(
+        &self,
+        cut: &[BatchId],
+    ) -> Result<Vec<(profile::Path, Vec<crate::identity::FileId>)>, Error> {
+        Ok(projection::paths_at(&self.conn, cut)?)
+    }
+
+    /// File/directory prefix conflicts at a cut (`a` vs `a/b`), reported, never
+    /// auto-resolved (§5.6).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn prefix_conflicts_at(
+        &self,
+        cut: &[BatchId],
+    ) -> Result<Vec<(profile::Path, profile::Path)>, Error> {
+        Ok(projection::prefix_conflicts_at(&self.conn, cut)?)
+    }
+
+    /// Current heads of one branch (I05 P3; computed on read until a frontier
+    /// table lands in I08/I12).
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn branch_heads(&self, branch: &BranchId) -> Result<Vec<BatchId>, Error> {
+        Ok(projection::branch_heads(&self.conn, branch)?)
+    }
+
+    /// Conflicts visible at a cut, recomputed from history with stable
+    /// `ConflictId`s (I05 P4, §9).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn conflicts_at(&self, cut: &[BatchId]) -> Result<Vec<profile::Conflict>, Error> {
+        Ok(projection::conflicts_at(&self.conn, cut)?)
+    }
+
+    /// The canonical `SemanticManifestV1` at a cut (I05 P5, §7.2); call
+    /// `SemanticManifest::id` for the T02/T13 comparison hash.
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn semantic_manifest_at(
+        &self,
+        cut: &[BatchId],
+    ) -> Result<profile::SemanticManifest, Error> {
+        Ok(projection::semantic_manifest_at(
+            &self.conn,
+            &self.space,
+            cut,
+        )?)
+    }
+
+    /// All epochs declared for `file` at a cut, old epochs included (I05 P6).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn epochs_at(
+        &self,
+        cut: &[BatchId],
+        file: crate::identity::FileId,
+    ) -> Result<Vec<(crate::identity::EpochId, profile::EpochDescriptor)>, Error> {
+        Ok(projection::epochs_at(&self.conn, cut, file)?)
+    }
+
+    /// Register the epoch-owned seed artifact for a text epoch (I05 P7, §12.4).
+    ///
+    /// Idempotent by `(epoch, artifact)`; a second, different seed for one
+    /// epoch is rejected. Chunks must already be staged. Runs in its own
+    /// transaction.
+    ///
+    /// # Errors
+    /// Returns [`Error::MissingChunk`]/[`Error::Rejected`] on unverified
+    /// bytes and [`Error::InvalidNativeScope`] when the seed does not match
+    /// the epoch's baseline.
+    pub fn register_seed(
+        &self,
+        epoch: &crate::identity::EpochId,
+        manifest: &ArtifactManifest,
+        chunks: &[ChunkId],
+    ) -> Result<(), Error> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = crate::native::register_seed(&self.conn, epoch, manifest, chunks);
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
+    }
+
+    /// Current text of `epoch` at a cut (I05 P8): seed plus the cut's native
+    /// changes, arrival-order independent. A historical read at a version is
+    /// the same call with the version's heads as the cut.
+    ///
+    /// # Errors
+    /// Same cut gate as [`Store::register_at`], plus [`Error::MissingDependency`]
+    /// when the epoch has no registered seed.
+    pub fn text_at(
+        &self,
+        cut: &[BatchId],
+        epoch: &crate::identity::EpochId,
+    ) -> Result<String, Error> {
+        crate::native::text_at(&self.conn, cut, epoch)
     }
 
     /// Whether this batch id is a visible publication.
@@ -1424,6 +1701,15 @@ fn check_format_meta(conn: &Connection, space: &SpaceId, db_existed: bool) -> Re
             if minor > SCHEMA_MINOR {
                 return Err(Error::UnsupportedFormat(format!("schema minor {minor}")));
             }
+            if minor < SCHEMA_MINOR {
+                // The new tables above were just created by CREATE IF NOT
+                // EXISTS in this same transaction; record the upgraded minor
+                // so format_meta never understates the on-disk schema.
+                conn.execute(
+                    "UPDATE format_meta SET value = ?1 WHERE key = 'schema_minor'",
+                    params![SCHEMA_MINOR.to_string()],
+                )?;
+            }
             let codec = get("native_codec")?.unwrap_or_default();
             if codec != NATIVE_CODEC {
                 return Err(Error::UnsupportedFormat(format!("native codec {codec}")));
@@ -1452,6 +1738,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use crate::identity::{FileId, GenerationNonce, RepositoryId};
+    use crate::projection::{Field, FieldValue};
 
     const SPACE: SpaceId = SpaceId::from_array([1; 16]);
 
@@ -1497,7 +1785,7 @@ mod tests {
     }
 
     fn fixture(metadata_byte: u8) -> Fixture {
-        let (manifest, chunks) = frame("metadata-v1", &[metadata_byte]);
+        let (manifest, chunks) = frame_metadata(metadata_byte);
         let mut body = BatchBody {
             space: SPACE,
             branch: BranchId::from_array([2; 16]),
@@ -1528,7 +1816,7 @@ mod tests {
         metadata_byte: u8,
         parents: Vec<BatchId>,
     ) -> Fixture {
-        let (manifest, chunks) = frame("metadata-v1", &[metadata_byte]);
+        let (manifest, chunks) = frame_metadata(metadata_byte);
         let mut body = parent.body.clone();
         body.sequence = sequence;
         body.lamport = lamport;
@@ -1557,6 +1845,245 @@ mod tests {
 
     fn sign(body: &BatchBody) -> [u8; 64] {
         profile::sign_batch(&[3; 32], &body.space, &body.id().expect("id"))
+    }
+
+    /// Frame a valid metadata artifact whose only content is one context
+    /// assertion carrying `byte`, keeping fixture payloads distinct.
+    fn frame_metadata(byte: u8) -> (ArtifactManifest, Vec<(ChunkId, Vec<u8>)>) {
+        let payload = profile::MetadataArtifact {
+            operations: Vec::new(),
+            context_assertions: vec![vec![byte]],
+        }
+        .encode()
+        .expect("metadata artifact");
+        frame("metadata-v1", &payload)
+    }
+
+    /// Frame a metadata artifact carrying real operations plus a salt byte.
+    fn frame_ops(
+        ops: Vec<profile::Operation>,
+        salt: u8,
+    ) -> (ArtifactManifest, Vec<(ChunkId, Vec<u8>)>) {
+        let payload = profile::MetadataArtifact {
+            operations: ops,
+            context_assertions: vec![vec![salt]],
+        }
+        .encode()
+        .expect("metadata artifact");
+        frame("metadata-v1", &payload)
+    }
+
+    fn fixture_ops(ops: Vec<profile::Operation>) -> Fixture {
+        let (manifest, chunks) = frame_ops(ops, 60);
+        let mut body = BatchBody {
+            space: SPACE,
+            branch: BranchId::from_array([2; 16]),
+            public_key: profile::public_key(&[3; 32]),
+            writer_epoch: WriterEpoch::from_array([4; 16]),
+            sequence: 1,
+            previous: None,
+            parents: Vec::new(),
+            lamport: 1,
+            native_artifacts: Vec::new(),
+            metadata: ArtifactId::from_array([0; 32]),
+        };
+        body.metadata = manifest.id().expect("artifact id");
+        let signature = sign(&body);
+        Fixture {
+            body,
+            signature,
+            manifest,
+            chunks,
+        }
+    }
+
+    /// A child of `parent` on the same stream carrying real operations.
+    fn child_ops(
+        parent: &Fixture,
+        sequence: u64,
+        lamport: u64,
+        ops: Vec<profile::Operation>,
+        parents: Vec<BatchId>,
+        salt: u8,
+    ) -> Fixture {
+        let (manifest, chunks) = frame_ops(ops, salt);
+        let mut body = parent.body.clone();
+        body.sequence = sequence;
+        body.lamport = lamport;
+        body.previous = Some(parent.body.id().expect("id"));
+        body.parents = parents;
+        body.metadata = manifest.id().expect("artifact id");
+        let signature = sign(&body);
+        Fixture {
+            body,
+            signature,
+            manifest,
+            chunks,
+        }
+    }
+
+    /// Parents must be sorted unique (§13); order the two heads bytewise.
+    fn sorted_parents(a: BatchId, b: BatchId) -> Vec<BatchId> {
+        if a <= b { vec![a, b] } else { vec![b, a] }
+    }
+
+    /// A first batch of a fresh writer stream (`seed`) declaring `parents` as
+    /// its intent-base cut (§13 allows a stream's first batch to declare
+    /// parents). Used for negative-resolution fixtures so they cannot collide
+    /// with a positive batch's (stream, sequence).
+    fn fresh_stream_child(
+        parents: Vec<BatchId>,
+        lamport: u64,
+        seed: &[u8; 32],
+        ops: Vec<profile::Operation>,
+        salt: u8,
+    ) -> Fixture {
+        let (manifest, chunks) = frame_ops(ops, salt);
+        let body = BatchBody {
+            space: SPACE,
+            branch: BranchId::from_array([2; 16]),
+            public_key: profile::public_key(seed),
+            writer_epoch: WriterEpoch::from_array([4; 16]),
+            sequence: 1,
+            previous: None,
+            parents,
+            lamport,
+            native_artifacts: Vec::new(),
+            metadata: manifest.id().expect("artifact id"),
+        };
+        let signature = profile::sign_batch(seed, &body.space, &body.id().expect("id"));
+        Fixture {
+            body,
+            signature,
+            manifest,
+            chunks,
+        }
+    }
+
+    /// A child of `parent` on another writer stream (key `seed`), so it is
+    /// causally concurrent with the first stream's children of the same parent.
+    fn nth_writer_child(
+        parent: &Fixture,
+        seed: &[u8; 32],
+        ops: Vec<profile::Operation>,
+        salt: u8,
+    ) -> Fixture {
+        let (manifest, chunks) = frame_ops(ops, salt);
+        let body = BatchBody {
+            space: SPACE,
+            branch: parent.body.branch,
+            public_key: profile::public_key(seed),
+            writer_epoch: WriterEpoch::from_array([4; 16]),
+            sequence: 1,
+            previous: None,
+            parents: vec![parent.body.id().expect("id")],
+            lamport: parent.body.lamport + 1,
+            native_artifacts: Vec::new(),
+            metadata: manifest.id().expect("artifact id"),
+        };
+        let signature = profile::sign_batch(seed, &body.space, &body.id().expect("id"));
+        Fixture {
+            body,
+            signature,
+            manifest,
+            chunks,
+        }
+    }
+
+    /// A child of `parent` on a second writer stream (different key), so it is
+    /// causally concurrent with the first stream's children of the same parent.
+    fn second_writer_child(parent: &Fixture, ops: Vec<profile::Operation>, salt: u8) -> Fixture {
+        nth_writer_child(parent, &[4; 32], ops, salt)
+    }
+
+    fn text_epoch(file: u8) -> profile::EpochDescriptor {
+        profile::EpochDescriptor {
+            file: FileId::from_array([file; 16]),
+            nonce: GenerationNonce::from_array([file; 16]),
+            kind: profile::EpochKind::Text,
+            baseline: ArtifactId::from_array([file; 32]),
+            seed_profile: Some(profile::TEXT_PROFILE.to_owned()),
+            git_oid: None,
+        }
+    }
+
+    fn opaque_epoch(file: u8) -> profile::EpochDescriptor {
+        opaque_epoch_with(file, file)
+    }
+
+    fn opaque_epoch_with(file: u8, nonce: u8) -> profile::EpochDescriptor {
+        profile::EpochDescriptor {
+            file: FileId::from_array([file; 16]),
+            nonce: GenerationNonce::from_array([nonce; 16]),
+            kind: profile::EpochKind::Opaque,
+            baseline: ArtifactId::from_array([file; 32]),
+            seed_profile: None,
+            git_oid: None,
+        }
+    }
+
+    fn epoch_op(file: u8, epoch: &profile::EpochDescriptor) -> profile::Operation {
+        profile::Operation::Epoch {
+            file: FileId::from_array([file; 16]),
+            epoch: epoch.clone(),
+        }
+    }
+
+    fn provenance_op(detail: Option<ArtifactId>) -> profile::Operation {
+        profile::Operation::Provenance {
+            sources: vec![BatchId::from_array([0x42; 32])],
+            relation: 0,
+            detail,
+        }
+    }
+
+    fn create_op(file: u8, path: &str, epoch: profile::EpochDescriptor) -> profile::Operation {
+        profile::Operation::Create {
+            repository: RepositoryId::from_array([9; 16]),
+            file: FileId::from_array([file; 16]),
+            path: profile::Path::new(path).expect("path"),
+            mode: profile::ModeTag::Regular,
+            epoch,
+        }
+    }
+
+    fn path_op(file: u8, path: &str) -> profile::Operation {
+        profile::Operation::Path {
+            file: FileId::from_array([file; 16]),
+            path: profile::Path::new(path).expect("path"),
+        }
+    }
+
+    fn live_op(file: u8, live: profile::LiveTag) -> profile::Operation {
+        profile::Operation::Live {
+            file: FileId::from_array([file; 16]),
+            live,
+        }
+    }
+
+    fn opaque_op(file: u8, epoch: &profile::EpochDescriptor) -> profile::Operation {
+        profile::Operation::Opaque {
+            file: FileId::from_array([file; 16]),
+            epoch: epoch.id().expect("epoch id"),
+            artifact: ArtifactId::from_array([file.wrapping_add(100); 32]),
+        }
+    }
+
+    fn mode_op(file: u8, mode: profile::ModeTag) -> profile::Operation {
+        profile::Operation::Mode {
+            file: FileId::from_array([file; 16]),
+            mode,
+        }
+    }
+
+    fn resolution_op(
+        conflict: crate::identity::ConflictId,
+        resolution: profile::Resolution,
+    ) -> profile::Operation {
+        profile::Operation::Resolution {
+            conflict,
+            resolution,
+        }
     }
 
     #[test]
@@ -1599,9 +2126,16 @@ mod tests {
     #[test]
     fn multi_chunk_artifact_publishes_and_verifies() {
         let dir = temp();
-        let payload = vec![7u8; profile::CHUNK_RAW_BYTES * 2 + 100];
-        let (manifest, chunks) = frame("opaque-baseline-v1", &payload);
-        assert_eq!(manifest.chunks.len(), 3);
+        // A metadata artifact large enough to span several raw chunks: three
+        // max-size context assertions exceed one 256 KiB chunk.
+        let payload = profile::MetadataArtifact {
+            operations: Vec::new(),
+            context_assertions: vec![vec![7u8; 100_000]; 3],
+        }
+        .encode()
+        .expect("metadata artifact");
+        let (manifest, chunks) = frame("metadata-v1", &payload);
+        assert_eq!(manifest.chunks.len(), 2);
         let mut body = fixture(6).body;
         body.metadata = manifest.id().expect("artifact id");
         let signature = sign(&body);
@@ -1680,7 +2214,7 @@ mod tests {
         assert!(matches!(err, Error::MissingDependency));
 
         // Same stream position as `first`, different body: equivocation.
-        let (rival_manifest, rival_chunks) = frame("metadata-v1", &[11]);
+        let (rival_manifest, rival_chunks) = frame_metadata(11);
         let mut rival = first.body.clone();
         rival.metadata = rival_manifest.id().expect("artifact id");
         let rival_sig = sign(&rival);
@@ -1761,7 +2295,7 @@ mod tests {
     #[test]
     fn payload_that_does_not_match_the_manifest_is_rejected() {
         let dir = temp();
-        let (mut manifest, chunks) = frame("metadata-v1", &[6]);
+        let (mut manifest, chunks) = frame_metadata(6);
         manifest.raw_digest = [9; 32]; // lie about the content digest
         let mut body = fixture(6).body;
         body.metadata = manifest.id().expect("artifact id");
@@ -1786,7 +2320,7 @@ mod tests {
     #[test]
     fn reserved_artifact_kind_is_rejected() {
         let dir = temp();
-        let (mut manifest, chunks) = frame("metadata-v1", &[6]);
+        let (mut manifest, chunks) = frame_metadata(6);
         manifest.kind = "archive-coverage-v1".into();
         let mut body = fixture(6).body;
         body.metadata = manifest.id().expect("artifact id");
@@ -1941,7 +2475,7 @@ mod tests {
             .expect("first");
         // Same writer_epoch bytes and sequence, but a different public key and
         // branch context: a different stream, not an equivocation.
-        let (manifest, chunks) = frame("metadata-v1", &[7]);
+        let (manifest, chunks) = frame_metadata(7);
         let mut other = first.body.clone();
         other.public_key = profile::public_key(&[4; 32]);
         other.metadata = manifest.id().expect("artifact id");
@@ -1977,7 +2511,7 @@ mod tests {
             .expect("first branch");
         // Same public key, writer epoch and sequence, but a different branch:
         // a distinct stream per spec §13, not an equivocation.
-        let (manifest, chunks) = frame("metadata-v1", &[7]);
+        let (manifest, chunks) = frame_metadata(7);
         let mut other = first.body.clone();
         other.branch = BranchId::from_array([5; 16]);
         other.metadata = manifest.id().expect("artifact id");
@@ -2055,7 +2589,7 @@ mod tests {
         let root_b = other_branch_root(13, 5);
         let root_b_id = publish_fixture(&store, &root_b);
         // previous outside the parent closure is rejected.
-        let (manifest, chunks) = frame("metadata-v1", &[15]);
+        let (manifest, chunks) = frame_metadata(15);
         let mut bad = root_b.body.clone();
         bad.sequence = 2;
         bad.lamport = 2;
@@ -2093,7 +2627,7 @@ mod tests {
         let root_c_id = publish_fixture(&store, &root_c);
         let mid = child(&root_c, 2, 2, 15, vec![root_c_id]);
         let mid_id = publish_fixture(&store, &mid);
-        let (mm, mc) = frame("metadata-v1", &[16]);
+        let (mm, mc) = frame_metadata(16);
         let mut merge = mid.body.clone();
         merge.sequence = 3;
         merge.lamport = 3; // 1 + max(mid 2, root_b 1)
@@ -2124,7 +2658,7 @@ mod tests {
         // Non-minimal: first is an ancestor of second, so [first, second] is
         // not a frontier. Same stream as first/second keeps the lamport and
         // stream-step checks consistent (both expect 3).
-        let (nm, nc) = frame("metadata-v1", &[17]);
+        let (nm, nc) = frame_metadata(17);
         let mut bad = first.body.clone();
         bad.sequence = 3;
         bad.lamport = 3;
@@ -2226,7 +2760,7 @@ mod tests {
         assert_eq!(store.receipt_for(caller, key_a).expect("receipt"), Some(r1));
         // Equivocation quarantines `first`; the stored receipt must stop
         // resolving on both the keyed path and receipt_for.
-        let (rm, rc) = frame("metadata-v1", &[11]);
+        let (rm, rc) = frame_metadata(11);
         let mut rival = first.body.clone();
         rival.metadata = rm.id().expect("artifact id");
         let rsig = sign(&rival);
@@ -2406,6 +2940,1277 @@ mod tests {
         assert_eq!(store.peer_receipt(1).expect("read"), Some((7, 6)));
         assert_eq!(store.peer_receipt(2).expect("read"), Some((1, 1)));
         assert_eq!(store.peer_receipt(3).expect("none"), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // I05 P1/P2: metadata artifact admission and MV-register evaluation
+    // ------------------------------------------------------------------
+
+    fn register_paths(register: &[crate::projection::RegisterWrite]) -> Vec<(u64, String)> {
+        register
+            .iter()
+            .filter(|w| w.field == Field::Path)
+            .map(|w| {
+                (
+                    w.write.operation_index,
+                    match &w.value {
+                        FieldValue::Path(p) => p.as_str().to_owned(),
+                        _ => panic!("path field carries a non-path value"),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn metadata_create_is_stored_as_register_writes_with_implied_alive() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let f = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let id = publish_fixture(&store, &f);
+        let register = store.register_at(&[id]).expect("register");
+        let by_field = |field: Field| -> Vec<&crate::projection::RegisterWrite> {
+            register.iter().filter(|w| w.field == field).collect()
+        };
+        // Create writes path, mode, epoch and an implied Alive liveness at the
+        // same write identity (operation index 0).
+        assert_eq!(register_paths(&register), vec![(0, "a.txt".to_owned())]);
+        assert!(matches!(
+            by_field(Field::Live).as_slice(),
+            [w] if w.value == FieldValue::Live(profile::LiveTag::Alive) && w.write.operation_index == 0
+        ));
+        assert!(matches!(
+            by_field(Field::Mode).as_slice(),
+            [w] if w.value == FieldValue::Mode(profile::ModeTag::Regular)
+        ));
+        assert!(matches!(
+            by_field(Field::Epoch).as_slice(),
+            [w] if matches!(&w.value, FieldValue::Epoch(d) if d.kind == profile::EpochKind::Text)
+        ));
+        assert_eq!(register.len(), 4);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn later_operation_in_same_batch_supersedes_earlier_path_write() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let f = fixture_ops(vec![
+            create_op(1, "a.txt", text_epoch(1)),
+            path_op(1, "b.txt"),
+            path_op(1, "c.txt"),
+        ]);
+        let id = publish_fixture(&store, &f);
+        let register = store.register_at(&[id]).expect("register");
+        // Only the last path write survives; identity is (batch, op_index).
+        assert_eq!(register_paths(&register), vec![(2, "c.txt".to_owned())]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn child_batch_write_supersedes_the_parent_cut_write() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let child = child_ops(
+            &root,
+            2,
+            2,
+            vec![path_op(1, "renamed.txt")],
+            vec![root_id],
+            61,
+        );
+        let child_id = publish_fixture(&store, &child);
+        // At the root cut the old path is maximal; at the child cut only the
+        // child's write survives.
+        assert_eq!(
+            register_paths(&store.register_at(&[root_id]).expect("root")),
+            vec![(0, "a.txt".to_owned())]
+        );
+        assert_eq!(
+            register_paths(&store.register_at(&[child_id]).expect("child")),
+            vec![(0, "renamed.txt".to_owned())]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_writes_stay_alternatives_in_bytewise_identity_order() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let first = child_ops(
+            &root,
+            2,
+            2,
+            vec![path_op(1, "first.txt")],
+            vec![root_id],
+            62,
+        );
+        let second = second_writer_child(&root, vec![path_op(1, "second.txt")], 63);
+        let first_id = first.body.id().expect("id");
+        let second_id = second.body.id().expect("id");
+        let a = publish_fixture(&store, &first);
+        let b = publish_fixture(&store, &second);
+        assert_eq!(a, first_id);
+        assert_eq!(b, second_id);
+        let register = store.register_at(&[first_id, second_id]).expect("register");
+        let mut paths = register_paths(&register);
+        paths.sort_by_key(|(index, _)| *index);
+        // Both concurrent writes are maximal alternatives; the register itself
+        // is ordered by (batch, op_index), i.e. stable bytewise identity order.
+        assert_eq!(paths.len(), 2);
+        let ordered: Vec<&crate::projection::RegisterWrite> =
+            register.iter().filter(|w| w.field == Field::Path).collect();
+        assert_eq!(ordered.len(), 2);
+        // Stable bytewise identity order; the first entry is the
+        // smallest-identity display representative.
+        assert!(ordered[0].write < ordered[1].write);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn register_is_independent_of_arrival_order() {
+        let build = |dir: &std::path::Path| {
+            let store = Store::open(dir, &SPACE).expect("open");
+            let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+            let root_id = publish_fixture(&store, &root);
+            let first = child_ops(
+                &root,
+                2,
+                2,
+                vec![
+                    path_op(1, "first.txt"),
+                    live_op(1, profile::LiveTag::Deleted),
+                ],
+                vec![root_id],
+                62,
+            );
+            let second = second_writer_child(&root, vec![path_op(1, "second.txt")], 63);
+            (store, root_id, first, second)
+        };
+        let dir_a = temp();
+        let (store_a, root_a, first, second) = build(&dir_a);
+        let a = publish_fixture(&store_a, &first);
+        let b = publish_fixture(&store_a, &second);
+        let dir_b = temp();
+        let (store_b, root_b, first_b, second_b) = build(&dir_b);
+        let b2 = publish_fixture(&store_b, &second_b);
+        let a2 = publish_fixture(&store_b, &first_b);
+        assert_eq!(a, a2);
+        assert_eq!(b, b2);
+        assert_eq!(root_a, root_b);
+        let reg_a = store_a.register_at(&[a, b]).expect("a");
+        let reg_b = store_b.register_at(&[a2, b2]).expect("b");
+        assert_eq!(reg_a, reg_b);
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
+    }
+
+    #[test]
+    fn operation_on_unknown_file_is_rejected_and_publishes_nothing() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let bad = fixture_ops(vec![path_op(7, "ghost.txt")]);
+        let ids = stage(&store, &bad.chunks);
+        let err = store
+            .publish(&publication(&bad, &ids))
+            .expect_err("unknown file");
+        assert!(matches!(err, Error::Projection(_)));
+        assert!(
+            !store
+                .is_published(&bad.body.id().expect("id"))
+                .expect("read")
+        );
+        // A valid create in the same batch before use is accepted.
+        let ok = fixture_ops(vec![
+            create_op(7, "real.txt", text_epoch(7)),
+            path_op(7, "moved.txt"),
+        ]);
+        let ok_id = publish_fixture(&store, &ok);
+        assert_eq!(
+            register_paths(&store.register_at(&[ok_id]).expect("register")),
+            vec![(1, "moved.txt".to_owned())]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn duplicate_create_of_one_file_id_is_rejected() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let dup = child_ops(
+            &root,
+            2,
+            2,
+            vec![create_op(1, "other.txt", text_epoch(1))],
+            vec![root_id],
+            64,
+        );
+        let ids = stage(&store, &dup.chunks);
+        let err = store
+            .publish(&publication(&dup, &ids))
+            .expect_err("duplicate create");
+        assert!(matches!(err, Error::Projection(_)));
+        assert!(
+            !store
+                .is_published(&dup.body.id().expect("id"))
+                .expect("read")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn path_rule_violation_in_a_metadata_operation_is_rejected() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        // Build the invalid operation bytes directly: a path op with "../x".
+        let mut raw = Vec::new();
+        canon::write_array_header(&mut raw, 3).expect("header");
+        canon::write_uint(&mut raw, 1).expect("tag");
+        canon::write_bytes(&mut raw, &[1; 16]).expect("file");
+        canon::write_text(&mut raw, "../x").expect("path");
+        let mut payload = Vec::new();
+        canon::write_array_header(&mut payload, 3).expect("header");
+        canon::write_uint(&mut payload, 1).expect("version");
+        canon::write_array_header(&mut payload, 1).expect("ops");
+        payload.extend_from_slice(&raw);
+        canon::write_array_header(&mut payload, 0).expect("assertions");
+        let (manifest, chunks) = frame("metadata-v1", &payload);
+        let mut body = fixture(6).body;
+        body.metadata = manifest.id().expect("artifact id");
+        let signature = sign(&body);
+        let f = Fixture {
+            body,
+            signature,
+            manifest,
+            chunks,
+        };
+        let ids = stage(&store, &f.chunks);
+        let err = store.publish(&publication(&f, &ids)).expect_err("bad path");
+        assert!(matches!(err, Error::Rejected(_)));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opaque_value_requires_a_declared_opaque_epoch() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        // Text epoch declared at create: an opaque assignment to it is invalid.
+        let bad = fixture_ops(vec![
+            create_op(1, "a.bin", text_epoch(1)),
+            opaque_op(1, &text_epoch(1)),
+        ]);
+        let ids = stage(&store, &bad.chunks);
+        let err = store
+            .publish(&publication(&bad, &ids))
+            .expect_err("text epoch is not opaque");
+        assert!(matches!(err, Error::Projection(_)));
+        // Opaque epoch declared at create: the assignment is accepted and lands
+        // in the content register.
+        let good = fixture_ops(vec![
+            create_op(1, "a.bin", opaque_epoch(1)),
+            opaque_op(1, &opaque_epoch(1)),
+        ]);
+        let id = publish_fixture(&store, &good);
+        let register = store.register_at(&[id]).expect("register");
+        assert!(
+            register.iter().any(|w| w.field == Field::Content
+                && matches!(&w.value, FieldValue::Content { artifact, .. } if *artifact == ArtifactId::from_array([101; 32])))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quarantined_batch_writes_are_not_visible_in_the_register() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let first = child_ops(
+            &root,
+            2,
+            2,
+            vec![path_op(1, "first.txt")],
+            vec![root_id],
+            65,
+        );
+        let first_id = publish_fixture(&store, &first);
+        // A rival batch claiming the same (stream, sequence) with a different
+        // body quarantines the original; neither stays visible.
+        let rival = child_ops(
+            &root,
+            2,
+            2,
+            vec![path_op(1, "rival.txt")],
+            vec![root_id],
+            66,
+        );
+        let rival_id = rival.body.id().expect("id");
+        assert_ne!(rival_id, first_id);
+        let rival_ids = stage(&store, &rival.chunks);
+        let err = store
+            .publish(&publication(&rival, &rival_ids))
+            .expect_err("equivocation");
+        assert!(matches!(err, Error::Equivocation));
+        assert!(!store.is_published(&first_id).expect("quarantined"));
+        // A cut naming the quarantined batch is an explicit failure, never an
+        // approximate view (§5.2); the root cut is unaffected.
+        assert!(store.register_at(&[first_id]).is_err());
+        let register = store.register_at(&[root_id]).expect("register");
+        assert_eq!(register_paths(&register), vec![(0, "a.txt".to_owned())]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn supersession_works_at_any_closure_depth_not_only_the_head() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let mid = child_ops(&root, 2, 2, vec![path_op(1, "mid.txt")], vec![root_id], 67);
+        let mid_id = publish_fixture(&store, &mid);
+        let head = child_ops(&mid, 3, 3, vec![path_op(1, "head.txt")], vec![mid_id], 68);
+        let head_id = publish_fixture(&store, &head);
+        // The mid batch is not a cut head, yet its write must supersede the
+        // root's, and the head's must supersede the mid's: exactly one maximal
+        // path alternative at every cut.
+        for (cut, expected) in [
+            (vec![root_id], "a.txt"),
+            (vec![mid_id], "mid.txt"),
+            (vec![head_id], "head.txt"),
+        ] {
+            let register = store.register_at(&cut).expect("register");
+            assert_eq!(
+                register_paths(&register),
+                vec![(0, expected.to_owned())],
+                "cut {cut:?}"
+            );
+        }
+        // An unknown batch id in the cut is an explicit error, not a smaller view.
+        assert!(
+            store
+                .register_at(&[BatchId::from_array([0xee; 32])])
+                .is_err()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_free_batches_stay_in_the_closure_but_not_the_write_map() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        // A write-free middle batch: no field writes, but still an ancestor.
+        let empty = child_ops(&root, 2, 2, vec![], vec![root_id], 70);
+        let empty_id = publish_fixture(&store, &empty);
+        let head = child_ops(
+            &empty,
+            3,
+            3,
+            vec![path_op(1, "head.txt")],
+            vec![empty_id],
+            71,
+        );
+        let head_id = publish_fixture(&store, &head);
+        // The head's write supersedes the root's across the write-free middle.
+        let register = store.register_at(&[head_id]).expect("register");
+        assert_eq!(register_paths(&register), vec![(0, "head.txt".to_owned())]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn older_minor_database_is_upgraded_in_the_open_transaction() {
+        let dir = temp();
+        {
+            let store = Store::open(&dir, &SPACE).expect("open");
+            // Simulate an I04 (minor 0) database: same tables, old minor row.
+            store
+                .conn
+                .execute(
+                    "UPDATE format_meta SET value = '0' WHERE key = 'schema_minor'",
+                    [],
+                )
+                .expect("downgrade minor");
+        }
+        let store = Store::open(&dir, &SPACE).expect("reopen upgrades");
+        let minor: String = store
+            .conn
+            .query_row(
+                "SELECT value FROM format_meta WHERE key = 'schema_minor'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read minor");
+        assert_eq!(minor, SCHEMA_MINOR.to_string());
+        // The projection table is usable after the upgrade.
+        let f = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let id = publish_fixture(&store, &f);
+        assert_eq!(
+            register_paths(&store.register_at(&[id]).expect("register")),
+            vec![(0, "a.txt".to_owned())]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn epoch_descriptor_naming_another_file_is_rejected() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        // Create: descriptor.file != op file.
+        let mut wrong = text_epoch(1);
+        wrong.file = FileId::from_array([2; 16]);
+        let bad_create = fixture_ops(vec![create_op(1, "a.txt", wrong)]);
+        let ids = stage(&store, &bad_create.chunks);
+        assert!(store.publish(&publication(&bad_create, &ids)).is_err());
+        // Epoch select on a real file: descriptor.file != op file.
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let bad_select = child_ops(
+            &root,
+            2,
+            2,
+            vec![profile::Operation::Epoch {
+                file: FileId::from_array([1; 16]),
+                epoch: {
+                    let mut d = text_epoch(2);
+                    d.file = FileId::from_array([3; 16]);
+                    d
+                },
+            }],
+            vec![root_id],
+            69,
+        );
+        let ids = stage(&store, &bad_select.chunks);
+        assert!(store.publish(&publication(&bad_select, &ids)).is_err());
+        assert!(
+            !store
+                .is_published(&bad_select.body.id().expect("id"))
+                .expect("read")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn newer_schema_minor_is_rejected() {
+        let dir = temp();
+        {
+            let store = Store::open(&dir, &SPACE).expect("open");
+            store
+                .conn
+                .execute(
+                    "UPDATE format_meta SET value = '3' WHERE key = 'schema_minor'",
+                    [],
+                )
+                .expect("bump minor");
+        }
+        let result = Store::open(&dir, &SPACE);
+        assert!(matches!(result, Err(Error::UnsupportedFormat(_))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // I05 P3: file projections, liveness, collision sets
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn paths_at_reports_collision_sets_and_prefix_conflicts() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![
+            create_op(1, "a", text_epoch(1)),
+            create_op(2, "d", text_epoch(2)),
+        ]);
+        let root_id = publish_fixture(&store, &root);
+        // A concurrent writer creates another file at the same path "a" and a
+        // file under the "a/..." prefix.
+        let rival = second_writer_child(
+            &root,
+            vec![
+                create_op(3, "a", text_epoch(3)),
+                create_op(4, "a/b", text_epoch(4)),
+            ],
+            72,
+        );
+        let rival_id = publish_fixture(&store, &rival);
+        let paths = store.paths_at(&[root_id, rival_id]).expect("paths");
+        let as_map: std::collections::BTreeMap<&str, Vec<FileId>> = paths
+            .iter()
+            .map(|(p, fs)| (p.as_str(), fs.clone()))
+            .collect();
+        // The collision set at "a" holds both files, sorted; nothing is
+        // auto-resolved or renamed.
+        assert_eq!(
+            as_map.get("a").expect("collision set"),
+            &vec![FileId::from_array([1; 16]), FileId::from_array([3; 16])]
+        );
+        assert_eq!(
+            as_map.get("a/b").expect("prefix child"),
+            &vec![FileId::from_array([4; 16])]
+        );
+        assert_eq!(
+            as_map.get("d").expect("plain path"),
+            &vec![FileId::from_array([2; 16])]
+        );
+        let prefix = store
+            .prefix_conflicts_at(&[root_id, rival_id])
+            .expect("prefix conflicts");
+        assert_eq!(
+            prefix,
+            vec![(
+                profile::Path::new("a").expect("path"),
+                profile::Path::new("a/b").expect("path")
+            )]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deletion_hides_current_path_but_never_implicitly_resurrects() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let del = child_ops(
+            &root,
+            2,
+            2,
+            vec![live_op(1, profile::LiveTag::Deleted)],
+            vec![root_id],
+            73,
+        );
+        let del_id = publish_fixture(&store, &del);
+        // A later path edit does not resurrect the deleted file.
+        let edit = child_ops(&del, 3, 3, vec![path_op(1, "b.txt")], vec![del_id], 74);
+        let edit_id = publish_fixture(&store, &edit);
+        let files = store.files_at(&[edit_id]).expect("files");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].live, vec![profile::LiveTag::Deleted]);
+        // No current path while deleted...
+        assert!(store.paths_at(&[edit_id]).expect("paths").is_empty());
+        // ...but the semantic manifest keeps the entry with its content.
+        let manifest = store.semantic_manifest_at(&[edit_id]).expect("manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].live, vec![profile::LiveTag::Deleted]);
+        assert_eq!(
+            manifest.entries[0].paths,
+            vec![profile::Path::new("b.txt").expect("path")]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn branch_heads_track_the_branch_tip() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let child = child_ops(&root, 2, 2, vec![], vec![root_id], 75);
+        let child_id = publish_fixture(&store, &child);
+        let heads = store.branch_heads(&root.body.branch).expect("heads");
+        assert_eq!(heads, vec![child_id]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // I05 P4: conflict derivation and tag-8 resolution admission
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn register_conflicts_have_stable_ids_across_arrival_orders() {
+        let build = |dir: &std::path::Path| {
+            let store = Store::open(dir, &SPACE).expect("open");
+            let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+            let root_id = publish_fixture(&store, &root);
+            let first = child_ops(&root, 2, 2, vec![path_op(1, "x.txt")], vec![root_id], 76);
+            let second = second_writer_child(&root, vec![path_op(1, "y.txt")], 77);
+            (store, first, second)
+        };
+        let dir_a = temp();
+        let (store_a, first, second) = build(&dir_a);
+        let a = publish_fixture(&store_a, &first);
+        let b = publish_fixture(&store_a, &second);
+        let dir_b = temp();
+        let (store_b, first_b, second_b) = build(&dir_b);
+        let b2 = publish_fixture(&store_b, &second_b);
+        let a2 = publish_fixture(&store_b, &first_b);
+        let conflicts_a = store_a.conflicts_at(&[a, b]).expect("conflicts a");
+        let conflicts_b = store_b.conflicts_at(&[a2, b2]).expect("conflicts b");
+        assert_eq!(conflicts_a, conflicts_b);
+        assert_eq!(conflicts_a.len(), 1);
+        let conflict = &conflicts_a[0];
+        assert_eq!(conflict.kind, profile::ConflictKind::Register);
+        assert_eq!(conflict.file, FileId::from_array([1; 16]));
+        assert_eq!(conflict.participants.len(), 2);
+        assert!(conflict.participants[0] < conflict.participants[1]);
+        let id_a = conflict.id().expect("id");
+        assert_eq!(id_a, conflicts_b[0].id().expect("id"));
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
+    }
+
+    #[test]
+    fn delete_edit_conflict_is_derived_from_concurrent_delete_and_edit() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.bin", opaque_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let delete = child_ops(
+            &root,
+            2,
+            2,
+            vec![live_op(1, profile::LiveTag::Deleted)],
+            vec![root_id],
+            78,
+        );
+        let edit = second_writer_child(&root, vec![opaque_op(1, &opaque_epoch(1))], 79);
+        let del_id = publish_fixture(&store, &delete);
+        let edit_id = publish_fixture(&store, &edit);
+        let conflicts = store.conflicts_at(&[del_id, edit_id]).expect("conflicts");
+        let kinds: Vec<profile::ConflictKind> = conflicts.iter().map(|c| c.kind).collect();
+        assert!(kinds.contains(&profile::ConflictKind::DeleteEdit));
+        let conflict = conflicts
+            .iter()
+            .find(|c| c.kind == profile::ConflictKind::DeleteEdit)
+            .expect("delete_edit");
+        assert_eq!(conflict.file, FileId::from_array([1; 16]));
+        assert_eq!(conflict.participants.len(), 2);
+        assert_eq!(conflict.epochs, vec![opaque_epoch(1).id().expect("id")]);
+        // No conflict at the root cut: nothing concurrent there.
+        assert!(store.conflicts_at(&[root_id]).expect("root").is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn mode_conflict_scenario(dir: &std::path::Path) -> (Store, Fixture, BatchId, BatchId) {
+        let store = Store::open(dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let first = child_ops(
+            &root,
+            2,
+            2,
+            vec![mode_op(1, profile::ModeTag::Executable)],
+            vec![root_id],
+            80,
+        );
+        let second = second_writer_child(&root, vec![mode_op(1, profile::ModeTag::Symlink)], 81);
+        let a = publish_fixture(&store, &first);
+        let b = publish_fixture(&store, &second);
+        (store, first, a, b)
+    }
+
+    #[test]
+    fn tag8_resolution_publishes_fresh_assignment_and_supersedes_alternatives() {
+        let dir = temp();
+        let (store, first, a, b) = mode_conflict_scenario(&dir);
+        let conflicts = store.conflicts_at(&[a, b]).expect("conflicts");
+        assert_eq!(conflicts.len(), 1);
+        let conflict_id = conflicts[0].id().expect("id");
+        // The resolution names the conflict, chooses the first writer's mode
+        // write, and publishes a fresh Mode op in the same batch.
+        let chosen = conflicts[0].participants[0];
+        let resolution = child_ops(
+            &first,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::Choose {
+                        field: 2,
+                        write: chosen,
+                    },
+                ),
+                mode_op(1, profile::ModeTag::Executable),
+            ],
+            vec![a, b],
+            82,
+        );
+        let r = publish_fixture(&store, &resolution);
+        let register = store.register_at(&[r]).expect("register");
+        let modes: Vec<profile::ModeTag> = register
+            .iter()
+            .filter(|w| w.field == Field::Mode)
+            .filter_map(|w| match &w.value {
+                FieldValue::Mode(m) => Some(*m),
+                _ => None,
+            })
+            .collect();
+        // The resolution's fresh write supersedes both alternatives.
+        assert_eq!(modes, vec![profile::ModeTag::Executable]);
+        assert!(store.conflicts_at(&[r]).expect("conflicts").is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tag8_resolution_negatives_are_rejected() {
+        let dir = temp();
+        let (store, first, a, b) = mode_conflict_scenario(&dir);
+        let conflicts = store.conflicts_at(&[a, b]).expect("conflicts");
+        let conflict_id = conflicts[0].id().expect("id");
+        let chosen = conflicts[0].participants[0];
+        // Unknown conflict id.
+        let unknown = child_ops(
+            &first,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    crate::identity::ConflictId::from_array([0xee; 32]),
+                    profile::Resolution::Choose {
+                        field: 2,
+                        write: chosen,
+                    },
+                ),
+                mode_op(1, profile::ModeTag::Executable),
+            ],
+            vec![a, b],
+            83,
+        );
+        let ids = stage(&store, &unknown.chunks);
+        assert!(store.publish(&publication(&unknown, &ids)).is_err());
+        // Resolution without the fresh same-batch field assignment.
+        let bare = child_ops(
+            &first,
+            3,
+            3,
+            vec![resolution_op(
+                conflict_id,
+                profile::Resolution::Choose {
+                    field: 2,
+                    write: chosen,
+                },
+            )],
+            vec![a, b],
+            84,
+        );
+        let ids = stage(&store, &bare.chunks);
+        assert!(store.publish(&publication(&bare, &ids)).is_err());
+        // Parents that do not observe every participant: the conflict is not
+        // visible at that parent cut.
+        let partial = child_ops(
+            &first,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::Choose {
+                        field: 2,
+                        write: chosen,
+                    },
+                ),
+                mode_op(1, profile::ModeTag::Executable),
+            ],
+            vec![a],
+            85,
+        );
+        let ids = stage(&store, &partial.chunks);
+        assert!(store.publish(&publication(&partial, &ids)).is_err());
+        assert!(
+            !store
+                .is_published(&partial.body.id().expect("id"))
+                .expect("read")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // I05 P5: semantic manifest
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn semantic_manifest_id_is_identical_across_two_independent_replicas() {
+        let build = |dir: &std::path::Path| {
+            let store = Store::open(dir, &SPACE).expect("open");
+            let root = fixture_ops(vec![
+                create_op(1, "a.txt", text_epoch(1)),
+                create_op(2, "b.bin", opaque_epoch(2)),
+            ]);
+            let root_id = publish_fixture(&store, &root);
+            let rename = child_ops(
+                &root,
+                2,
+                2,
+                vec![path_op(1, "renamed.txt")],
+                vec![root_id],
+                86,
+            );
+            let delete =
+                second_writer_child(&root, vec![live_op(2, profile::LiveTag::Deleted)], 87);
+            (store, rename, delete)
+        };
+        let dir_a = temp();
+        let (store_a, rename, delete) = build(&dir_a);
+        let r = publish_fixture(&store_a, &rename);
+        let d = publish_fixture(&store_a, &delete);
+        let dir_b = temp();
+        let (store_b, rename_b, delete_b) = build(&dir_b);
+        let d2 = publish_fixture(&store_b, &delete_b);
+        let r2 = publish_fixture(&store_b, &rename_b);
+        assert_eq!((r, d), (r2, d2));
+        let manifest_a = store_a.semantic_manifest_at(&[r, d]).expect("manifest a");
+        let manifest_b = store_b.semantic_manifest_at(&[r2, d2]).expect("manifest b");
+        assert_eq!(manifest_a, manifest_b);
+        let id_a = manifest_a.id().expect("id a");
+        let id_b = manifest_b.id().expect("id b");
+        assert_eq!(id_a, id_b);
+        // Golden pin: this exact scenario must always hash to this id
+        // (cross-process golden vectors live under tests/fixtures/metadata-v1).
+        assert_eq!(
+            crate::identity::hex(&id_a),
+            "179f197962d2e51b23521c193c2bd81b4b3d45a826dbd80b080a5e68229766fb"
+        );
+        // Two entries: the deleted file keeps its entry and content.
+        assert_eq!(manifest_a.entries.len(), 2);
+        let deleted = manifest_a
+            .entries
+            .iter()
+            .find(|e| e.file == FileId::from_array([2; 16]))
+            .expect("deleted entry");
+        assert_eq!(deleted.live, vec![profile::LiveTag::Deleted]);
+        assert_eq!(
+            deleted.paths,
+            vec![profile::Path::new("b.bin").expect("path")]
+        );
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
+    }
+
+    // ------------------------------------------------------------------
+    // GATE B audit fixes: cut gates on all read paths, delete_edit epoch
+    // semantics, kind<->tag correspondence, quarantine in branch heads
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn paths_and_prefix_reads_gate_the_cut_like_register_at() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        // Unknown and quarantined members error, duplicate heads error.
+        assert!(store.paths_at(&[BatchId::from_array([0xee; 32])]).is_err());
+        assert!(store.paths_at(&[root_id, root_id]).is_err());
+        assert!(
+            store
+                .prefix_conflicts_at(&[BatchId::from_array([0xee; 32])])
+                .is_err()
+        );
+        assert_eq!(store.paths_at(&[root_id]).expect("paths").len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_edit_conflict_id_ignores_unrelated_epoch_selection() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.bin", opaque_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let delete = child_ops(
+            &root,
+            2,
+            2,
+            vec![live_op(1, profile::LiveTag::Deleted)],
+            vec![root_id],
+            88,
+        );
+        let edit = second_writer_child(&root, vec![opaque_op(1, &opaque_epoch(1))], 89);
+        // An unrelated concurrent epoch selection by a third writer.
+        let mut other_epoch = text_epoch(9);
+        other_epoch.file = FileId::from_array([1; 16]);
+        other_epoch.nonce = GenerationNonce::from_array([9; 16]);
+        let select = nth_writer_child(
+            &root,
+            &[5; 32],
+            vec![profile::Operation::Epoch {
+                file: FileId::from_array([1; 16]),
+                epoch: other_epoch,
+            }],
+            90,
+        );
+        let del_id = publish_fixture(&store, &delete);
+        let edit_id = publish_fixture(&store, &edit);
+        let sel_id = publish_fixture(&store, &select);
+        let find_delete_edit = |cut: &[BatchId]| {
+            store
+                .conflicts_at(cut)
+                .expect("conflicts")
+                .into_iter()
+                .find(|c| c.kind == profile::ConflictKind::DeleteEdit)
+                .expect("delete_edit")
+        };
+        let without = find_delete_edit(&[del_id, edit_id]);
+        let with = find_delete_edit(&[del_id, edit_id, sel_id]);
+        // §9: epochs are the epochs the conflict concerns (the edited epoch),
+        // so an unrelated selection cannot change the ConflictId.
+        assert_eq!(without.epochs, vec![opaque_epoch(1).id().expect("id")]);
+        assert_eq!(without.id().expect("id"), with.id().expect("id"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tag8_kind_mismatch_is_rejected() {
+        // A kind-0 (register) conflict on mode.
+        let dir = temp();
+        let (store2, first, a, b) = mode_conflict_scenario(&dir);
+        let conflicts = store2.conflicts_at(&[a, b]).expect("conflicts");
+        let register_conflict = conflicts[0].id().expect("id");
+        // RetainDelete against a register conflict: wrong kind.
+        let wrong_kind = child_ops(
+            &first,
+            3,
+            3,
+            vec![
+                resolution_op(register_conflict, profile::Resolution::RetainDelete),
+                live_op(1, profile::LiveTag::Deleted),
+            ],
+            vec![a, b],
+            91,
+        );
+        let ids = stage(&store2, &wrong_kind.chunks);
+        assert!(store2.publish(&publication(&wrong_kind, &ids)).is_err());
+        // Choose against a delete_edit conflict: wrong kind.
+        let dir2 = temp();
+        let store3 = Store::open(&dir2, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.bin", opaque_epoch(1))]);
+        let root_id = publish_fixture(&store3, &root);
+        let delete = child_ops(
+            &root,
+            2,
+            2,
+            vec![live_op(1, profile::LiveTag::Deleted)],
+            vec![root_id],
+            92,
+        );
+        let edit = second_writer_child(&root, vec![opaque_op(1, &opaque_epoch(1))], 93);
+        let del_id = publish_fixture(&store3, &delete);
+        let edit_id = publish_fixture(&store3, &edit);
+        let de_conflict = store3
+            .conflicts_at(&[del_id, edit_id])
+            .expect("conflicts")
+            .into_iter()
+            .find(|c| c.kind == profile::ConflictKind::DeleteEdit)
+            .expect("delete_edit");
+        let de_id = de_conflict.id().expect("id");
+        let de_participant = de_conflict.participants[0];
+        let wrong_choose = child_ops(
+            &delete,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    de_id,
+                    profile::Resolution::Choose {
+                        field: 1,
+                        write: de_participant,
+                    },
+                ),
+                opaque_op(1, &opaque_epoch(1)),
+            ],
+            vec![del_id, edit_id],
+            94,
+        );
+        let ids = stage(&store3, &wrong_choose.chunks);
+        assert!(store3.publish(&publication(&wrong_choose, &ids)).is_err());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn branch_heads_skip_quarantined_intermediate_batches() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let mid = child_ops(
+            &root,
+            2,
+            2,
+            vec![mode_op(1, profile::ModeTag::Executable)],
+            vec![root_id],
+            95,
+        );
+        let mid_id = publish_fixture(&store, &mid);
+        let head = child_ops(&mid, 3, 3, vec![path_op(1, "b.txt")], vec![mid_id], 96);
+        let head_id = publish_fixture(&store, &head);
+        assert_eq!(
+            store.branch_heads(&root.body.branch).expect("heads"),
+            vec![head_id]
+        );
+        // Equivocation quarantines the middle batch; the walk must not hop
+        // through it, so the root becomes a head again alongside the tip.
+        let rival = child_ops(
+            &root,
+            2,
+            2,
+            vec![path_op(1, "rival.txt")],
+            vec![root_id],
+            97,
+        );
+        let rival_ids = stage(&store, &rival.chunks);
+        assert!(matches!(
+            store.publish(&publication(&rival, &rival_ids)),
+            Err(Error::Equivocation)
+        ));
+        let mut heads = store.branch_heads(&root.body.branch).expect("heads");
+        heads.sort();
+        let mut expected = vec![root_id, head_id];
+        expected.sort();
+        assert_eq!(heads, expected);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quarantine_inside_closure_cuts_causality_below_descendant_cut() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let mid = child_ops(
+            &root,
+            2,
+            2,
+            vec![mode_op(1, profile::ModeTag::Executable)],
+            vec![root_id],
+            98,
+        );
+        let mid_id = publish_fixture(&store, &mid);
+        let head = child_ops(&mid, 3, 3, vec![path_op(1, "b.txt")], vec![mid_id], 99);
+        let head_id = publish_fixture(&store, &head);
+        // Before the quarantine the middle batch's mode write is visible at the
+        // descendant cut.
+        let before = store.register_at(&[head_id]).expect("register");
+        assert!(
+            before.iter().any(|w| w.field == Field::Mode
+                && w.value == FieldValue::Mode(profile::ModeTag::Executable))
+        );
+        // Quarantine the middle batch: below the descendant cut its exclusive
+        // ancestors (including the root) become invisible too.
+        let rival = child_ops(
+            &root,
+            2,
+            2,
+            vec![path_op(1, "rival.txt")],
+            vec![root_id],
+            100,
+        );
+        let rival_ids = stage(&store, &rival.chunks);
+        assert!(matches!(
+            store.publish(&publication(&rival, &rival_ids)),
+            Err(Error::Equivocation)
+        ));
+        let after = store.register_at(&[head_id]).expect("register");
+        assert!(!after.iter().any(|w| w.field == Field::Mode));
+        assert_eq!(register_paths(&after), vec![(0, "b.txt".to_owned())]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // GATE B re-audit: RetainEpoch/Incorporate admission (tags 2/3)
+    // ------------------------------------------------------------------
+
+    /// Root creates file 1 with opaque epoch O1; S selects opaque epoch O2;
+    /// E concurrently assigns an opaque value to O1. The cut [S, E] derives an
+    /// epoch_edit conflict with participants (S's epoch write, E's opaque write).
+    fn epoch_edit_scenario(
+        dir: &std::path::Path,
+    ) -> (Store, Fixture, BatchId, BatchId, profile::Conflict) {
+        let store = Store::open(dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.bin", opaque_epoch_with(1, 1))]);
+        let root_id = publish_fixture(&store, &root);
+        let select = child_ops(
+            &root,
+            2,
+            2,
+            vec![epoch_op(1, &opaque_epoch_with(1, 2))],
+            vec![root_id],
+            101,
+        );
+        let edit = second_writer_child(&root, vec![opaque_op(1, &opaque_epoch_with(1, 1))], 102);
+        let s = publish_fixture(&store, &select);
+        let e = publish_fixture(&store, &edit);
+        let conflict = store
+            .conflicts_at(&[s, e])
+            .expect("conflicts")
+            .into_iter()
+            .find(|c| c.kind == profile::ConflictKind::EpochEdit)
+            .expect("epoch_edit");
+        (store, select, s, e, conflict)
+    }
+
+    #[test]
+    fn retain_epoch_resolution_names_the_selected_epoch_and_supersedes() {
+        let dir = temp();
+        let (store, select, s, e, conflict) = epoch_edit_scenario(&dir);
+        let selected_epoch = opaque_epoch_with(1, 2).id().expect("id");
+        assert_eq!(conflict.epochs.len(), 2);
+        let conflict_id = conflict.id().expect("id");
+        let resolution = child_ops(
+            &select,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::RetainEpoch(selected_epoch),
+                ),
+                epoch_op(1, &opaque_epoch_with(1, 2)),
+            ],
+            sorted_parents(s, e),
+            103,
+        );
+        let r = publish_fixture(&store, &resolution);
+        let register = store.register_at(&[r]).expect("register");
+        let epochs: Vec<_> = register
+            .iter()
+            .filter(|w| w.field == Field::Epoch)
+            .filter_map(|w| match &w.value {
+                FieldValue::Epoch(d) => Some(d.id().expect("id")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(epochs, vec![selected_epoch]);
+        assert!(store.conflicts_at(&[r]).expect("conflicts").is_empty());
+        // Negative: RetainEpoch naming the edited (not selected) epoch, on a
+        // fresh writer stream so the equivocation gate cannot mask the check.
+        let wrong = fresh_stream_child(
+            sorted_parents(s, e),
+            3,
+            &[6; 32],
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::RetainEpoch(opaque_epoch_with(1, 1).id().expect("id")),
+                ),
+                epoch_op(1, &opaque_epoch_with(1, 1)),
+            ],
+            104,
+        );
+        let ids = stage(&store, &wrong.chunks);
+        let err = store
+            .publish(&publication(&wrong, &ids))
+            .expect_err("wrong retain-epoch payload");
+        assert!(
+            err.to_string()
+                .contains("retain-epoch payload is not the conflict's selected epoch"),
+            "unexpected error: {err}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn incorporate_requires_a_new_epoch_and_provenance() {
+        let dir = temp();
+        let (store, select, s, e, conflict) = epoch_edit_scenario(&dir);
+        let conflict_id = conflict.id().expect("id");
+        let new_epoch = opaque_epoch_with(1, 3);
+        let provenance = ArtifactId::from_array([0x77; 32]);
+        // Valid incorporation: fresh explicit new epoch + provenance op.
+        let good = child_ops(
+            &select,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::Incorporate {
+                        epoch: new_epoch.id().expect("id"),
+                        provenance,
+                    },
+                ),
+                epoch_op(1, &new_epoch),
+                provenance_op(Some(provenance)),
+            ],
+            sorted_parents(s, e),
+            105,
+        );
+        let good_id = publish_fixture(&store, &good);
+        // Post-publish assertions: the fresh new-epoch write supersedes the
+        // conflicted selection and the conflict is gone at the resolution cut.
+        let register = store.register_at(&[good_id]).expect("register");
+        let epochs: Vec<_> = register
+            .iter()
+            .filter(|w| w.field == Field::Epoch)
+            .filter_map(|w| match &w.value {
+                FieldValue::Epoch(d) => Some(d.id().expect("id")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(epochs, vec![new_epoch.id().expect("id")]);
+        assert!(
+            store
+                .conflicts_at(&[good_id])
+                .expect("conflicts")
+                .is_empty()
+        );
+        // Negatives on fresh writer streams so the equivocation gate cannot
+        // mask the admission checks: naming an epoch already declared anywhere
+        // in the closure — even the superseded create-time epoch O1.
+        let mut seed = [6u8; 32];
+        for (bad_epoch, salt) in [
+            (opaque_epoch_with(1, 1), 106u8),
+            (opaque_epoch_with(1, 2), 107u8),
+        ] {
+            let bad = fresh_stream_child(
+                sorted_parents(s, e),
+                3,
+                &seed,
+                vec![
+                    resolution_op(
+                        conflict_id,
+                        profile::Resolution::Incorporate {
+                            epoch: bad_epoch.id().expect("id"),
+                            provenance,
+                        },
+                    ),
+                    epoch_op(1, &bad_epoch),
+                    provenance_op(Some(provenance)),
+                ],
+                salt,
+            );
+            seed[0] = seed[0].wrapping_add(1);
+            let ids = stage(&store, &bad.chunks);
+            let err = store
+                .publish(&publication(&bad, &ids))
+                .expect_err("incorporate of already-declared epoch");
+            assert!(
+                err.to_string()
+                    .contains("incorporation must name a new epoch not already declared"),
+                "unexpected error: {err}"
+            );
+        }
+        // Negative: missing the provenance operation.
+        let no_prov = fresh_stream_child(
+            sorted_parents(s, e),
+            3,
+            &[9; 32],
+            vec![
+                resolution_op(
+                    conflict_id,
+                    profile::Resolution::Incorporate {
+                        epoch: new_epoch.id().expect("id"),
+                        provenance,
+                    },
+                ),
+                epoch_op(1, &new_epoch),
+            ],
+            108,
+        );
+        let ids = stage(&store, &no_prov.chunks);
+        let err = store
+            .publish(&publication(&no_prov, &ids))
+            .expect_err("missing provenance");
+        assert!(
+            err.to_string()
+                .contains("incorporation lacks the provenance operation"),
+            "unexpected error: {err}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

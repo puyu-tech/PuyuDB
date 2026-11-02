@@ -1,0 +1,98 @@
+{
+  "cases": [
+    {
+      "body_hex": "85010150d907cb47e817827e96939a5e119e11a381582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face828258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d008258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c2500",
+      "canonical_body_hex": "85010150d907cb47e817827e96939a5e119e11a381582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face828258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25008258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d00",
+      "canonical_id_hex": "77727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+      "code": "invalid_encoding",
+      "name": "conflict/unsorted-participants",
+      "other_id_hex": "b03824450e893a758bc5a1b976b4fcea5438f987a8bdca136f67fd95bb880510",
+      "record": "conflict",
+      "why": "participants sort by (batch, index); reversed order is invalid and must change the ConflictId"
+    },
+    {
+      "body_hex": "85010250d907cb47e817827e96939a5e119e11a382582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed828258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25028258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d01",
+      "canonical_body_hex": "85010250d907cb47e817827e96939a5e119e11a382582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face828258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25028258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d01",
+      "canonical_id_hex": "842add490c199a79cd7875586b8959e162ebebfd9a9040e5c8e4d0541d5d71fc",
+      "code": "invalid_encoding",
+      "name": "conflict/unsorted-epochs",
+      "other_id_hex": "5a9acfce8196568e2da8623411d8d8286728df210210dfbef25981e73e2e4eb3",
+      "record": "conflict",
+      "why": "conflict epochs are sorted unique; reversed order is invalid and must change the ConflictId"
+    },
+    {
+      "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe82880150d907cb47e817827e96939a5e119e11a3820001816f646f63732f72656e616d65642e6d6482582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810081582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b3334388015052d2cca457b04b0828992da5f30a3f518101816f6173736574732f6c6f676f2e62696e8158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78815820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04810080",
+      "canonical_body_hex": "8301508dac40750fe9d57d04c8143c26a342fe8288015052d2cca457b04b0828992da5f30a3f518101816f6173736574732f6c6f676f2e62696e8158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78815820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04810080880150d907cb47e817827e96939a5e119e11a3820001816f646f63732f72656e616d65642e6d6482582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810081582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+      "canonical_id_hex": "b21a0e775f2d688574dcd7f6985905dc391631df8be3633bfd61bfb7969cbf58",
+      "code": "invalid_encoding",
+      "name": "manifest/unsorted-entries",
+      "other_id_hex": "1073e3d0b72bb962f8479933cbbfb95fde00d634fa8eb9b31f95ba31177fbff4",
+      "record": "semantic_manifest",
+      "why": "manifest entries sort by raw FileId; reversed order is invalid and must change the SemanticManifestId"
+    },
+    {
+      "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe81880150d907cb47e817827e96939a5e119e11a3820001826f646f63732f72656e616d65642e6d6469646f63732f612e6d6482582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810081582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+      "canonical_body_hex": "8301508dac40750fe9d57d04c8143c26a342fe8288015052d2cca457b04b0828992da5f30a3f518101816f6173736574732f6c6f676f2e62696e8158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78815820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04810080880150d907cb47e817827e96939a5e119e11a3820001816f646f63732f72656e616d65642e6d6482582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810081582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+      "canonical_id_hex": "b21a0e775f2d688574dcd7f6985905dc391631df8be3633bfd61bfb7969cbf58",
+      "code": "invalid_encoding",
+      "name": "manifest/entry-unsorted-paths",
+      "other_id_hex": "bcee55109114d831a30f29ff563404ec4e235ca758fb8a8c0d9a58c46243230b",
+      "record": "semantic_manifest",
+      "why": "entry paths sort by raw UTF-8 bytes; unsorted paths are invalid and must change the SemanticManifestId"
+    },
+    {
+      "body_hex": "85010150d907cb47e817827e96939a5e119e11a381582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face828258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25008258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d00",
+      "canonical_id_hex": "77727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+      "code": null,
+      "name": "domain/conflict-wrong-separator",
+      "other_id_hex": "e9d58ae0f0467711ae1eb0e7ebe198af58d4b34081c55d38c4c052a65701b9cc",
+      "record": "conflict",
+      "separator": "puyudb/conflict/v2",
+      "why": "a wrong separator must change the ConflictId"
+    },
+    {
+      "body_hex": "8301508dac40750fe9d57d04c8143c26a342fe8288015052d2cca457b04b0828992da5f30a3f518101816f6173736574732f6c6f676f2e62696e8158202c9165bc5c4f3d8c71d56b4a8128f88c76b83329f370598b43d0d3cc105f5b78815820f2dcaab31019a74abb6dca03e8ac75b504120fbd3427c727403be9b71f295d04810080880150d907cb47e817827e96939a5e119e11a3820001816f646f63732f72656e616d65642e6d6482582016ef8428fad7034a13fb8041a7c7e6d8ee46f0c8d02998d0036b6c8f6a1a19ed582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face80810081582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+      "canonical_id_hex": "b21a0e775f2d688574dcd7f6985905dc391631df8be3633bfd61bfb7969cbf58",
+      "code": null,
+      "name": "domain/manifest-wrong-separator",
+      "other_id_hex": "7d50e489ee48ca9bb642bbb104ff2eb059e0b11e207707462c7e9cc20ead406e",
+      "record": "semantic_manifest",
+      "separator": "puyudb/semantic-manifest/v2",
+      "why": "a wrong separator must change the SemanticManifestId"
+    },
+    {
+      "body_hex": "85010150d907cb47e817827e96939a5e119e11a381582074db3f9c3ecea619bd0e3cfe4ba714d9d68b9e5699ee5b47a84b05959099face828258205f1ed7755397e1846f133efb9942daa73df656fdf44c8ff1718785e07d897c25008258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d00",
+      "canonical_id_hex": "77727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b33343",
+      "code": null,
+      "name": "domain/cross-domain",
+      "other_id_hex": "17d269bb94c6cb11a69590d7f3381f6e5347cc16a679bbbed4152cd3f691c0f1",
+      "record": "conflict",
+      "separator": "puyudb/semantic-manifest/v1",
+      "why": "hashing a conflict under the manifest separator must differ (domain separation)"
+    },
+    {
+      "body_hex": "830181820a50d907cb47e817827e96939a5e119e11a380",
+      "code": "unsupported_capability",
+      "name": "registry/unknown-operation-tag",
+      "record": "metadata_artifact",
+      "why": "operation tag 10 is unassigned"
+    },
+    {
+      "body_hex": "8301818408582077727daa82d5b2f3d04e6f8cb85989898c9979117a625889d63173fe90b3334305f680",
+      "code": "unsupported_capability",
+      "name": "registry/unknown-resolution-tag",
+      "record": "metadata_artifact",
+      "why": "resolution tag 5 is unassigned"
+    },
+    {
+      "body_hex": "85010350d907cb47e817827e96939a5e119e11a380818258208400c74cdeb6dacfaf03c15a77f282928f98f05ca9be49a943bafa23383a4d9d00",
+      "code": "unsupported_capability",
+      "name": "registry/unknown-conflict-kind",
+      "record": "conflict",
+      "why": "conflict kind 3 is unassigned"
+    }
+  ],
+  "generated_by": "scripts/i05_semantic_manifest.py",
+  "profile": 1,
+  "scope": "Negative cases for the I05 P5 fixtures: unsorted inputs are rejected and hash differently; wrong domain separators change the digest."
+}

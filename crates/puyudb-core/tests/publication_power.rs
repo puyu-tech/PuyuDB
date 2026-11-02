@@ -7,9 +7,20 @@
 use std::sync::{Mutex, MutexGuard};
 
 use puyudb_core::identity::{BatchId, BranchId, ChunkId, SpaceId, WriterEpoch};
-use puyudb_core::profile::{self, ArtifactManifest, BatchBody, chunk_id};
+use puyudb_core::profile::{self, ArtifactManifest, BatchBody, MetadataArtifact, chunk_id};
 use puyudb_core::publication::{Publication, Store};
 use sqlite_fault::{self, install, reset};
+
+/// A valid metadata artifact payload carrying `distinct` in one context
+/// assertion, so fixture artifacts stay content-distinct.
+fn metadata_payload(distinct: &[u8]) -> Vec<u8> {
+    MetadataArtifact {
+        operations: Vec::new(),
+        context_assertions: vec![distinct.to_vec()],
+    }
+    .encode()
+    .expect("metadata artifact")
+}
 
 /// The shim VFS keeps one process-wide fault switch and one snapshot per open
 /// file, so two tests must never run at once.
@@ -45,7 +56,8 @@ struct Prepared {
 }
 
 fn prepared_with(payload: &[u8]) -> Prepared {
-    let manifest = ArtifactManifest::for_payload("metadata-v1", payload).expect("manifest");
+    let payload = metadata_payload(payload);
+    let manifest = ArtifactManifest::for_payload("metadata-v1", &payload).expect("manifest");
     let body = BatchBody {
         space: SPACE,
         branch: BranchId::from_array([2; 16]),
