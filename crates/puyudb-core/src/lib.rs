@@ -8,6 +8,7 @@
 
 pub mod canon;
 pub mod identity;
+pub mod native;
 pub mod profile;
 pub mod projection;
 pub mod publication;

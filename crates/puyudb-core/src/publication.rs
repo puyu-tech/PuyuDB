@@ -155,9 +155,9 @@ pub enum Error {
     /// Two batches claim one stream position. Neither stays published.
     #[error("writer equivocation")]
     Equivocation,
-    /// Native scope is not checked by this ledger yet.
-    #[error("native scope is not checked")]
-    NativeUnchecked,
+    /// A native change violated the §12.5 scope rules at admission.
+    #[error("invalid_native_scope: {0}")]
+    InvalidNativeScope(String),
     /// A metadata projection or register admission failed.
     #[error("{0}")]
     Projection(#[from] projection::Error),
@@ -178,8 +178,9 @@ pub enum Error {
 /// Schema major written to `format_meta`. Readers reject any other major.
 const SCHEMA_MAJOR: i64 = 1;
 /// Schema minor written to `format_meta`. Readers reject a newer minor.
-/// Minor 1 adds the I05 `field_writes` register table.
-const SCHEMA_MINOR: i64 = 1;
+/// Minor 1 adds the I05 `field_writes` register table; minor 2 adds
+/// `native_changes`.
+const SCHEMA_MINOR: i64 = 2;
 /// Frozen native codec recorded in `format_meta`.
 const NATIVE_CODEC: &str = "dt-text-v1";
 /// `format` value of the per-space manifest.
@@ -343,6 +344,7 @@ impl Store {
         let schema_result = (|| {
             conn.execute_batch(SCHEMA)?;
             conn.execute_batch(projection::SCHEMA)?;
+            conn.execute_batch(crate::native::SCHEMA)?;
             check_format_meta(&conn, space, db_existed == 1)
         })();
         match schema_result {
@@ -393,6 +395,99 @@ impl Store {
             return Err(Error::Rejected("wal checkpoint was busy".into()));
         }
         Ok(())
+    }
+
+    /// Stage a complete content-addressed artifact (manifest + chunks) and
+    /// register its `artifacts` row, without referencing it from any batch.
+    /// This is the local analog of replicated staging and is how baseline and
+    /// seed artifacts become resident before publication (I05 P7).
+    /// Idempotent for byte-identical artifacts.
+    ///
+    /// # Errors
+    /// Returns [`Error::MissingChunk`]/[`Error::Rejected`] when a chunk is not
+    /// staged or the payload does not match the manifest.
+    pub fn stage_artifact(
+        &self,
+        manifest: &ArtifactManifest,
+        chunks: &[ChunkId],
+    ) -> Result<(), Error> {
+        let encoded = manifest.encode()?;
+        profile::validate_record(Record::ArtifactManifest, &encoded)?;
+        let id = manifest.id()?;
+        if manifest.chunks.len() != chunks.len()
+            || manifest
+                .chunks
+                .iter()
+                .zip(chunks)
+                .any(|(expected, given)| expected != given)
+        {
+            return Err(Error::Rejected(
+                "chunk list does not match the artifact manifest".into(),
+            ));
+        }
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| {
+            let mut payload: Vec<u8> = Vec::new();
+            for chunk in chunks {
+                let bytes: Vec<u8> = self
+                    .conn
+                    .query_row(
+                        "SELECT bytes FROM chunks WHERE id = ?1",
+                        params![chunk.as_bytes().as_slice()],
+                        |row| row.get(0),
+                    )
+                    .map_err(|_| Error::MissingChunk)?;
+                if chunk_id(&bytes) != *chunk {
+                    return Err(Error::Rejected(
+                        "stored chunk does not hash to its id".into(),
+                    ));
+                }
+                payload.extend_from_slice(&bytes);
+            }
+            if payload.len() as u64 != manifest.raw_length
+                || profile::raw_digest(&manifest.kind, &payload) != manifest.raw_digest
+            {
+                return Err(Error::Rejected(
+                    "artifact payload does not match its manifest".into(),
+                ));
+            }
+            self.conn.execute(
+                "INSERT OR IGNORE INTO artifacts(id, kind, raw_length, raw_digest, manifest)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    id.as_bytes().as_slice(),
+                    manifest.kind.as_str(),
+                    manifest.raw_length as i64,
+                    manifest.raw_digest.as_slice(),
+                    encoded,
+                ],
+            )?;
+            for (ordinal, chunk) in manifest.chunks.iter().enumerate() {
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO artifact_chunks(artifact_id, ordinal, chunk_id) VALUES (?1, ?2, ?3)",
+                    params![
+                        id.as_bytes().as_slice(),
+                        ordinal as i64,
+                        chunk.as_bytes().as_slice(),
+                    ],
+                )?;
+            }
+            self.conn.execute(
+                "INSERT OR IGNORE INTO content_availability(artifact_id, state) VALUES (?1, 'resident')",
+                params![id.as_bytes().as_slice()],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
     }
 
     /// Durably stage one chunk. Idempotent when the same bytes are staged again.
@@ -455,9 +550,6 @@ impl Store {
             return Err(Error::Rejected(
                 "batch names a different space than this store".into(),
             ));
-        }
-        if !publication.body.native_artifacts.is_empty() {
-            return Err(Error::NativeUnchecked);
         }
         // SQLite stores INTEGER as a signed i64; reject values that would wrap
         // on the way into the database.
@@ -524,6 +616,7 @@ impl Store {
         });
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         let mut metadata_payload: Option<Vec<u8>> = None;
+        let mut native_payloads: Vec<(ArtifactId, Vec<u8>)> = Vec::new();
         let result = (|| {
             // The keyed path checks the requests row first: key reuse must be
             // rejected even when the new request's batch is already published,
@@ -624,6 +717,8 @@ impl Store {
                     // raw_length was capped by manifest validation before this
                     // concatenation, so the allocation is bounded.
                     metadata_payload = Some(payload.concat());
+                } else if manifest.kind == "native-change-v1" {
+                    native_payloads.push((*artifact_id, payload.concat()));
                 }
                 // Content-addressed rows are shared: a second batch carrying a
                 // byte-identical artifact must not hit the PK. Hydration was
@@ -664,6 +759,10 @@ impl Store {
             profile::validate_record(Record::MetadataArtifact, &metadata_bytes)?;
             let metadata = profile::MetadataArtifact::decode(&metadata_bytes)?;
             projection::validate_against_history(&self.conn, &publication.body.parents, &metadata)?;
+            // I05 P7: native scope admission per §12.5 (only now is
+            // NativeUnchecked lifted).
+            let native_pairs =
+                crate::native::check_native(&self.conn, publication.body, &native_payloads)?;
             self.conn.execute(
                 "INSERT INTO batches(batch_id, public_key, branch, writer_epoch, sequence, lamport, body, quarantined)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
@@ -680,6 +779,8 @@ impl Store {
             // I05 P2: extract the batch's field writes into the MV register in
             // the same atomic commit.
             projection::record_batch(&self.conn, &batch_id, &metadata)?;
+            // I05 P7: record the validated native changes in the same commit.
+            crate::native::record_native(&self.conn, &batch_id, &native_pairs)?;
             for (ordinal, (artifact_id, _)) in encoded_artifacts.iter().enumerate() {
                 self.conn.execute(
                     "INSERT INTO batch_artifacts(batch_id, ordinal, artifact_id) VALUES (?1, ?2, ?3)",
@@ -975,6 +1076,76 @@ impl Store {
             &self.space,
             cut,
         )?)
+    }
+
+    /// All epochs declared for `file` at a cut, old epochs included (I05 P6).
+    ///
+    /// # Errors
+    /// Same as [`Store::register_at`].
+    pub fn epochs_at(
+        &self,
+        cut: &[BatchId],
+        file: crate::identity::FileId,
+    ) -> Result<Vec<(crate::identity::EpochId, profile::EpochDescriptor)>, Error> {
+        Ok(projection::epochs_at(&self.conn, cut, file)?)
+    }
+
+    /// Register the epoch-owned seed artifact for a text epoch (I05 P7, §12.4).
+    ///
+    /// Idempotent by `(epoch, artifact)`; a second, different seed for one
+    /// epoch is rejected. Chunks must already be staged. Runs in its own
+    /// transaction.
+    ///
+    /// # Errors
+    /// Returns [`Error::MissingChunk`]/[`Error::Rejected`] on unverified
+    /// bytes and [`Error::InvalidNativeScope`] when the seed does not match
+    /// the epoch's baseline.
+    pub fn register_seed(
+        &self,
+        epoch: &crate::identity::EpochId,
+        manifest: &ArtifactManifest,
+        chunks: &[ChunkId],
+    ) -> Result<(), Error> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = crate::native::register_seed(&self.conn, epoch, manifest, chunks);
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
+    }
+
+    /// Current text of `epoch` at a cut (I05 P8): seed plus the cut's native
+    /// changes, arrival-order independent. A historical read at a version is
+    /// the same call with the version's heads as the cut.
+    ///
+    /// # Errors
+    /// Same cut gate as [`Store::register_at`], plus [`Error::MissingDependency`]
+    /// when the epoch has no registered seed.
+    pub fn text_at(
+        &self,
+        cut: &[BatchId],
+        epoch: &crate::identity::EpochId,
+    ) -> Result<String, Error> {
+        crate::native::text_at(&self.conn, cut, epoch)
+    }
+
+    /// Text of `epoch` at a local native version within a cut (I05 P8).
+    ///
+    /// # Errors
+    /// Same as [`Store::text_at`].
+    pub fn text_at_version(
+        &self,
+        cut: &[BatchId],
+        epoch: &crate::identity::EpochId,
+        version: &[usize],
+    ) -> Result<String, Error> {
+        crate::native::text_at_version(&self.conn, cut, epoch, version)
     }
 
     /// Whether this batch id is a visible publication.
@@ -3233,7 +3404,7 @@ mod tests {
             store
                 .conn
                 .execute(
-                    "UPDATE format_meta SET value = '2' WHERE key = 'schema_minor'",
+                    "UPDATE format_meta SET value = '3' WHERE key = 'schema_minor'",
                     [],
                 )
                 .expect("bump minor");

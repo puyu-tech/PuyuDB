@@ -406,7 +406,7 @@ pub(crate) fn validate_against_history(
         .iter()
         .any(|op| matches!(op, Operation::Resolution { .. }))
     {
-        validate_resolutions(conn, parents, metadata)?;
+        validate_resolutions(conn, parents, metadata, &history)?;
     }
     Ok(())
 }
@@ -419,11 +419,10 @@ fn validate_resolutions(
     conn: &Connection,
     parents: &[BatchId],
     metadata: &MetadataArtifact,
+    history_writes: &[RawWrite],
 ) -> Result<(), Error> {
     let conflicts = conflicts_impl(conn, parents)?;
     let register = register_impl(conn, parents)?;
-    // One full closure read shared by all resolutions in this batch.
-    let history_writes = load_writes(conn, parents)?;
     let ancestors = ancestor_map(conn, parents)?;
     let mut closure: HashSet<BatchId> = parents.iter().copied().collect();
     for set in ancestors.values() {
@@ -737,18 +736,72 @@ fn supersedes(
     }
 }
 
-struct RawWrite {
-    file: FileId,
-    field: u64,
-    op_tag: u64,
-    batch: BatchId,
-    op_index: u64,
-    value: Vec<u8>,
+/// One raw `field_writes` row.
+pub(crate) struct RawWrite {
+    /// File the write concerns.
+    pub(crate) file: FileId,
+    /// Field tag.
+    pub(crate) field: u64,
+    /// Metadata operation tag.
+    pub(crate) op_tag: u64,
+    /// Producing batch.
+    pub(crate) batch: BatchId,
+    /// Operation index.
+    pub(crate) op_index: u64,
+    /// Canonical value bytes.
+    pub(crate) value: Vec<u8>,
 }
 
 fn decode_epoch_value(bytes: &[u8]) -> Result<EpochDescriptor, Error> {
     let item = canon::decode(bytes)?;
     Ok(EpochDescriptor::decode(&item)?)
+}
+
+// pub(crate) seams for the native module (same crate, admission path).
+pub(crate) fn decode_epoch_value_pub(bytes: &[u8]) -> Result<EpochDescriptor, Error> {
+    decode_epoch_value(bytes)
+}
+
+pub(crate) fn load_writes_pub(
+    conn: &Connection,
+    seeds: &[BatchId],
+) -> Result<Vec<RawWrite>, Error> {
+    load_writes(conn, seeds)
+}
+
+pub(crate) fn ancestor_map_pub(
+    conn: &Connection,
+    seeds: &[BatchId],
+) -> Result<HashMap<BatchId, HashSet<BatchId>>, Error> {
+    ancestor_map(conn, seeds)
+}
+
+pub(crate) fn check_cut_pub(conn: &Connection, cut: &[BatchId]) -> Result<(), Error> {
+    check_cut(conn, cut)
+}
+
+/// All epochs declared for `file` in the cut's closure — old epochs are
+/// retained and queryable after a reset (P6, §8.2/§5.6), sorted by identity.
+///
+/// # Errors
+/// Same cut gate as [`register_at`].
+pub fn epochs_at(
+    conn: &Connection,
+    cut: &[BatchId],
+    file: FileId,
+) -> Result<Vec<(EpochId, EpochDescriptor)>, Error> {
+    check_cut(conn, cut)?;
+    let writes = load_writes(conn, cut)?;
+    let mut out: Vec<(EpochId, EpochDescriptor)> = Vec::new();
+    for write in writes {
+        if write.file == file && write.field == Field::Epoch.tag() {
+            let descriptor = decode_epoch_value(&write.value)?;
+            out.push((descriptor.id()?, descriptor));
+        }
+    }
+    out.sort_by_key(|(id, _)| *id);
+    out.dedup_by_key(|(id, _)| *id);
+    Ok(out)
 }
 
 /// Bind-variable budget per statement. The bundled SQLite accepts at most

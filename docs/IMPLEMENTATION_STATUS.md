@@ -568,3 +568,18 @@ specific invalid_operation gate) landed as the follow-up commit; the
 Incorporate check scans all epoch declarations in the parent closure, and
 RetainEpoch must name the conflict's selected epoch. Tag-2/tag-3 positive
 tests assert post-resolution cuts (epochs == [selected/new], conflicts empty).
+
+Phase 3 (plan P6-P8) landed: epoch lifecycle reads (epochs_at retains and
+lists old epochs after a reset), the native_changes table (schema minor 2,
+seed = NULL producer, unique non-seed producer), seed registration with
+§12.4 validation (empty baseline ⇒ zero-length seed; otherwise seed-actor-only
+ops and text == baseline), native admission with the §12.5 scope checks
+(writer-derived actor name, insert/delete only, actor-sequence continuity,
+all native parents within the batch parent cut, root creation only in the
+seed) — NativeUnchecked is now lifted and replaced by invalid_native_scope —
+and native text reads (text_at / text_at_version over seed + closure changes,
+arrival-order independent, Kahn application). The production dt-text-v1
+binding lives in puyudb-crdt::dt_text (core depends on crdt per §4.3); T01/T02
+evidence includes DT-vs-AM slow-reference parity and convergence across
+application orders, plus two-store SemanticManifestId equality from phase 2.
+UTF-8 byte-offset positions are boundary-checked helpers (§5.5).

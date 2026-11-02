@@ -771,6 +771,34 @@ impl ArtifactManifest {
     pub fn id(&self) -> Result<ArtifactId, Error> {
         Ok(artifact_id(&self.encode()?))
     }
+
+    /// Decode an already validated canonical manifest item.
+    ///
+    /// The item is re-validated first, so decoding never accepts anything
+    /// [`validate_record`] would reject.
+    ///
+    /// # Errors
+    /// Returns the validation failure for non-canonical or out-of-profile input.
+    pub fn decode(item: &Item) -> Result<Self, Error> {
+        validate_artifact_manifest(item)?;
+        let record = as_list(item, 5, "artifact_manifest")?;
+        let kind = as_text(&record[1], "artifact kind", MAX_KIND_TEXT_BYTES)?.to_owned();
+        let Item::Uint(raw_length) = record[2] else {
+            return Err(Error::encoding("raw length is not a uint"));
+        };
+        let raw_digest = bytes_fixed(&record[3], "raw digest")?;
+        let chunk_items = as_array(&record[4], "chunk list")?;
+        let mut chunks = Vec::with_capacity(chunk_items.len());
+        for chunk in chunk_items {
+            chunks.push(ChunkId::from_array(bytes_fixed(chunk, "chunk id")?));
+        }
+        Ok(Self {
+            kind,
+            raw_length,
+            raw_digest,
+            chunks,
+        })
+    }
 }
 
 /// Native text artifact payload.
@@ -1614,7 +1642,7 @@ impl Operation {
 }
 
 fn decode_resolution(tag: u64, payload: &Item) -> Result<Resolution, Error> {
-    Ok(match tag {
+    let resolution = match tag {
         0 => Resolution::RetainDelete,
         1 => Resolution::RestoreEdit,
         2 => Resolution::RetainEpoch(EpochId::from_array(bytes_fixed(payload, "retained epoch")?)),
@@ -1625,7 +1653,11 @@ fn decode_resolution(tag: u64, payload: &Item) -> Result<Resolution, Error> {
                 provenance: ArtifactId::from_array(bytes_fixed(&fields[1], "provenance artifact")?),
             }
         }
-        _ => {
+        // Only tag 4 is Choose; anything else is an unassigned tag, not a
+        // catch-all (§22.1: unknown tags are an explicit unsupported-semantic
+        // error — validate_operation already rejects them, this is the
+        // decode-side guard).
+        4 => {
             let fields = as_list(payload, 2, "alternative payload")?;
             let identity = as_list(&fields[1], 2, "write identity")?;
             Resolution::Choose {
@@ -1636,7 +1668,11 @@ fn decode_resolution(tag: u64, payload: &Item) -> Result<Resolution, Error> {
                 },
             }
         }
-    })
+        _ => {
+            return Err(Error::Capability("unassigned resolution tag".to_owned()));
+        }
+    };
+    Ok(resolution)
 }
 
 fn decode_git_oid(item: &Item) -> Result<GitOid, Error> {
@@ -1934,7 +1970,7 @@ fn validate_operation(item: &Item) -> Result<(), Error> {
                     as_bytes(&nested[1], 32, "provenance artifact")?;
                     Ok(())
                 }
-                (_, payload) => {
+                (4, payload) => {
                     let nested = as_list(payload, 2, "alternative payload")?;
                     as_tag(&nested[0], &FIELD_TAGS, "field tag")?;
                     let identity = as_list(&nested[1], 2, "write identity")?;
@@ -1942,6 +1978,7 @@ fn validate_operation(item: &Item) -> Result<(), Error> {
                     as_uint(&identity[1], "operation index", MAX_OPERATION_INDEX)?;
                     Ok(())
                 }
+                _ => Err(Error::Capability("unassigned resolution tag".to_owned())),
             }
         }
         _ => {
