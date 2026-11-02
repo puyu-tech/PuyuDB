@@ -156,7 +156,10 @@ impl TextDoc {
         self.log.checkout(version).content().to_string()
     }
 
-    /// Portable remote frontier: (agent name, next sequence) pairs.
+    /// Portable remote frontier: (agent name, last used sequence index)
+    /// pairs — the pinned fork rev 0d5008b returns the last index, so an
+    /// actor's next operation continues at `value + 1` (probe-pinned by the
+    /// `frontier_convention` test below).
     #[must_use]
     pub fn remote_frontier(&self) -> Vec<(String, usize)> {
         self.log
@@ -199,7 +202,8 @@ impl TextDoc {
     }
 
     /// Append a remote op span starting at an explicit sequence index
-    /// (used by tests to forge sequence gaps/restarts).
+    /// (used by tests to forge sequence gaps/restarts). Not public API.
+    #[doc(hidden)]
     pub fn add_remote_insert(
         &mut self,
         agent: u32,
@@ -320,6 +324,28 @@ mod tests {
     use super::*;
     use crate::experiment::{self, EditContext};
     use automerge::ReadDoc;
+
+    /// Pin the pinned fork's frontier convention: after an N-char insert the
+    /// frontier is (name, N-1) (last used index) and the span is (0, N), so
+    /// the next op continues at N. A fork rev bump that changes this must
+    /// fail here, not reopen the §12.5 continuity off-by-one.
+    #[test]
+    fn frontier_convention_is_last_used_index() {
+        let mut doc = TextDoc::empty();
+        let agent = doc.agent_id("s:seed");
+        doc.add_insert(agent, &[], 0, "hello");
+        assert_eq!(doc.remote_frontier(), vec![("s:seed".to_owned(), 4)]);
+        assert_eq!(
+            doc.submitted_spans((0, doc.op_len())),
+            vec![SubmittedSpan {
+                agent: "s:seed".to_owned(),
+                seq_start: 0,
+                seq_end: 5,
+            }]
+        );
+        doc.add_insert(agent, &doc.local_frontier(), 5, "!");
+        assert_eq!(doc.remote_frontier(), vec![("s:seed".to_owned(), 5)]);
+    }
 
     /// T01/T02-style parity: the same seed + edit sequence produces the same
     /// text on the DT production path and on the AM slow-reference path.

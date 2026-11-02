@@ -596,3 +596,11 @@ until I08); seeds must be exactly the seed actor's first operation with a
 text-baseline-v1 baseline. New tests: empty-baseline read+edit, dependent
 chain across two stores, sequence restart, smuggled seed actor, two native
 artifacts for one epoch.
+
+GATE C round 2 (365284c): the §12.5 actor-sequence continuity check was
+restored explicitly (spans sorted, first seq_start == writer frontier last
+index + 1, contiguous) with a forged-gap negative test; the pinned fork's
+frontier convention (last used index, not next) is probe-pinned by
+dt_text::tests::frontier_convention_is_last_used_index and the spec §12.4
+sentence corrected to match the pinned rev; metadata-id-in-native-slots
+rejected; add_remote_insert marked doc(hidden).

@@ -619,10 +619,12 @@ editing batch that arrives.
 - The seed artifact is `NativeArtifactV1` with `profile = "dt-text-v1"`, no
   enclosing batch, and its `epoch32` in the payload. Its bytes are the native
   export of the seeded document produced by the seed actor's first native
-  operation. DT operation indices start at 0 per agent and a remote frontier is
-  `(name, next_index)`, so a seeded document's native frontier is
-  `(seed name, 1)`; a native agent index is never the outer batch `sequence` of
-  §4.1.
+  operation. DT operation indices start at 0 per agent; with the pinned fork
+  (rev `0d5008bc…`, probed and pinned by `puyudb-crdt`'s `frontier_convention`
+  test) a remote frontier entry is `(name, last_used_index)`, so a seeded
+  document's native frontier after the seed's baseline insert of N scalars is
+  `(seed name, N-1)` and the writer actor's first op continues at index N; a
+  native agent index is never the outer batch `sequence` of §4.1.
 - An empty baseline yields a **zero-length** native payload: no sentinel insert,
   no delete, no dummy operation, and no hidden eager seeding. The artifact is
   still well defined and epoch-specific, because its payload binds `epoch32`
