@@ -20,6 +20,11 @@
 //! only: the bundled SQLite accepts at most 32,766 bind variables per
 //! statement, so seed lists are chunked well below that and the (unbounded)
 //! ancestor closure is never turned into bind parameters.
+//!
+//! Projections see visible history only: quarantined batches (writer
+//! equivocation) are not history and their writes are excluded everywhere;
+//! a cut naming one is an explicit error at the boundary, while a quarantine
+//! inside an otherwise visible closure simply drops that batch's writes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -490,10 +495,13 @@ fn seed_params(chunk: &[BatchId]) -> Vec<&[u8]> {
         .collect()
 }
 
-/// Map every batch in the closure of `seeds` to its own ancestor closure
-/// (itself included), so supersession can be checked for any writing batch,
-/// not only the seeds. Quarantined batches are not visible history and are
-/// excluded at the seed and at every recursive step.
+/// Map each writing batch in the closure of `seeds` to its own ancestor
+/// closure (itself included), so supersession can be checked for any writing
+/// batch, not only the seeds. The map is rooted only at batches that have
+/// field writes, bounding it at (#write-batches x closure) — write-free
+/// batches are still walked as ancestors, never as roots. Quarantined
+/// batches are not visible history and are excluded at the seed and at every
+/// recursive step.
 fn ancestor_map(
     conn: &Connection,
     seeds: &[BatchId],
@@ -520,7 +528,8 @@ fn ancestor_map(
                JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
              ),
              cl(root, node) AS (
-               SELECT x, x FROM mem
+               SELECT mem.x, mem.x FROM mem
+               JOIN (SELECT DISTINCT batch_id FROM field_writes) w ON w.batch_id = mem.x
                UNION
                SELECT cl.root, bp.parent FROM cl
                JOIN batch_parents bp ON bp.child = cl.node

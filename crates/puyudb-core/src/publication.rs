@@ -1463,6 +1463,15 @@ fn check_format_meta(conn: &Connection, space: &SpaceId, db_existed: bool) -> Re
             if minor > SCHEMA_MINOR {
                 return Err(Error::UnsupportedFormat(format!("schema minor {minor}")));
             }
+            if minor < SCHEMA_MINOR {
+                // The new tables above were just created by CREATE IF NOT
+                // EXISTS in this same transaction; record the upgraded minor
+                // so format_meta never understates the on-disk schema.
+                conn.execute(
+                    "UPDATE format_meta SET value = ?1 WHERE key = 'schema_minor'",
+                    params![SCHEMA_MINOR.to_string()],
+                )?;
+            }
             let codec = get("native_codec")?.unwrap_or_default();
             if codec != NATIVE_CODEC {
                 return Err(Error::UnsupportedFormat(format!("native codec {codec}")));
@@ -2967,6 +2976,64 @@ mod tests {
             store
                 .register_at(&[BatchId::from_array([0xee; 32])])
                 .is_err()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_free_batches_stay_in_the_closure_but_not_the_write_map() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        // A write-free middle batch: no field writes, but still an ancestor.
+        let empty = child_ops(&root, 2, 2, vec![], vec![root_id], 70);
+        let empty_id = publish_fixture(&store, &empty);
+        let head = child_ops(
+            &empty,
+            3,
+            3,
+            vec![path_op(1, "head.txt")],
+            vec![empty_id],
+            71,
+        );
+        let head_id = publish_fixture(&store, &head);
+        // The head's write supersedes the root's across the write-free middle.
+        let register = store.register_at(&[head_id]).expect("register");
+        assert_eq!(register_paths(&register), vec![(0, "head.txt".to_owned())]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn older_minor_database_is_upgraded_in_the_open_transaction() {
+        let dir = temp();
+        {
+            let store = Store::open(&dir, &SPACE).expect("open");
+            // Simulate an I04 (minor 0) database: same tables, old minor row.
+            store
+                .conn
+                .execute(
+                    "UPDATE format_meta SET value = '0' WHERE key = 'schema_minor'",
+                    [],
+                )
+                .expect("downgrade minor");
+        }
+        let store = Store::open(&dir, &SPACE).expect("reopen upgrades");
+        let minor: String = store
+            .conn
+            .query_row(
+                "SELECT value FROM format_meta WHERE key = 'schema_minor'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read minor");
+        assert_eq!(minor, SCHEMA_MINOR.to_string());
+        // The projection table is usable after the upgrade.
+        let f = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let id = publish_fixture(&store, &f);
+        assert_eq!(
+            register_paths(&store.register_at(&[id]).expect("register")),
+            vec![(0, "a.txt".to_owned())]
         );
         let _ = fs::remove_dir_all(&dir);
     }
