@@ -13,7 +13,8 @@ Not a production codec or admission path.
 
 CLI: ``python3 scripts/i05_semantic_manifest.py`` verifies the committed
 fixtures under ``tests/fixtures/metadata-v1/`` and exits nonzero on any
-mismatch, on a resolution lacking its §9 same-batch effect, or on a manifest
+mismatch, on a resolution lacking its §9 same-batch effect or whose tag does
+not match the named conflict's kind (§22.2), or on a manifest
 whose conflicts disagree with the recomputed cut; ``--write`` regenerates
 them from the builders below.
 """
@@ -44,6 +45,17 @@ CONTEXT_SCHEMA_TAGS = tuple(range(8))
 OPERATION_TAGS = tuple(range(10))
 RESOLUTION_TAGS = tuple(range(5))
 CONFLICT_KIND_TAGS = (0, 1, 2)
+# §22.2 / validate_resolutions kind_matches: resolution tags are
+# tag-specific per conflict kind, never a generic value choice for every
+# kind — {0,1} (RetainDelete/RestoreEdit) on kind-1 delete_edit, {2,3}
+# (RetainEpoch/Incorporate) on kind-2 epoch_edit, {4} (Choose) on kind-0
+# register.
+RESOLUTION_KIND = {0: 1, 1: 1, 2: 2, 3: 2, 4: 0}
+
+
+def resolution_matches_kind(resolution: int, kind: int) -> bool:
+    """The kind<->resolution-tag correspondence Rust admission enforces."""
+    return RESOLUTION_KIND[resolution] == kind
 GIT_ALGORITHM_WIDTHS = {1: 20, 2: 32}
 RESERVED_SEGMENTS = (".git", ".puyu")
 
@@ -720,11 +732,11 @@ def _entry(file_id, live, paths, epochs, contents, modes, conflicts) -> dict:
 ENTRY_A_CONFLICTED = _entry(FILE_A, [0, 1], ["docs/renamed.md"],
                             [EPOCH_TEXT, EPOCH_OPAQUE_A], [], [0],
                             [CID_DELETE_EDIT])
-# Post-resolution cut: the resolution batch's fresh Alive and tag-3 writes
+# Post-resolution cut: the resolution batch's fresh Deleted and tag-3 writes
 # supersede the conflicted alternatives, and the recomputed cut carries no
 # ConflictId (tag8_resolution_publishes_fresh_assignment_and_supersedes_alternatives
-# in crates/puyudb-core/src/publication.rs).
-ENTRY_A_RESOLVED = _entry(FILE_A, [1], ["docs/renamed.md"], [EPOCH_OPAQUE_A],
+# in crates/puyudb-core/src/publication.rs). A deleted file keeps its entry.
+ENTRY_A_RESOLVED = _entry(FILE_A, [0], ["docs/renamed.md"], [EPOCH_OPAQUE_A],
                           [], [0], [])
 ENTRY_B_OPAQUE = _entry(FILE_B, [1], ["assets/logo.bin"], [EPOCH_OPAQUE_B],
                         [OPAQUE_ARTIFACT], [0], [])
@@ -806,16 +818,18 @@ def build_scenarios() -> dict:
                             [EPOCH_TEXT, EPOCH_SYMLINK], [], [1, 2], [CID_MODE])]})
     resolution = _scenario(
         "resolution",
-        "Batch B resolves the delete_edit conflict by retaining the opaque "
-        "epoch (resolution tag 2) with the fresh tag-3 selection of that epoch "
-        "in the same batch — the required same-batch effect of §9 — and asserts "
-        "provenance over batch A; it also re-asserts liveness, associates a "
-        "SHA-256 Git object, emits a context event and assigns file B's opaque "
-        "value. The fresh writes supersede the conflicted alternatives, so the "
-        "recomputed cut — and the manifest — carries no ConflictId.",
-        [{"tag": 2, "file": FILE_A.hex(), "live": 1},
-         {"tag": 8, "conflict": CID_DELETE_EDIT.hex(), "resolution": 2,
-          "payload": EPOCH_OPAQUE_A.hex()},
+        "Batch B resolves the delete_edit conflict by retaining the deletion "
+        "(resolution tag 0, RetainDelete) with the required fresh tag-2 "
+        "Deleted liveness assignment in the same batch — the 'New Deleted "
+        "liveness assignment' same-batch effect of §9 — and still selects "
+        "the opaque epoch (tag 3); it also asserts provenance over batch A, "
+        "associates a SHA-256 Git object, emits a context event and assigns "
+        "file B's opaque value. The fresh writes supersede the conflicted "
+        "alternatives, so the recomputed cut — and the manifest — carries no "
+        "ConflictId; the deleted file keeps its entry with live Deleted.",
+        [{"tag": 2, "file": FILE_A.hex(), "live": 0},
+         {"tag": 8, "conflict": CID_DELETE_EDIT.hex(), "resolution": 0,
+          "payload": None},
          {"tag": 3, "file": FILE_A.hex(), "epoch": DESC_OPAQUE_A},
          {"tag": 9, "sources": [BATCH_A.hex()], "relation": 1, "detail": None},
          {"tag": 6, "repository": REPOSITORY.hex(),
@@ -972,6 +986,13 @@ def _has_fresh_effect(op: dict, operations: list) -> bool:
 
 def verify_scenarios(doc: dict) -> list:
     failures = []
+    # Corpus-wide ConflictId -> kind lookup: a resolution scenario's own
+    # conflicts list is its post-resolution cut (empty), so the named
+    # conflict is found in the scenario that derives it.
+    conflict_kinds = {}
+    for scenario in doc["scenarios"]:
+        for conflict_rec in scenario["conflicts"]:
+            conflict_kinds[conflict_rec["conflict_id"]] = conflict_rec["kind"]
     for scenario in doc["scenarios"]:
         name = scenario["name"]
         ops = [encode_operation(op) for op in scenario["operations"]]
@@ -1020,6 +1041,19 @@ def verify_scenarios(doc: dict) -> list:
             if op["tag"] == 8 and not _has_fresh_effect(op, scenario["operations"]):
                 failures.append(f"{name}: resolution tag {op['resolution']} lacks "
                                 f"its required same-batch effect")
+        # §22.2: the resolution tag must match the named conflict's kind, the
+        # same kind_matches rule Rust admission enforces — {0,1}->kind 1,
+        # {2,3}->kind 2, {4}->kind 0.
+        for op in scenario["operations"]:
+            if op["tag"] != 8:
+                continue
+            kind = conflict_kinds.get(op["conflict"])
+            if kind is None:
+                failures.append(f"{name}: resolution names conflict "
+                                f"{op['conflict'][:8]} that no scenario derives")
+            elif not resolution_matches_kind(op["resolution"], kind):
+                failures.append(f"{name}: resolution tag {op['resolution']} does "
+                                f"not match conflict kind {kind} (§22.2 kind_matches)")
         # The manifest's per-entry conflicts must equal the conflicts
         # recomputed at the scenario's cut.
         derived = {}

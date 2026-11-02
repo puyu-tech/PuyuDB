@@ -35,11 +35,14 @@ therefore evidence about the specification, not about a shared dependency.
 scenarios, which mirror the derivation rules implemented in
 `crates/puyudb-core/src/projection.rs`:
 
-- a tag-8 resolution with tag 2 (RetainEpoch) carries the fresh same-batch
-  tag-3 selection of the retained epoch — the "Required same-batch effect:
-  New selection of that epoch" of spec §9, enforced in Rust by `has_epoch_op`
-  in `validate_resolutions` — and the validator rejects any scenario whose
-  resolution lacks its same-batch effect;
+- a tag-8 resolution with tag 0 (RetainDelete) on the kind-1 `delete_edit`
+  conflict carries the fresh same-batch tag-2 `Deleted` liveness assignment —
+  the "New `Deleted` liveness assignment" of spec §9, enforced in Rust by
+  `has_live_op` in `validate_resolutions` — and the validator rejects any
+  scenario whose resolution lacks its same-batch effect or whose tag does not
+  match the named conflict's kind (§22.2 `kind_matches`: tags {0,1} only on
+  kind-1 `delete_edit`, tags {2,3} only on kind-2 `epoch_edit`, tag 4 only on
+  kind-0 register conflicts);
 - after that resolution the recomputed cut carries no `ConflictId`: the
   manifest entry's `conflicts` list is empty and matches the scenario's
   derived-conflicts list, as `tag8_resolution_publishes_fresh_assignment_and_supersedes_alternatives`

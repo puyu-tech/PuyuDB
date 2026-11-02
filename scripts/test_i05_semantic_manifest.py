@@ -119,18 +119,39 @@ class DerivationSemanticsTests(unittest.TestCase):
     def _entry(self, scenario, file_hex):
         return {e["file"]: e for e in scenario["manifest"]["entries"]}[file_hex]
 
-    def test_resolution_batch_carries_the_fresh_tag3_epoch_write(self):
+    def test_resolution_batch_carries_the_fresh_deleted_liveness_write(self):
         scenario = self._scenario("resolution")
         resolutions = [op for op in scenario["operations"] if op["tag"] == 8]
         self.assertEqual(len(resolutions), 1)
         op = resolutions[0]
-        self.assertEqual(op["resolution"], 2)
-        fresh = [o for o in scenario["operations"] if o["tag"] == 3 and
-                 manifest.epoch_id(manifest.encode_epoch_descriptor(o["epoch"])).hex()
-                 == op["payload"]]
+        self.assertEqual(op["resolution"], 0)
+        self.assertIsNone(op["payload"])
+        fresh = [o for o in scenario["operations"] if o["tag"] == 2 and o["live"] == 0]
         self.assertEqual(len(fresh), 1,
-                         "spec §9 / validate_resolutions: tag 2 requires a new "
-                         "selection of that epoch in the same batch")
+                         "spec §9 / validate_resolutions: tag 0 (RetainDelete) "
+                         "requires a fresh Deleted liveness assignment in the "
+                         "same batch ('New Deleted liveness assignment')")
+
+    def test_resolution_tag_matches_the_named_conflict_kind(self):
+        # §22.2 kind_matches, as enforced by validate_resolutions in
+        # crates/puyudb-core/src/projection.rs: {0,1}->kind 1, {2,3}->kind 2,
+        # {4}->kind 0. Tag 2 must never name a kind-1 delete_edit conflict.
+        self.assertEqual(manifest.RESOLUTION_KIND, {0: 1, 1: 1, 2: 2, 3: 2, 4: 0})
+        for resolution, kind in manifest.RESOLUTION_KIND.items():
+            self.assertTrue(manifest.resolution_matches_kind(resolution, kind))
+        self.assertFalse(manifest.resolution_matches_kind(2, 1))
+        self.assertFalse(manifest.resolution_matches_kind(0, 0))
+        self.assertFalse(manifest.resolution_matches_kind(0, 2))
+        self.assertFalse(manifest.resolution_matches_kind(4, 1))
+        scenario = self._scenario("resolution")
+        op = [op for op in scenario["operations"] if op["tag"] == 8][0]
+        self.assertEqual(op["conflict"], manifest.CID_DELETE_EDIT.hex())
+        self.assertEqual(manifest.CONFLICT_DELETE_EDIT["kind"], 1)
+        self.assertTrue(
+            manifest.resolution_matches_kind(op["resolution"],
+                                             manifest.CONFLICT_DELETE_EDIT["kind"]),
+            "the committed scenario satisfies the same kind<->tag mapping Rust "
+            "admission enforces")
 
     def test_resolved_conflict_disappears_from_the_recomputed_cut(self):
         scenario = self._scenario("resolution")
@@ -140,6 +161,23 @@ class DerivationSemanticsTests(unittest.TestCase):
                          "tag8_resolution_publishes_fresh_assignment_and_"
                          "supersedes_alternatives: the resolved ConflictId is "
                          "absent from the recomputed cut")
+        self.assertEqual(entry["live"], [0],
+                         "RetainDelete: the fresh Deleted assignment supersedes "
+                         "both liveness alternatives; the deleted file keeps "
+                         "its entry")
+
+    def test_verify_scenarios_rejects_a_kind_mismatched_resolution(self):
+        doc = load("scenarios.json")
+        for scenario in doc["scenarios"]:
+            for op in scenario["operations"]:
+                if op["tag"] == 8:
+                    # RetainEpoch (tag 2) naming the kind-1 delete_edit
+                    # conflict: the exact mismatch Rust admission rejects.
+                    op["resolution"] = 2
+                    op["payload"] = manifest.EPOCH_OPAQUE_A.hex()
+        failures = manifest.verify_scenarios(doc)
+        self.assertTrue(any("kind_matches" in failure for failure in failures),
+                        f"expected a kind_matches failure, got {failures}")
 
     def test_delete_edit_conflict_names_the_edited_epoch_only(self):
         scenario = self._scenario("delete-concurrent-edit")
