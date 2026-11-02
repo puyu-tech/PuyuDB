@@ -52,8 +52,10 @@ No releases have been published.
   never auto-resolved, conflict derivation (kinds 0/1/2 with stable
   `ConflictId`s, recomputed from history, never persisted), tag-8 resolution
   admission, and the canonical `SemanticManifestV1` at a cut, golden-pinned
-  and identical across two independent replicas. `publish` still refuses
-  native artifacts; native admission/reads (plan P6-P8) are phase 3. See
+  and identical across two independent replicas. Native admission with the
+  §12.5 scope checks (`invalid_native_scope`), epoch-owned seeds, the
+  `native_changes` table, and native text reads at a cut (`text_at`) have since
+  landed as phase 3 — `publish` no longer refuses native artifacts. See
   `docs/validation/I05-phase2-projections.md`.
 
 There is no working database engine, persisted format, server, or SDK.

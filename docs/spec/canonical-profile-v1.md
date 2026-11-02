@@ -623,8 +623,9 @@ editing batch that arrives.
   (rev `0d5008bc…`, probed and pinned by `puyudb-crdt`'s `frontier_convention`
   test) a remote frontier entry is `(name, last_used_index)`, so a seeded
   document's native frontier after the seed's baseline insert of N scalars is
-  `(seed name, N-1)` and the writer actor's first op continues at index N; a
-  native agent index is never the outer batch `sequence` of §4.1.
+  `(seed name, N-1)`, so the seed actor's next op would continue at index N;
+  the writer actor's first op starts at index 0 of its own per-agent space
+  (§12.5). A native agent index is never the outer batch `sequence` of §4.1.
 - An empty baseline yields a **zero-length** native payload: no sentinel insert,
   no delete, no dummy operation, and no hidden eager seeding. The artifact is
   still well defined and epoch-specific, because its payload binds `epoch32`

@@ -597,7 +597,7 @@ text-baseline-v1 baseline. New tests: empty-baseline read+edit, dependent
 chain across two stores, sequence restart, smuggled seed actor, two native
 artifacts for one epoch.
 
-GATE C round 2 (365284c): the §12.5 actor-sequence continuity check was
+GATE C round 2 (365284c, docs in 9ded4ec): the §12.5 actor-sequence continuity check was
 restored explicitly (spans sorted, first seq_start == writer frontier last
 index + 1, contiguous) with a forged-gap negative test; the pinned fork's
 frontier convention (last used index, not next) is probe-pinned by
