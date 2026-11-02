@@ -451,6 +451,23 @@ fn validate_resolutions(
             }
         }
         let file = found.file;
+        // §22.2: resolutions are tag-specific per conflict kind, never a
+        // generic value choice for every kind.
+        let kind_matches = matches!(
+            (found.kind, resolution),
+            (
+                ConflictKind::DeleteEdit,
+                Resolution::RetainDelete | Resolution::RestoreEdit
+            ) | (
+                ConflictKind::EpochEdit,
+                Resolution::RetainEpoch(_) | Resolution::Incorporate { .. }
+            ) | (ConflictKind::Register, Resolution::Choose { .. })
+        );
+        if !kind_matches {
+            return Err(Error::InvalidOperation(
+                "resolution tag does not match the named conflict's kind".into(),
+            ));
+        }
         match resolution {
             Resolution::RetainDelete => {
                 if !has_live_op(metadata, file, LiveTag::Deleted) {
@@ -475,6 +492,20 @@ fn validate_resolutions(
                 }
             }
             Resolution::Incorporate { epoch, provenance } => {
+                // Incorporation requires an explicit NEW epoch, not a
+                // relabeling of one already declared for the file (§22.2).
+                let already_declared = register.iter().any(|w| {
+                    w.file == file
+                        && w.field == Field::Epoch
+                        && matches!(&w.value, FieldValue::Epoch(d)
+                            if d.id().map(|id| id == *epoch).unwrap_or(false))
+                });
+                if already_declared {
+                    return Err(Error::InvalidOperation(
+                        "incorporation must name a new epoch not already declared for the file"
+                            .into(),
+                    ));
+                }
                 if !has_epoch_op(metadata, file, epoch)? {
                     return Err(Error::InvalidOperation(
                         "incorporation lacks the fresh explicit epoch write in the same batch"
@@ -503,6 +534,23 @@ fn validate_resolutions(
                         "chosen write identity is not visible at the parent cut".into(),
                     ));
                 };
+                // Resolution field tags: 0 path, 1 content value, 2 mode; the
+                // chosen write's field must be the one named.
+                let expected_field = match chosen.field {
+                    Field::Path => 0,
+                    Field::Content => 1,
+                    Field::Mode => 2,
+                    Field::Live | Field::Epoch => {
+                        return Err(Error::InvalidOperation(
+                            "chosen alternative is not a path/content/mode field".into(),
+                        ));
+                    }
+                };
+                if *field != expected_field {
+                    return Err(Error::InvalidOperation(
+                        "resolution field tag does not match the chosen write's field".into(),
+                    ));
+                }
                 let matches_fresh_op = |op: &Operation| match (field, op) {
                     (0, Operation::Path { file: f, path }) => {
                         *f == file && matches!(&chosen.value, FieldValue::Path(p) if p == path)
@@ -898,6 +946,7 @@ pub(crate) fn files_impl(conn: &Connection, cut: &[BatchId]) -> Result<Vec<FileP
 /// # Errors
 /// Same cut gate as [`register_at`].
 pub fn paths_at(conn: &Connection, cut: &[BatchId]) -> Result<Vec<(Path, Vec<FileId>)>, Error> {
+    check_cut(conn, cut)?;
     let files = files_impl(conn, cut)?;
     let mut map: BTreeMap<String, Vec<FileId>> = BTreeMap::new();
     for projection in files {
@@ -956,9 +1005,13 @@ pub fn branch_heads(conn: &Connection, branch: &BranchId) -> Result<Vec<BatchId>
           SELECT batch_id FROM batches WHERE branch = ?1 AND quarantined = 0
         ),
         d(root, x) AS (
-          SELECT h.x, bp.child FROM h JOIN batch_parents bp ON bp.parent = h.x
+          SELECT h.x, bp.child FROM h
+          JOIN batch_parents bp ON bp.parent = h.x
+          JOIN batches cb ON cb.batch_id = bp.child AND cb.quarantined = 0
           UNION
-          SELECT d.root, bp.child FROM d JOIN batch_parents bp ON bp.parent = d.x
+          SELECT d.root, bp.child FROM d
+          JOIN batch_parents bp ON bp.parent = d.x
+          JOIN batches cb ON cb.batch_id = bp.child AND cb.quarantined = 0
         )
         SELECT h.x FROM h
         WHERE NOT EXISTS (
@@ -1042,14 +1095,6 @@ pub(crate) fn conflicts_impl(conn: &Connection, cut: &[BatchId]) -> Result<Vec<C
             .copied()
             .filter(|w| w.op_tag == 3 || w.op_tag == 4)
             .collect();
-        let mut epoch_ids: Vec<EpochId> = Vec::new();
-        for write in group(Field::Epoch) {
-            if let FieldValue::Epoch(descriptor) = &write.value {
-                epoch_ids.push(descriptor.id()?);
-            }
-        }
-        epoch_ids.sort();
-        epoch_ids.dedup();
         for deletion in &deleted {
             for edit in &edits {
                 if !concurrent(&deletion.write.batch, &edit.write.batch) {
@@ -1058,12 +1103,21 @@ pub(crate) fn conflicts_impl(conn: &Connection, cut: &[BatchId]) -> Result<Vec<C
                 if !edit_base_saw_alive(conn, &edit.write.batch, *file)? {
                     continue;
                 }
+                // §9: epochs holds the distinct epoch IDs the conflict
+                // concerns — for delete_edit that is the edited epoch, not
+                // every epoch selection of the file, so an unrelated
+                // concurrent epoch selection cannot change this ConflictId.
+                let target_epoch = match &edit.value {
+                    FieldValue::Content { epoch, .. } => *epoch,
+                    FieldValue::Epoch(descriptor) => descriptor.id()?,
+                    _ => continue,
+                };
                 let mut participants = vec![deletion.write, edit.write];
                 participants.sort();
                 out.push(Conflict {
                     kind: ConflictKind::DeleteEdit,
                     file: *file,
-                    epochs: epoch_ids.clone(),
+                    epochs: vec![target_epoch],
                     participants,
                 });
             }

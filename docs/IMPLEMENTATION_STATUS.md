@@ -550,3 +550,14 @@ admission (conflict visible at the parent cut, all participants observed, and
 a fresh corresponding field assignment in the same batch), and the canonical
 `SemanticManifestV1` at a cut with a golden-pinned `SemanticManifestId`
 (identical across two independent replicas in both publish orders).
+
+Phase 2 GATE B audit fixes landed: paths_at/prefix_conflicts_at now run the
+same cut gate as register_at (no approximate views); kind-1 delete_edit
+conflicts carry only the edited epoch in `epochs` so unrelated concurrent
+epoch selections cannot change the ConflictId; tag-8 admission now enforces
+the §22.2 kind<->tag correspondence (0/1 on delete_edit, 2/3 on epoch_edit,
+4 on register conflicts, plus the field-tag match for Choose and the
+new-epoch requirement for Incorporate); branch_heads no longer walks through
+quarantined batches; the golden corpus resolution scenario was corrected to
+tag 0 + fresh Deleted assignment. Quarantine-inside-closure semantics pinned
+by tests.

@@ -1750,14 +1750,19 @@ mod tests {
         }
     }
 
-    /// A child of `parent` on a second writer stream (different key), so it is
+    /// A child of `parent` on another writer stream (key `seed`), so it is
     /// causally concurrent with the first stream's children of the same parent.
-    fn second_writer_child(parent: &Fixture, ops: Vec<profile::Operation>, salt: u8) -> Fixture {
+    fn nth_writer_child(
+        parent: &Fixture,
+        seed: &[u8; 32],
+        ops: Vec<profile::Operation>,
+        salt: u8,
+    ) -> Fixture {
         let (manifest, chunks) = frame_ops(ops, salt);
         let body = BatchBody {
             space: SPACE,
             branch: parent.body.branch,
-            public_key: profile::public_key(&[4; 32]),
+            public_key: profile::public_key(seed),
             writer_epoch: WriterEpoch::from_array([4; 16]),
             sequence: 1,
             previous: None,
@@ -1766,13 +1771,19 @@ mod tests {
             native_artifacts: Vec::new(),
             metadata: manifest.id().expect("artifact id"),
         };
-        let signature = profile::sign_batch(&[4; 32], &body.space, &body.id().expect("id"));
+        let signature = profile::sign_batch(seed, &body.space, &body.id().expect("id"));
         Fixture {
             body,
             signature,
             manifest,
             chunks,
         }
+    }
+
+    /// A child of `parent` on a second writer stream (different key), so it is
+    /// causally concurrent with the first stream's children of the same parent.
+    fn second_writer_child(parent: &Fixture, ops: Vec<profile::Operation>, salt: u8) -> Fixture {
+        nth_writer_child(parent, &[4; 32], ops, salt)
     }
 
     fn text_epoch(file: u8) -> profile::EpochDescriptor {
@@ -3541,5 +3552,233 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&dir_a);
         let _ = fs::remove_dir_all(&dir_b);
+    }
+
+    // ------------------------------------------------------------------
+    // GATE B audit fixes: cut gates on all read paths, delete_edit epoch
+    // semantics, kind<->tag correspondence, quarantine in branch heads
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn paths_and_prefix_reads_gate_the_cut_like_register_at() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        // Unknown and quarantined members error, duplicate heads error.
+        assert!(store.paths_at(&[BatchId::from_array([0xee; 32])]).is_err());
+        assert!(store.paths_at(&[root_id, root_id]).is_err());
+        assert!(
+            store
+                .prefix_conflicts_at(&[BatchId::from_array([0xee; 32])])
+                .is_err()
+        );
+        assert_eq!(store.paths_at(&[root_id]).expect("paths").len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_edit_conflict_id_ignores_unrelated_epoch_selection() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.bin", opaque_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let delete = child_ops(
+            &root,
+            2,
+            2,
+            vec![live_op(1, profile::LiveTag::Deleted)],
+            vec![root_id],
+            88,
+        );
+        let edit = second_writer_child(&root, vec![opaque_op(1, &opaque_epoch(1))], 89);
+        // An unrelated concurrent epoch selection by a third writer.
+        let mut other_epoch = text_epoch(9);
+        other_epoch.file = FileId::from_array([1; 16]);
+        other_epoch.nonce = GenerationNonce::from_array([9; 16]);
+        let select = nth_writer_child(
+            &root,
+            &[5; 32],
+            vec![profile::Operation::Epoch {
+                file: FileId::from_array([1; 16]),
+                epoch: other_epoch,
+            }],
+            90,
+        );
+        let del_id = publish_fixture(&store, &delete);
+        let edit_id = publish_fixture(&store, &edit);
+        let sel_id = publish_fixture(&store, &select);
+        let find_delete_edit = |cut: &[BatchId]| {
+            store
+                .conflicts_at(cut)
+                .expect("conflicts")
+                .into_iter()
+                .find(|c| c.kind == profile::ConflictKind::DeleteEdit)
+                .expect("delete_edit")
+        };
+        let without = find_delete_edit(&[del_id, edit_id]);
+        let with = find_delete_edit(&[del_id, edit_id, sel_id]);
+        // §9: epochs are the epochs the conflict concerns (the edited epoch),
+        // so an unrelated selection cannot change the ConflictId.
+        assert_eq!(without.epochs, vec![opaque_epoch(1).id().expect("id")]);
+        assert_eq!(without.id().expect("id"), with.id().expect("id"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tag8_kind_mismatch_is_rejected() {
+        // A kind-0 (register) conflict on mode.
+        let dir = temp();
+        let (store2, first, a, b) = mode_conflict_scenario(&dir);
+        let conflicts = store2.conflicts_at(&[a, b]).expect("conflicts");
+        let register_conflict = conflicts[0].id().expect("id");
+        // RetainDelete against a register conflict: wrong kind.
+        let wrong_kind = child_ops(
+            &first,
+            3,
+            3,
+            vec![
+                resolution_op(register_conflict, profile::Resolution::RetainDelete),
+                live_op(1, profile::LiveTag::Deleted),
+            ],
+            vec![a, b],
+            91,
+        );
+        let ids = stage(&store2, &wrong_kind.chunks);
+        assert!(store2.publish(&publication(&wrong_kind, &ids)).is_err());
+        // Choose against a delete_edit conflict: wrong kind.
+        let dir2 = temp();
+        let store3 = Store::open(&dir2, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.bin", opaque_epoch(1))]);
+        let root_id = publish_fixture(&store3, &root);
+        let delete = child_ops(
+            &root,
+            2,
+            2,
+            vec![live_op(1, profile::LiveTag::Deleted)],
+            vec![root_id],
+            92,
+        );
+        let edit = second_writer_child(&root, vec![opaque_op(1, &opaque_epoch(1))], 93);
+        let del_id = publish_fixture(&store3, &delete);
+        let edit_id = publish_fixture(&store3, &edit);
+        let de_conflict = store3
+            .conflicts_at(&[del_id, edit_id])
+            .expect("conflicts")
+            .into_iter()
+            .find(|c| c.kind == profile::ConflictKind::DeleteEdit)
+            .expect("delete_edit");
+        let de_id = de_conflict.id().expect("id");
+        let de_participant = de_conflict.participants[0];
+        let wrong_choose = child_ops(
+            &delete,
+            3,
+            3,
+            vec![
+                resolution_op(
+                    de_id,
+                    profile::Resolution::Choose {
+                        field: 1,
+                        write: de_participant,
+                    },
+                ),
+                opaque_op(1, &opaque_epoch(1)),
+            ],
+            vec![del_id, edit_id],
+            94,
+        );
+        let ids = stage(&store3, &wrong_choose.chunks);
+        assert!(store3.publish(&publication(&wrong_choose, &ids)).is_err());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn branch_heads_skip_quarantined_intermediate_batches() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let mid = child_ops(
+            &root,
+            2,
+            2,
+            vec![mode_op(1, profile::ModeTag::Executable)],
+            vec![root_id],
+            95,
+        );
+        let mid_id = publish_fixture(&store, &mid);
+        let head = child_ops(&mid, 3, 3, vec![path_op(1, "b.txt")], vec![mid_id], 96);
+        let head_id = publish_fixture(&store, &head);
+        assert_eq!(
+            store.branch_heads(&root.body.branch).expect("heads"),
+            vec![head_id]
+        );
+        // Equivocation quarantines the middle batch; the walk must not hop
+        // through it, so the root becomes a head again alongside the tip.
+        let rival = child_ops(
+            &root,
+            2,
+            2,
+            vec![path_op(1, "rival.txt")],
+            vec![root_id],
+            97,
+        );
+        let rival_ids = stage(&store, &rival.chunks);
+        assert!(matches!(
+            store.publish(&publication(&rival, &rival_ids)),
+            Err(Error::Equivocation)
+        ));
+        let mut heads = store.branch_heads(&root.body.branch).expect("heads");
+        heads.sort();
+        let mut expected = vec![root_id, head_id];
+        expected.sort();
+        assert_eq!(heads, expected);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quarantine_inside_closure_cuts_causality_below_descendant_cut() {
+        let dir = temp();
+        let store = Store::open(&dir, &SPACE).expect("open");
+        let root = fixture_ops(vec![create_op(1, "a.txt", text_epoch(1))]);
+        let root_id = publish_fixture(&store, &root);
+        let mid = child_ops(
+            &root,
+            2,
+            2,
+            vec![mode_op(1, profile::ModeTag::Executable)],
+            vec![root_id],
+            98,
+        );
+        let mid_id = publish_fixture(&store, &mid);
+        let head = child_ops(&mid, 3, 3, vec![path_op(1, "b.txt")], vec![mid_id], 99);
+        let head_id = publish_fixture(&store, &head);
+        // Before the quarantine the middle batch's mode write is visible at the
+        // descendant cut.
+        let before = store.register_at(&[head_id]).expect("register");
+        assert!(
+            before.iter().any(|w| w.field == Field::Mode
+                && w.value == FieldValue::Mode(profile::ModeTag::Executable))
+        );
+        // Quarantine the middle batch: below the descendant cut its exclusive
+        // ancestors (including the root) become invisible too.
+        let rival = child_ops(
+            &root,
+            2,
+            2,
+            vec![path_op(1, "rival.txt")],
+            vec![root_id],
+            100,
+        );
+        let rival_ids = stage(&store, &rival.chunks);
+        assert!(matches!(
+            store.publish(&publication(&rival, &rival_ids)),
+            Err(Error::Equivocation)
+        ));
+        let after = store.register_at(&[head_id]).expect("register");
+        assert!(!after.iter().any(|w| w.field == Field::Mode));
+        assert_eq!(register_paths(&after), vec![(0, "b.txt".to_owned())]);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
