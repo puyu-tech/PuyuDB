@@ -198,6 +198,22 @@ impl TextDoc {
         self.log.add_delete_at(agent, parents, loc)
     }
 
+    /// Append a remote op span starting at an explicit sequence index
+    /// (used by tests to forge sequence gaps/restarts).
+    pub fn add_remote_insert(
+        &mut self,
+        agent: u32,
+        parents: &[usize],
+        start_seq: usize,
+        pos: usize,
+        text: &str,
+    ) {
+        use diamond_types::list::operation::TextOperation;
+        let op = TextOperation::new_insert(pos, text);
+        self.log
+            .add_operations_remote(agent, parents, start_seq, &[op]);
+    }
+
     /// Strictly decode a new-update artifact against this base.
     ///
     /// The base is not mutated; the returned staged doc is a clone of the base
@@ -372,48 +388,5 @@ mod tests {
         let (s2, _) = s2.strict_append(&patch_a).expect("append a");
         assert_eq!(s1.text(), s2.text());
         assert_eq!(s1.text().len(), 4);
-    }
-}
-
-#[cfg(test)]
-mod probe3 {
-    use super::*;
-    #[test]
-    fn probe_chain_long_name() {
-        let name = format!("s:{}", "A".repeat(43));
-        let wname = format!("w:{}", "B".repeat(43));
-        let mut seed = TextDoc::empty();
-        let s = seed.agent_id(&name);
-        seed.add_insert(s, &[], 0, "hello");
-        let seed_bytes = seed.encode();
-        let seed_frontier = seed.local_frontier();
-        let mut full = TextDoc::load(&seed_bytes).unwrap();
-        let w = full.agent_id(&wname);
-        full.add_insert(w, &seed_frontier, 5, "A");
-        let after1 = full.local_frontier();
-        let change1 = full.encode_from(&seed_frontier);
-        full.add_insert(w, &after1, 6, "B");
-        let change2 = full.encode_from(&after1);
-        let mut base = TextDoc::load(&seed_bytes).unwrap();
-        eprintln!("merge c1: {:?}", base.merge(&change1));
-        eprintln!(
-            "after c1: oplen {} frontier {:?}",
-            base.op_len(),
-            base.remote_frontier()
-        );
-        eprintln!("merge c2: {:?}", base.merge(&change2));
-        eprintln!("text: {}", base.text());
-        // And via strict_append chain:
-        let base2 = TextDoc::load(&seed_bytes).unwrap();
-        let (b1, _) = base2.strict_append(&change1).expect("strict c1");
-        eprintln!(
-            "strict: b1 oplen {} frontier {:?}",
-            b1.op_len(),
-            b1.remote_frontier()
-        );
-        match b1.strict_append(&change2) {
-            Ok((b2, _)) => eprintln!("strict c2 ok: {}", b2.text()),
-            Err(e) => eprintln!("strict c2 err: {:?}", e),
-        }
     }
 }

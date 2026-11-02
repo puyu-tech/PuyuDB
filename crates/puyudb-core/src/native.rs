@@ -281,7 +281,6 @@ fn topo_order(
             ));
         }
     }
-    let _ = wanted;
     Ok(out)
 }
 
@@ -365,16 +364,32 @@ pub(crate) fn check_native(
                 ));
             }
         }
-        // Every submitted op belongs to the writer actor (§12.5). Sequence
-        // continuity then holds by construction: strict decode rejects any
-        // (agent, seq) already known in the base, so a restart or gap can
-        // never be appended, and the staged clone places all submitted ops
-        // right after the base's LV space.
-        let spans = staged.submitted_spans(report.submitted);
+        // Every submitted op belongs to the writer actor, and its sequence
+        // range must continue the writer's known frontier contiguously
+        // (§12.5 actor-sequence continuity): sorted spans, first seq_start =
+        // writer's next seq (frontier value + 1, else 0), each span starting
+        // where the previous ended. Strict decode rejects replays, but the
+        // wire format allows gaps/jumps, so the check is explicit.
+        let mut spans = staged.submitted_spans(report.submitted);
         if spans.is_empty() || !spans.iter().all(|span| span.agent == writer_name) {
             return Err(native_scope(
                 "native artifact carries operations of an actor other than the enclosing writer",
             ));
+        }
+        spans.sort_by_key(|span| span.seq_start);
+        let mut expected = base
+            .remote_frontier()
+            .into_iter()
+            .find(|(name, _)| name == &writer_name)
+            .map(|(_, last)| last + 1)
+            .unwrap_or(0);
+        for span in &spans {
+            if span.seq_start != expected {
+                return Err(native_scope(
+                    "native actor sequence is not continuous with the parent cut",
+                ));
+            }
+            expected = span.seq_end;
         }
         if report.submitted.0 != base_len {
             return Err(native_scope(
@@ -532,12 +547,11 @@ pub(crate) fn register_seed(
                 "seed may only contain operations of the seed actor",
             ));
         }
-        // §12.4: the seed document's frontier is a single seed-actor entry —
-        // the seed actor's first operation(s), nothing else.
-        let frontier = doc.remote_frontier();
-        if frontier.len() != 1 || frontier[0].0 != seed_name {
+        // §12.4: the seed is exactly the seed actor's first operation — a
+        // single span starting at seq 0 (the baseline insert), nothing else.
+        if spans.len() != 1 || spans[0].agent != seed_name || spans[0].seq_start != 0 {
             return Err(native_scope(
-                "seed must contain only the seed actor's first operation",
+                "seed must be exactly the seed actor's first operation",
             ));
         }
         if doc.text().as_bytes() != baseline.as_slice() {

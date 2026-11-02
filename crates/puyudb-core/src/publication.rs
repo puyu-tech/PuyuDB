@@ -590,10 +590,17 @@ impl Store {
                 ));
             }
             // §6.3: the native slots of the body carry native-change-v1
-            // artifacts only; anything else there is rejected, not skipped.
-            if want != &publication.body.metadata && manifest.kind != "native-change-v1" {
+            // artifacts only; anything else there (including a duplicate of
+            // the metadata artifact id) is rejected, not skipped.
+            if want != &publication.body.metadata {
+                if manifest.kind != "native-change-v1" {
+                    return Err(Error::Rejected(
+                        "native artifact slot does not carry a native-change-v1 artifact".into(),
+                    ));
+                }
+            } else if publication.body.native_artifacts.contains(want) {
                 return Err(Error::Rejected(
-                    "native artifact slot does not carry a native-change-v1 artifact".into(),
+                    "metadata artifact id must not appear in the native artifact slots".into(),
                 ));
             }
             encoded_artifacts.push((id, bytes));

@@ -1054,3 +1054,31 @@ fn more_native_scope_negatives() {
         .expect_err("two native artifacts for one epoch must be rejected");
     assert!(matches!(err, Error::InvalidNativeScope(_)), "got {err}");
 }
+
+#[test]
+fn native_sequence_gap_is_rejected() {
+    let mut w = world("hello");
+    let seed_frontier = TextDoc::load(&w.seed_native)
+        .expect("load")
+        .local_frontier();
+    let writer_name = profile::writer_actor_name(
+        &profile::public_key(&KEY_SEED),
+        &BRANCH,
+        &WRITER_EPOCH,
+        &w.epoch,
+    );
+    // Forge a patch whose writer span starts at seq 5 — a gap, since the base
+    // frontier expects seq 0 next.
+    let mut doc = TextDoc::load(&w.seed_native).expect("load");
+    let agent = doc.agent_id(&writer_name);
+    doc.add_remote_insert(agent, &seed_frontier, 5, 0, "X");
+    let gapped = doc.encode_from(&seed_frontier);
+    let err = w
+        .publish_edit(2, 2, vec![w.root], &gapped, 16)
+        .expect_err("sequence gap must be rejected");
+    assert!(matches!(err, Error::InvalidNativeScope(_)), "got {err}");
+    assert!(
+        err.to_string().contains("not continuous"),
+        "unexpected error: {err}"
+    );
+}
