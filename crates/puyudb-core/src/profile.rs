@@ -3,11 +3,12 @@
 //! Frozen canonical profile: records, digests, hashing and strict validation.
 //!
 //! Normative source: `docs/spec/canonical-profile-v1.md`. This module encodes the
-//! layouts and validates them; it deliberately does **not** provide structured
-//! decoders for every record, because no consumer needs one yet (storage and
-//! projections arrive in I04/I05). [`canon::decode`] plus
-//! [`validate_record`] already reject every non-canonical or out-of-profile
-//! record, and re-encoding the decoded item tree must reproduce the input bytes.
+//! layouts and validates them. Structured decoders exist only where a consumer
+//! needs typed data (the metadata artifact, for the I05 projections); every
+//! decoder re-validates through [`validate_record`]'s validators first.
+//! [`canon::decode`] plus [`validate_record`] reject every non-canonical or
+//! out-of-profile record, and re-encoding the decoded item tree must reproduce
+//! the input bytes.
 //!
 //! Nothing here is a publication path: there is no storage, admission, quota or
 //! network code.
@@ -476,10 +477,22 @@ pub enum LiveTag {
 }
 
 impl LiveTag {
-    const fn tag(self) -> u64 {
+    /// Assigned registry tag of this value.
+    #[must_use]
+    pub const fn tag(self) -> u64 {
         match self {
             Self::Deleted => 0,
             Self::Alive => 1,
+        }
+    }
+
+    /// Map an assigned tag back to its value; `None` for unassigned tags.
+    #[must_use]
+    pub const fn from_tag(tag: u64) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Deleted),
+            1 => Some(Self::Alive),
+            _ => None,
         }
     }
 }
@@ -496,11 +509,24 @@ pub enum ModeTag {
 }
 
 impl ModeTag {
-    const fn tag(self) -> u64 {
+    /// Assigned registry tag of this value.
+    #[must_use]
+    pub const fn tag(self) -> u64 {
         match self {
             Self::Regular => 0,
             Self::Executable => 1,
             Self::Symlink => 2,
+        }
+    }
+
+    /// Map an assigned tag back to its value; `None` for unassigned tags.
+    #[must_use]
+    pub const fn from_tag(tag: u64) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Regular),
+            1 => Some(Self::Executable),
+            2 => Some(Self::Symlink),
+            _ => None,
         }
     }
 }
@@ -522,6 +548,17 @@ impl EpochKind {
             Self::Text => 0,
             Self::Opaque => 1,
             Self::Symlink => 2,
+        }
+    }
+
+    /// Map an assigned tag back to its value; `None` for unassigned tags.
+    #[must_use]
+    pub const fn from_tag(tag: u64) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Text),
+            1 => Some(Self::Opaque),
+            2 => Some(Self::Symlink),
+            _ => None,
         }
     }
 }
@@ -830,6 +867,38 @@ impl EpochDescriptor {
     /// Propagates [`EpochDescriptor::encode`] failures.
     pub fn id(&self) -> Result<EpochId, Error> {
         Ok(epoch_id(&self.encode()?))
+    }
+
+    /// Decode an already validated canonical descriptor item.
+    ///
+    /// The item is re-validated first, so decoding never accepts anything
+    /// [`validate_record`] would reject.
+    ///
+    /// # Errors
+    /// Returns the validation failure for non-canonical or out-of-profile input.
+    pub fn decode(item: &Item) -> Result<Self, Error> {
+        validate_epoch_descriptor(item)?;
+        let record = as_list(item, 7, "epoch_descriptor")?;
+        let kind_tag = as_tag(&record[3], &EPOCH_KIND_TAGS, "epoch kind tag")?;
+        let kind = EpochKind::from_tag(kind_tag)
+            .ok_or_else(|| Error::Capability("unknown epoch kind tag".to_owned()))?;
+        let seed_profile = match &record[5] {
+            Item::Text(profile) => Some(profile.clone()),
+            Item::Null => None,
+            _ => return Err(Error::encoding("seed profile is not text or null")),
+        };
+        let git_oid = match &record[6] {
+            Item::Null => None,
+            other => Some(decode_git_oid(other)?),
+        };
+        Ok(Self {
+            file: FileId::from_array(bytes_fixed(&record[1], "epoch file")?),
+            nonce: GenerationNonce::from_array(bytes_fixed(&record[2], "generation nonce")?),
+            kind,
+            baseline: ArtifactId::from_array(bytes_fixed(&record[4], "baseline artifact")?),
+            seed_profile,
+            git_oid,
+        })
     }
 }
 
@@ -1192,6 +1261,23 @@ pub enum Operation {
 }
 
 impl Operation {
+    /// Assigned registry tag of this operation (§7.1).
+    #[must_use]
+    pub const fn tag(&self) -> u64 {
+        match self {
+            Self::Create { .. } => 0,
+            Self::Path { .. } => 1,
+            Self::Live { .. } => 2,
+            Self::Epoch { .. } => 3,
+            Self::Opaque { .. } => 4,
+            Self::Context { .. } => 5,
+            Self::Git { .. } => 6,
+            Self::Mode { .. } => 7,
+            Self::Resolution { .. } => 8,
+            Self::Provenance { .. } => 9,
+        }
+    }
+
     /// Encode the operation array.
     ///
     /// # Errors
@@ -1378,6 +1464,210 @@ impl MetadataArtifact {
             Ok(())
         })
     }
+
+    /// Decode canonical artifact bytes into the typed artifact.
+    ///
+    /// The payload is strictly validated first (`validate_metadata_artifact`
+    /// checks the caps before any result vector is allocated), so decoding
+    /// never accepts anything [`validate_record`] would reject. `relation_tag`
+    /// fields stay opaque: only the uint width is checked, never the value.
+    ///
+    /// # Errors
+    /// Returns the validation failure for non-canonical or out-of-profile input.
+    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        let item = canon::decode(bytes)?;
+        validate_metadata_artifact(&item)?;
+        let record = as_list(&item, 3, "metadata_artifact")?;
+        let operations = as_array(&record[1], "operations")?;
+        let mut decoded = Vec::with_capacity(operations.len());
+        for operation in operations {
+            decoded.push(Operation::decode(operation)?);
+        }
+        let assertions = as_array(&record[2], "context assertions")?;
+        let mut context_assertions = Vec::with_capacity(assertions.len());
+        for assertion in assertions {
+            context_assertions.push(as_bytes_vec(assertion, "context assertion")?);
+        }
+        Ok(Self {
+            operations: decoded,
+            context_assertions,
+        })
+    }
+}
+
+impl Operation {
+    /// Decode an already validated canonical operation item.
+    ///
+    /// The item is re-validated first, so decoding never accepts anything
+    /// [`validate_record`] would reject.
+    ///
+    /// # Errors
+    /// Returns the validation failure for non-canonical or out-of-profile input.
+    pub fn decode(item: &Item) -> Result<Self, Error> {
+        validate_operation(item)?;
+        let record = as_array(item, "operation")?;
+        let Some(first) = record.first() else {
+            return Err(Error::encoding("operation is not a non-empty array"));
+        };
+        let tag = as_tag(first, &OPERATION_TAGS, "operation tag")?;
+        match tag {
+            0 => {
+                let fields = as_list(item, 6, "create operation")?;
+                Ok(Self::Create {
+                    repository: RepositoryId::from_array(bytes_fixed(&fields[1], "repository")?),
+                    file: FileId::from_array(bytes_fixed(&fields[2], "file")?),
+                    path: Path::new(as_text(&fields[3], "path", MAX_PATH_BYTES)?)?,
+                    mode: ModeTag::from_tag(as_tag(&fields[4], &MODE_TAGS, "mode tag")?)
+                        .ok_or_else(|| Error::Capability("unknown mode tag".to_owned()))?,
+                    epoch: EpochDescriptor::decode(&fields[5])?,
+                })
+            }
+            1 => {
+                let fields = as_list(item, 3, "path operation")?;
+                Ok(Self::Path {
+                    file: FileId::from_array(bytes_fixed(&fields[1], "file")?),
+                    path: Path::new(as_text(&fields[2], "path", MAX_PATH_BYTES)?)?,
+                })
+            }
+            2 => {
+                let fields = as_list(item, 3, "liveness operation")?;
+                Ok(Self::Live {
+                    file: FileId::from_array(bytes_fixed(&fields[1], "file")?),
+                    live: LiveTag::from_tag(as_tag(&fields[2], &LIVE_TAGS, "live tag")?)
+                        .ok_or_else(|| Error::Capability("unknown live tag".to_owned()))?,
+                })
+            }
+            3 => {
+                let fields = as_list(item, 3, "epoch operation")?;
+                Ok(Self::Epoch {
+                    file: FileId::from_array(bytes_fixed(&fields[1], "file")?),
+                    epoch: EpochDescriptor::decode(&fields[2])?,
+                })
+            }
+            4 => {
+                let fields = as_list(item, 4, "opaque operation")?;
+                Ok(Self::Opaque {
+                    file: FileId::from_array(bytes_fixed(&fields[1], "file")?),
+                    epoch: EpochId::from_array(bytes_fixed(&fields[2], "opaque epoch")?),
+                    artifact: ArtifactId::from_array(bytes_fixed(&fields[3], "opaque artifact")?),
+                })
+            }
+            5 => {
+                let fields = as_list(item, 4, "context operation")?;
+                Ok(Self::Context {
+                    schema: as_tag(&fields[1], &CONTEXT_SCHEMA_TAGS, "context schema tag")?,
+                    event: bytes_fixed(&fields[2], "event id")?,
+                    bytes: as_bytes_vec(&fields[3], "context event")?,
+                })
+            }
+            6 => {
+                let fields = as_list(item, 5, "git association operation")?;
+                Ok(Self::Git {
+                    repository: RepositoryId::from_array(bytes_fixed(&fields[1], "repository")?),
+                    oid: decode_git_oid(&fields[2])?,
+                    version: VersionId::from_array(bytes_fixed(&fields[3], "version")?),
+                    // relation_tag is deliberately opaque in v1: width check only.
+                    relation: as_uint(&fields[4], "git relation tag", u64::MAX)?,
+                })
+            }
+            7 => {
+                let fields = as_list(item, 3, "mode operation")?;
+                Ok(Self::Mode {
+                    file: FileId::from_array(bytes_fixed(&fields[1], "file")?),
+                    mode: ModeTag::from_tag(as_tag(&fields[2], &MODE_TAGS, "mode tag")?)
+                        .ok_or_else(|| Error::Capability("unknown mode tag".to_owned()))?,
+                })
+            }
+            8 => {
+                let fields = as_list(item, 4, "resolution operation")?;
+                let resolution_tag = as_tag(&fields[2], &RESOLUTION_TAGS, "resolution tag")?;
+                Ok(Self::Resolution {
+                    conflict: ConflictId::from_array(bytes_fixed(&fields[1], "conflict id")?),
+                    resolution: decode_resolution(resolution_tag, &fields[3])?,
+                })
+            }
+            _ => {
+                let fields = as_list(item, 4, "provenance operation")?;
+                let sources = as_array(&fields[1], "source batches")?;
+                let mut decoded = Vec::with_capacity(sources.len());
+                for source in sources {
+                    decoded.push(BatchId::from_array(bytes_fixed(source, "source batch")?));
+                }
+                let detail = match &fields[3] {
+                    Item::Null => None,
+                    other => Some(ArtifactId::from_array(bytes_fixed(
+                        other,
+                        "detail artifact",
+                    )?)),
+                };
+                Ok(Self::Provenance {
+                    sources: decoded,
+                    // relation_tag is deliberately opaque in v1: width check only.
+                    relation: as_uint(&fields[2], "provenance relation tag", u64::MAX)?,
+                    detail,
+                })
+            }
+        }
+    }
+}
+
+fn decode_resolution(tag: u64, payload: &Item) -> Result<Resolution, Error> {
+    Ok(match tag {
+        0 => Resolution::RetainDelete,
+        1 => Resolution::RestoreEdit,
+        2 => Resolution::RetainEpoch(EpochId::from_array(bytes_fixed(payload, "retained epoch")?)),
+        3 => {
+            let fields = as_list(payload, 2, "incorporation payload")?;
+            Resolution::Incorporate {
+                epoch: EpochId::from_array(bytes_fixed(&fields[0], "incorporated epoch")?),
+                provenance: ArtifactId::from_array(bytes_fixed(&fields[1], "provenance artifact")?),
+            }
+        }
+        _ => {
+            let fields = as_list(payload, 2, "alternative payload")?;
+            let identity = as_list(&fields[1], 2, "write identity")?;
+            Resolution::Choose {
+                field: as_tag(&fields[0], &FIELD_TAGS, "field tag")?,
+                write: WriteIdent {
+                    batch: BatchId::from_array(bytes_fixed(&identity[0], "participant batch")?),
+                    operation_index: as_uint(&identity[1], "operation index", MAX_OPERATION_INDEX)?,
+                },
+            }
+        }
+    })
+}
+
+fn decode_git_oid(item: &Item) -> Result<GitOid, Error> {
+    validate_git_oid(item)?;
+    let record = as_list(item, 3, "git_oid")?;
+    let Item::Uint(algorithm) = record[1] else {
+        return Err(Error::encoding("git_oid algorithm is not a uint"));
+    };
+    let width = if algorithm == 1 { 20 } else { 32 };
+    let digest = as_bytes(&record[2], width, "git_oid digest")?;
+    let mut raw = [0u8; 32];
+    raw[..width].copy_from_slice(digest);
+    Ok(if algorithm == 1 {
+        let mut sha1 = [0u8; 20];
+        sha1.copy_from_slice(&raw[..20]);
+        GitOid::Sha1(sha1)
+    } else {
+        GitOid::Sha256(raw)
+    })
+}
+
+fn as_bytes_vec(item: &Item, what: &str) -> Result<Vec<u8>, Error> {
+    match item {
+        Item::Bytes(bytes) => Ok(bytes.clone()),
+        _ => Err(Error::encoding(format!("{what} is not a byte string"))),
+    }
+}
+
+fn bytes_fixed<const N: usize>(item: &Item, what: &str) -> Result<[u8; N], Error> {
+    let raw = as_bytes(item, N, what)?;
+    let mut out = [0u8; N];
+    out.copy_from_slice(raw);
+    Ok(out)
 }
 
 // --------------------------------------------------------------------------
@@ -2330,5 +2620,136 @@ mod tests {
             create.encode().expect_err("wrong profile").code(),
             "unsupported_capability"
         );
+    }
+
+    fn sample_operations() -> Vec<Operation> {
+        let file = FileId::from_array([1; 16]);
+        let epoch = EpochDescriptor {
+            file,
+            nonce: GenerationNonce::from_array([2; 16]),
+            kind: EpochKind::Text,
+            baseline: ArtifactId::from_array([3; 32]),
+            seed_profile: Some(TEXT_PROFILE.to_owned()),
+            git_oid: None,
+        };
+        vec![
+            Operation::Create {
+                repository: RepositoryId::from_array([4; 16]),
+                file,
+                path: Path::new("dir/a.md").expect("path"),
+                mode: ModeTag::Executable,
+                epoch: epoch.clone(),
+            },
+            Operation::Path {
+                file,
+                path: Path::new("b.md").expect("path"),
+            },
+            Operation::Live {
+                file,
+                live: LiveTag::Deleted,
+            },
+            Operation::Epoch {
+                file,
+                epoch: epoch.clone(),
+            },
+            Operation::Opaque {
+                file,
+                epoch: EpochId::from_array([5; 32]),
+                artifact: ArtifactId::from_array([6; 32]),
+            },
+            Operation::Context {
+                schema: 3,
+                event: [7; 16],
+                bytes: b"note".to_vec(),
+            },
+            Operation::Git {
+                repository: RepositoryId::from_array([4; 16]),
+                oid: GitOid::Sha256([8; 32]),
+                version: VersionId::from_array([9; 32]),
+                // relation_tag is opaque: the largest uint is accepted.
+                relation: u64::MAX,
+            },
+            Operation::Mode {
+                file,
+                mode: ModeTag::Symlink,
+            },
+            Operation::Resolution {
+                conflict: ConflictId::from_array([10; 32]),
+                resolution: Resolution::Choose {
+                    field: 0,
+                    write: WriteIdent {
+                        batch: BatchId::from_array([11; 32]),
+                        operation_index: MAX_OPERATION_INDEX,
+                    },
+                },
+            },
+            Operation::Provenance {
+                sources: vec![BatchId::from_array([12; 32])],
+                relation: 0,
+                detail: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn metadata_artifact_decode_round_trips_every_operation_tag() {
+        let artifact = MetadataArtifact {
+            operations: sample_operations(),
+            context_assertions: vec![b"assertion".to_vec(), Vec::new()],
+        };
+        let bytes = artifact.encode().expect("encode");
+        validate_record(Record::MetadataArtifact, &bytes).expect("valid");
+        let decoded = MetadataArtifact::decode(&bytes).expect("decode");
+        assert_eq!(decoded, artifact);
+        // Re-encoding the decoded artifact reproduces the input bytes.
+        assert_eq!(decoded.encode().expect("re-encode"), bytes);
+    }
+
+    #[test]
+    fn metadata_decode_rejects_unknown_operation_tag_and_bad_payload() {
+        // Hand-built artifact carrying operation tag 10 (unassigned).
+        let mut operation = Vec::new();
+        canon::write_array_header(&mut operation, 2).expect("header");
+        canon::write_uint(&mut operation, 10).expect("tag");
+        canon::write_null(&mut operation);
+        let mut bytes = Vec::new();
+        canon::write_array_header(&mut bytes, 3).expect("header");
+        canon::write_uint(&mut bytes, PROFILE_VERSION).expect("version");
+        canon::write_array_header(&mut bytes, 1).expect("ops");
+        bytes.extend_from_slice(&operation);
+        canon::write_array_header(&mut bytes, 0).expect("assertions");
+        assert_eq!(
+            MetadataArtifact::decode(&bytes).expect_err("tag 10").code(),
+            "unsupported_capability"
+        );
+        // Truncated and trailing bytes are rejected by the strict decoder.
+        let good = MetadataArtifact {
+            operations: sample_operations(),
+            context_assertions: Vec::new(),
+        }
+        .encode()
+        .expect("encode");
+        assert!(MetadataArtifact::decode(&good[..good.len() - 1]).is_err());
+        let mut trailing = good.clone();
+        trailing.push(0x00);
+        assert!(MetadataArtifact::decode(&trailing).is_err());
+    }
+
+    #[test]
+    fn decode_rejects_wrong_widths_and_noncanonical_input() {
+        let artifact = MetadataArtifact {
+            operations: vec![Operation::Live {
+                file: FileId::from_array([1; 16]),
+                live: LiveTag::Alive,
+            }],
+            context_assertions: Vec::new(),
+        };
+        let mut bytes = artifact.encode().expect("encode");
+        // Corrupt the file id width: 16 bytes -> 15 bytes is a different record
+        // shape, so decoding must fail rather than reinterpret.
+        let decoded = MetadataArtifact::decode(&bytes).expect("decode");
+        assert_eq!(decoded, artifact);
+        bytes[2] = 0x58; // flip the header to a non-minimal form attempt
+        assert!(MetadataArtifact::decode(&bytes).is_err());
     }
 }

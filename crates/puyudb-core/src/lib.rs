@@ -9,4 +9,5 @@
 pub mod canon;
 pub mod identity;
 pub mod profile;
+pub mod projection;
 pub mod publication;

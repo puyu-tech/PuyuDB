@@ -522,3 +522,19 @@ revisited when available and before Linux production support/performance
 claims/I36. Remote tests used the maintainer's authorized existing
 Windows/WSL machine; no remote infrastructure was provisioned. Scheduled CI is
 configuration, not executed platform evidence.
+
+## I05 in progress: native and file projections (branch `i05-native-text-projections`)
+
+Plan copied to `docs/plans/I05-native-text-projections.md`. Phase 1 (plan P1-P2)
+landed: the metadata artifact payload is now strictly validated and decoded at
+admission (`MetadataArtifact::decode`, `Operation::decode` in `profile.rs`;
+operation tags 0-9, caps, `relation_tag` width-only opaque, path rules per §11),
+and each published batch's field writes are stored in the new `field_writes`
+table (`projection.rs`, schema minor 1) in the same atomic commit. Admission
+rejects duplicate creates, operations on files not created in the parent cut,
+mismatched epoch descriptors, and opaque values on non-opaque epochs with
+`invalid_operation`. `Store::register_at(cut)` evaluates the causal MV
+registers at a cut: supersession within the batch closure and within one batch,
+maximal alternatives in stable bytewise `(batch, op_index)` order, quarantined
+batches excluded, arrival-order independent. `publish` still refuses native
+artifacts (`NativeUnchecked`); that lifts only in I05 phase 3.
