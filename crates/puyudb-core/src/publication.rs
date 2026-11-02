@@ -589,6 +589,13 @@ impl Store {
                     "artifact id does not match the batch body".into(),
                 ));
             }
+            // §6.3: the native slots of the body carry native-change-v1
+            // artifacts only; anything else there is rejected, not skipped.
+            if want != &publication.body.metadata && manifest.kind != "native-change-v1" {
+                return Err(Error::Rejected(
+                    "native artifact slot does not carry a native-change-v1 artifact".into(),
+                ));
+            }
             encoded_artifacts.push((id, bytes));
         }
         let expected_chunks: Vec<&ChunkId> = publication
@@ -1133,19 +1140,6 @@ impl Store {
         epoch: &crate::identity::EpochId,
     ) -> Result<String, Error> {
         crate::native::text_at(&self.conn, cut, epoch)
-    }
-
-    /// Text of `epoch` at a local native version within a cut (I05 P8).
-    ///
-    /// # Errors
-    /// Same as [`Store::text_at`].
-    pub fn text_at_version(
-        &self,
-        cut: &[BatchId],
-        epoch: &crate::identity::EpochId,
-        version: &[usize],
-    ) -> Result<String, Error> {
-        crate::native::text_at_version(&self.conn, cut, epoch, version)
     }
 
     /// Whether this batch id is a visible publication.

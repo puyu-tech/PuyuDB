@@ -769,11 +769,45 @@ pub(crate) fn load_writes_pub(
     load_writes(conn, seeds)
 }
 
-pub(crate) fn ancestor_map_pub(
+/// The plain visible closure of `seeds` (seeds included), without the
+/// write-batch rooting `ancestor_map` uses for supersession — native-only
+/// batches have no field writes but are still history.
+pub(crate) fn closure_set_pub(
     conn: &Connection,
     seeds: &[BatchId],
-) -> Result<HashMap<BatchId, HashSet<BatchId>>, Error> {
-    ancestor_map(conn, seeds)
+) -> Result<HashSet<BatchId>, Error> {
+    if seeds.is_empty() {
+        return Ok(HashSet::new());
+    }
+    if seeds.len() > profile::MAX_FRONTIER_HEADS {
+        return Err(Error::Encoding("seed set exceeds the frontier cap".into()));
+    }
+    let mut out: HashSet<BatchId> = HashSet::new();
+    for chunk in seeds.chunks(SEED_CHUNK) {
+        let values = values_list(chunk.len());
+        let sql = format!(
+            "WITH RECURSIVE cl(node) AS (
+               SELECT column1 FROM (VALUES {values}) v
+               JOIN batches b ON b.batch_id = v.column1 AND b.quarantined = 0
+               UNION
+               SELECT bp.parent FROM cl
+               JOIN batch_parents bp ON bp.child = cl.node
+               JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
+             )
+             SELECT node FROM cl"
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(seed_params(chunk)), |row| {
+            row.get::<_, Vec<u8>>(0)
+        })?;
+        for row in rows {
+            let bytes = row?;
+            out.insert(
+                BatchId::from_bytes(&bytes).map_err(|err| Error::Encoding(err.to_string()))?,
+            );
+        }
+    }
+    Ok(out)
 }
 
 pub(crate) fn check_cut_pub(conn: &Connection, cut: &[BatchId]) -> Result<(), Error> {

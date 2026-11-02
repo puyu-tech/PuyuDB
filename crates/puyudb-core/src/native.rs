@@ -142,12 +142,7 @@ fn decode_native(item: &Item) -> Result<NativeArtifact, Error> {
 
 /// The visible closure of `seeds` as a set (seeds included).
 pub(crate) fn closure_of(conn: &Connection, seeds: &[BatchId]) -> Result<HashSet<BatchId>, Error> {
-    let map = projection::ancestor_map_pub(conn, seeds)?;
-    let mut out: HashSet<BatchId> = seeds.iter().copied().collect();
-    for set in map.values() {
-        out.extend(set.iter().copied());
-    }
-    Ok(out)
+    Ok(projection::closure_set_pub(conn, seeds)?)
 }
 
 /// The declared text-epoch descriptor for `epoch` in the parent closure, if any.
@@ -188,7 +183,7 @@ fn build_log(
         Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<Vec<u8>>>(1)?))
     })?;
     let mut seed: Option<Vec<u8>> = None;
-    let mut pending: Vec<Vec<u8>> = Vec::new();
+    let mut pending: Vec<(BatchId, Vec<u8>)> = Vec::new();
     for row in rows {
         let (artifact, producer) = row?;
         let artifact =
@@ -211,33 +206,83 @@ fn build_log(
         let native = decode_native(&item)?;
         match producer {
             None => seed = Some(native.native),
-            Some(_) => pending.push(native.native),
+            Some(batch) => pending.push((
+                BatchId::from_bytes(&batch).map_err(|err| Error::Rejected(err.to_string()))?,
+                native.native,
+            )),
         }
     }
     let seed = seed.ok_or(Error::MissingDependency)?;
-    let mut base = TextDoc::load(&seed).map_err(crdt_error)?;
-    // Kahn-style: apply any change whose ops are all new; repeat until done.
-    while !pending.is_empty() {
+    // §12.4: an empty baseline has a zero-length seed payload, which is not a
+    // DT document; the base is then the empty document.
+    let mut base = if seed.is_empty() {
+        TextDoc::empty()
+    } else {
+        TextDoc::load(&seed).map_err(crdt_error)?
+    };
+    // Apply the changes in producer topological order (Kahn over the cut's
+    // batch DAG): a change's native parents are always admitted by its
+    // producer's parent cut, so this order is causal and deterministic —
+    // never the unspecified SQL row order.
+    let order = topo_order(conn, closure, &pending)?;
+    for (_, payload) in order {
+        base.merge(&payload).map_err(crdt_error)?;
+    }
+    Ok(base)
+}
+
+/// Topological order (parents first) of the pending producers within the cut,
+/// deterministic by batch id.
+fn topo_order(
+    conn: &Connection,
+    closure: &HashSet<BatchId>,
+    pending: &[(BatchId, Vec<u8>)],
+) -> Result<Vec<(BatchId, Vec<u8>)>, Error> {
+    let wanted: HashSet<BatchId> = pending.iter().map(|(batch, _)| *batch).collect();
+    // Kahn from the closure members: emit a batch only after all its parents
+    // in the closure have been emitted.
+    let mut emitted: HashSet<BatchId> = HashSet::new();
+    let mut out: Vec<(BatchId, Vec<u8>)> = Vec::with_capacity(pending.len());
+    let mut remaining: Vec<(BatchId, Vec<u8>)> = pending.to_vec();
+    while !remaining.is_empty() {
         let mut progress = false;
-        let mut remaining = Vec::with_capacity(pending.len());
-        for payload in pending.drain(..) {
-            match base.strict_append(&payload) {
-                Ok((staged, _)) => {
-                    base = staged;
-                    progress = true;
-                }
-                Err(CrdtError::KnownOperation) => remaining.push(payload),
-                Err(other) => return Err(crdt_error(other)),
+        let mut rest = Vec::with_capacity(remaining.len());
+        // Deterministic: smallest batch id first among ready ones.
+        remaining.sort_by_key(|(batch, _)| *batch);
+        for (batch, payload) in remaining.drain(..) {
+            let mut parents: Vec<BatchId> = conn
+                .prepare("SELECT parent FROM batch_parents WHERE child = ?1")?
+                .query_map([batch.as_bytes().as_slice()], |row| {
+                    row.get::<_, Vec<u8>>(0)
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|b| BatchId::from_bytes(&b).map_err(|err| Error::Rejected(err.to_string())))
+                .collect::<Result<Vec<_>, _>>()?;
+            parents.retain(|parent| closure.contains(parent));
+            // A parent that is not itself a pending producer is already in the
+            // base (seed or admitted history) — only pending producers need
+            // to be emitted first.
+            if parents
+                .iter()
+                .all(|parent| !wanted.contains(parent) || emitted.contains(parent))
+            {
+                emitted.insert(batch);
+                out.push((batch, payload));
+                progress = true;
+            } else {
+                rest.push((batch, payload));
             }
         }
-        pending = remaining;
+        remaining = rest;
         if !progress {
             return Err(Error::Rejected(
-                "native change set does not converge within the cut".into(),
+                "native producers do not form a causal order within the cut".into(),
             ));
         }
     }
-    Ok(base)
+    let _ = wanted;
+    Ok(out)
 }
 
 /// Validate every native artifact of a batch against the parent cut.
@@ -320,32 +365,21 @@ pub(crate) fn check_native(
                 ));
             }
         }
-        // Every submitted op belongs to the writer actor, with contiguous
-        // sequence continuation from the base frontier (§12.5).
+        // Every submitted op belongs to the writer actor (§12.5). Sequence
+        // continuity then holds by construction: strict decode rejects any
+        // (agent, seq) already known in the base, so a restart or gap can
+        // never be appended, and the staged clone places all submitted ops
+        // right after the base's LV space.
         let spans = staged.submitted_spans(report.submitted);
-        let mut writer_spans: Vec<&puyudb_crdt::dt_text::SubmittedSpan> = spans
-            .iter()
-            .filter(|span| span.agent == writer_name)
-            .collect();
-        if writer_spans.len() != spans.len() {
+        if spans.is_empty() || !spans.iter().all(|span| span.agent == writer_name) {
             return Err(native_scope(
                 "native artifact carries operations of an actor other than the enclosing writer",
             ));
         }
-        writer_spans.sort_by_key(|span| span.seq_start);
-        let mut expected = base
-            .remote_frontier()
-            .into_iter()
-            .find(|(name, _)| name == &writer_name)
-            .map(|(_, next)| next)
-            .unwrap_or(0);
-        for span in &writer_spans {
-            if span.seq_start != expected {
-                return Err(native_scope(
-                    "native actor sequence is not continuous with the parent cut",
-                ));
-            }
-            expected = span.seq_end;
+        if report.submitted.0 != base_len {
+            return Err(native_scope(
+                "native artifact does not extend the base document contiguously",
+            ));
         }
         // Op kinds are insert/delete only by type; assert the range is real.
         if staged.op_kinds(report.submitted).is_empty() {
@@ -469,6 +503,19 @@ pub(crate) fn register_seed(
     // The epoch must be declared as a text epoch somewhere in visible history.
     let descriptor = find_text_epoch_anywhere(conn, epoch)?
         .ok_or_else(|| native_scope("epoch is not declared as a text epoch"))?;
+    // A text epoch's baseline must be a text-baseline-v1 artifact.
+    let baseline_kind: String = conn
+        .query_row(
+            "SELECT kind FROM artifacts WHERE id = ?1",
+            [descriptor.baseline.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Error::MissingDependency)?;
+    if baseline_kind != "text-baseline-v1" {
+        return Err(native_scope(
+            "text epoch baseline is not a text-baseline-v1 artifact",
+        ));
+    }
     let baseline = artifact_payload(conn, &descriptor.baseline)?;
     if baseline.is_empty() {
         if !native.native.is_empty() {
@@ -483,6 +530,14 @@ pub(crate) fn register_seed(
         if spans.is_empty() || !spans.iter().all(|span| span.agent == seed_name) {
             return Err(native_scope(
                 "seed may only contain operations of the seed actor",
+            ));
+        }
+        // §12.4: the seed document's frontier is a single seed-actor entry —
+        // the seed actor's first operation(s), nothing else.
+        let frontier = doc.remote_frontier();
+        if frontier.len() != 1 || frontier[0].0 != seed_name {
+            return Err(native_scope(
+                "seed must contain only the seed actor's first operation",
             ));
         }
         if doc.text().as_bytes() != baseline.as_slice() {
@@ -567,22 +622,13 @@ fn find_text_epoch_anywhere(
 /// version's heads as the cut.
 pub fn text_at(conn: &Connection, cut: &[BatchId], epoch: &EpochId) -> Result<String, Error> {
     projection::check_cut_pub(conn, cut)?;
+    // The epoch must be a declared text epoch visible at this cut.
+    if text_epoch_at(conn, cut, epoch)?.is_none() {
+        return Err(Error::Rejected(
+            "epoch is not a declared text epoch at this cut".into(),
+        ));
+    }
     let closure = closure_of(conn, cut)?;
     let doc = build_log(conn, epoch, &closure)?;
     Ok(doc.text())
-}
-
-/// Historical text at a local native version is a cut-bounded read; the
-/// public position unit is the UTF-8 byte offset (§5.5), converted with the
-/// binding's boundary-checked helpers.
-pub fn text_at_version(
-    conn: &Connection,
-    cut: &[BatchId],
-    epoch: &EpochId,
-    version: &[usize],
-) -> Result<String, Error> {
-    projection::check_cut_pub(conn, cut)?;
-    let closure = closure_of(conn, cut)?;
-    let doc = build_log(conn, epoch, &closure)?;
-    Ok(doc.text_at(version))
 }

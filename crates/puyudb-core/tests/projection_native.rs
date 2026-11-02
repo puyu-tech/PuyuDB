@@ -764,3 +764,293 @@ fn utf8_byte_offset_conversion_is_boundary_checked() {
     assert_eq!(char_to_byte(text, 5), Some(text.len()));
     assert_eq!(char_to_byte(text, 6), None);
 }
+
+/// An empty-baseline text epoch is readable ("") and editable (§12.4
+/// zero-length seed). Regression test for GATE C BLOCKER 1.
+#[test]
+fn empty_baseline_epoch_reads_and_edits() {
+    let dir = temp();
+    let store = Store::open(&dir, &SPACE).expect("open");
+    let (baseline_manifest, baseline_chunks) = frame("text-baseline-v1", b"");
+    let ids = stage_all(&store, &baseline_chunks);
+    store
+        .stage_artifact(&baseline_manifest, &ids)
+        .expect("baseline");
+    let epoch_desc = text_epoch(1, baseline_manifest.id().expect("id"), 1);
+    let epoch = epoch_desc.id().expect("id");
+    let create = Operation::Create {
+        repository: RepositoryId::from_array([9; 16]),
+        file: FileId::from_array([1; 16]),
+        path: Path::new("empty.txt").expect("path"),
+        mode: profile::ModeTag::Regular,
+        epoch: epoch_desc,
+    };
+    let (meta_manifest, meta_chunks) = frame(
+        "metadata-v1",
+        &MetadataArtifact {
+            operations: vec![create],
+            context_assertions: vec![vec![1]],
+        }
+        .encode()
+        .expect("metadata"),
+    );
+    let body = BatchBody {
+        space: SPACE,
+        branch: BRANCH,
+        public_key: profile::public_key(&KEY_SEED),
+        writer_epoch: WRITER_EPOCH,
+        sequence: 1,
+        previous: None,
+        parents: Vec::new(),
+        lamport: 1,
+        native_artifacts: Vec::new(),
+        metadata: meta_manifest.id().expect("id"),
+    };
+    let signature = sign(&body);
+    let meta_ids = stage_all(&store, &meta_chunks);
+    let root = body.id().expect("id");
+    store
+        .publish(&Publication {
+            body: &body,
+            signature_key: &body.public_key,
+            signature: &signature,
+            artifacts: std::slice::from_ref(&meta_manifest),
+            chunks: &meta_ids,
+            peer: 1,
+        })
+        .expect("root");
+    // Zero-length seed for the empty baseline.
+    let seed_payload = NativeArtifact {
+        epoch,
+        profile: profile::TEXT_PROFILE.to_owned(),
+        native: Vec::new(),
+    }
+    .encode()
+    .expect("native artifact");
+    let (seed_manifest, seed_chunks) = frame("native-change-v1", &seed_payload);
+    let seed_ids = stage_all(&store, &seed_chunks);
+    store
+        .register_seed(&epoch, &seed_manifest, &seed_ids)
+        .expect("seed");
+    // The empty document reads as "".
+    assert_eq!(store.text_at(&[root], &epoch).expect("empty text"), "");
+    // An edit on the empty baseline: writer inserts at 0 with the seed
+    // frontier (root) as parents. The empty doc's frontier is root, so the
+    // patch is a full single-op document.
+    let mut doc = TextDoc::empty();
+    let writer_name = profile::writer_actor_name(
+        &profile::public_key(&KEY_SEED),
+        &BRANCH,
+        &WRITER_EPOCH,
+        &epoch,
+    );
+    let agent = doc.agent_id(&writer_name);
+    doc.add_insert(agent, &[], 0, "first");
+    let change = doc.encode();
+    let (cm, cc) = frame(
+        "native-change-v1",
+        &NativeArtifact {
+            epoch,
+            profile: profile::TEXT_PROFILE.to_owned(),
+            native: change,
+        }
+        .encode()
+        .expect("native artifact"),
+    );
+    let cids = stage_all(&store, &cc);
+    let (mm, mc) = frame(
+        "metadata-v1",
+        &MetadataArtifact {
+            operations: Vec::new(),
+            context_assertions: vec![vec![2]],
+        }
+        .encode()
+        .expect("meta"),
+    );
+    let mids = stage_all(&store, &mc);
+    let body2 = BatchBody {
+        space: SPACE,
+        branch: BRANCH,
+        public_key: profile::public_key(&KEY_SEED),
+        writer_epoch: WRITER_EPOCH,
+        sequence: 2,
+        previous: Some(root),
+        parents: vec![root],
+        lamport: 2,
+        native_artifacts: vec![cm.id().expect("id")],
+        metadata: mm.id().expect("id"),
+    };
+    let signature2 = sign(&body2);
+    let head = body2.id().expect("id");
+    store
+        .publish(&Publication {
+            body: &body2,
+            signature_key: &body2.public_key,
+            signature: &signature2,
+            artifacts: &[cm, mm],
+            chunks: &[cids, mids].concat(),
+            peer: 1,
+        })
+        .expect("edit on empty baseline");
+    assert_eq!(store.text_at(&[head], &epoch).expect("text"), "first");
+    assert_eq!(store.text_at(&[root], &epoch).expect("hist"), "");
+}
+
+/// Dependent chain: edit B's parents include edit A's op. Both publish orders
+/// across two stores must read the same text (GATE C MAJOR 1).
+#[test]
+fn dependent_native_chain_reads_identically_in_both_orders() {
+    let build = |dir: &std::path::Path| {
+        let w = world("hello");
+        let _ = dir;
+        w
+    };
+    // Build both patches from one document: change1 parents the seed
+    // frontier, change2 parents the frontier after change1 (dependent chain).
+    let mk_chain = |w: &World| {
+        let mut full = TextDoc::load(&w.seed_native).expect("load");
+        let seed_frontier = full.local_frontier();
+        let writer_name = profile::writer_actor_name(
+            &profile::public_key(&KEY_SEED),
+            &BRANCH,
+            &WRITER_EPOCH,
+            &w.epoch,
+        );
+        let agent = full.agent_id(&writer_name);
+        full.add_insert(agent, &seed_frontier, 5, "A");
+        let after1 = full.local_frontier();
+        let change1 = full.encode_from(&seed_frontier);
+        full.add_insert(agent, &after1, 6, "B");
+        let change2 = full.encode_from(&after1);
+        (change1, change2)
+    };
+    let mut w_a = build(&temp());
+    let (change1, change2) = mk_chain(&w_a);
+    let h1 = w_a
+        .publish_edit(2, 2, vec![w_a.root], &change1, 10)
+        .expect("e1");
+    let h2 = w_a.publish_edit(3, 3, vec![h1], &change2, 11).expect("e2");
+    let text_a = w_a.store.text_at(&[h2], &w_a.epoch).expect("text a");
+
+    // Same scenario in a second store, publishing in the same causal order
+    // (admission requires it), but reading at both cuts.
+    let mut w_b = build(&temp());
+    let (change1b, change2b) = mk_chain(&w_b);
+    assert_eq!(change1, change1b);
+    assert_eq!(change2, change2b);
+    let h1b = w_b
+        .publish_edit(2, 2, vec![w_b.root], &change1b, 10)
+        .expect("e1");
+    let h2b = w_b
+        .publish_edit(3, 3, vec![h1b], &change2b, 11)
+        .expect("e2");
+    assert_eq!((h1, h2), (h1b, h2b));
+    let text_b = w_b.store.text_at(&[h2b], &w_b.epoch).expect("text b");
+    assert_eq!(text_a, text_b);
+    assert_eq!(text_a, "helloAB");
+    // Historical cut between the two edits.
+    assert_eq!(w_a.store.text_at(&[h1], &w_a.epoch).expect("mid"), "helloA");
+}
+
+#[test]
+fn more_native_scope_negatives() {
+    let mut w = world("hello");
+    let seed_frontier = TextDoc::load(&w.seed_native)
+        .expect("load")
+        .local_frontier();
+    let writer_name = profile::writer_actor_name(
+        &profile::public_key(&KEY_SEED),
+        &BRANCH,
+        &WRITER_EPOCH,
+        &w.epoch,
+    );
+    // Sequence restart: a fresh writer op with seq 0 again (parents = seed
+    // frontier) after a first edit already advanced the actor to seq 1.
+    let change1 = change_artifact(&w, 5, "!", &KEY_SEED);
+    let head = w
+        .publish_edit(2, 2, vec![w.root], &change1, 12)
+        .expect("e1");
+    let mut doc = TextDoc::load(&w.seed_native).expect("load");
+    let agent = doc.agent_id(&writer_name);
+    doc.add_insert(agent, &seed_frontier, 0, "X");
+    let restart = doc.encode_from(&seed_frontier);
+    let err = w
+        .publish_edit(3, 3, vec![head], &restart, 13)
+        .expect_err("sequence restart must be rejected");
+    assert!(matches!(err, Error::InvalidNativeScope(_)), "got {err}");
+
+    // Seed actor smuggled into a writer artifact.
+    let seed_name = profile::seed_actor_name(&w.epoch);
+    let mut doc2 = TextDoc::load(&w.seed_native).expect("load");
+    let sagent = doc2.agent_id(&seed_name);
+    doc2.add_insert(sagent, &seed_frontier, 0, "S");
+    let smuggled = doc2.encode_from(&seed_frontier);
+    let err = w
+        .publish_edit(3, 3, vec![head], &smuggled, 14)
+        .expect_err("seed-actor op in a writer artifact must be rejected");
+    assert!(matches!(err, Error::InvalidNativeScope(_)), "got {err}");
+
+    // Two native artifacts for one epoch in one batch.
+    let c1 = change_artifact(&w, 5, "1", &KEY_SEED);
+    let c2 = change_artifact(&w, 6, "2", &KEY_SEED);
+    let (m1, ch1) = frame(
+        "native-change-v1",
+        &NativeArtifact {
+            epoch: w.epoch,
+            profile: profile::TEXT_PROFILE.to_owned(),
+            native: c1,
+        }
+        .encode()
+        .expect("na"),
+    );
+    let (m2, ch2) = frame(
+        "native-change-v1",
+        &NativeArtifact {
+            epoch: w.epoch,
+            profile: profile::TEXT_PROFILE.to_owned(),
+            native: c2,
+        }
+        .encode()
+        .expect("na"),
+    );
+    let (mm, mc) = frame(
+        "metadata-v1",
+        &MetadataArtifact {
+            operations: Vec::new(),
+            context_assertions: vec![vec![15]],
+        }
+        .encode()
+        .expect("meta"),
+    );
+    let ids: Vec<ChunkId> = [
+        stage_all(&w.store, &ch1),
+        stage_all(&w.store, &ch2),
+        stage_all(&w.store, &mc),
+    ]
+    .concat();
+    let body = BatchBody {
+        space: SPACE,
+        branch: BRANCH,
+        public_key: profile::public_key(&KEY_SEED),
+        writer_epoch: WRITER_EPOCH,
+        sequence: 3,
+        previous: Some(head),
+        parents: vec![head],
+        lamport: 3,
+        native_artifacts: vec![m1.id().expect("id"), m2.id().expect("id")],
+        metadata: mm.id().expect("id"),
+    };
+    let signature = sign(&body);
+    let err = w
+        .store
+        .publish(&Publication {
+            body: &body,
+            signature_key: &body.public_key,
+            signature: &signature,
+            artifacts: &[m1, m2, mm],
+            chunks: &ids,
+            peer: 1,
+        })
+        .expect_err("two native artifacts for one epoch must be rejected");
+    assert!(matches!(err, Error::InvalidNativeScope(_)), "got {err}");
+}

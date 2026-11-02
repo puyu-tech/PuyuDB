@@ -583,3 +583,16 @@ binding lives in puyudb-crdt::dt_text (core depends on crdt per §4.3); T01/T02
 evidence includes DT-vs-AM slow-reference parity and convergence across
 application orders, plus two-store SemanticManifestId equality from phase 2.
 UTF-8 byte-offset positions are boundary-checked helpers (§5.5).
+
+GATE C audit fixes landed: empty-baseline epochs read "" and accept edits
+(zero-length seed handled in build_log); native changes are applied in
+producer topological order (deterministic, causal — not SQL row order);
+closure_of uses a dedicated plain closure walk (the write-batch-rooted
+ancestor_map is only for supersession — native-only batches have no field
+writes); native artifact slots are kind-checked (native-change-v1 only);
+text_at gates that the epoch is a declared text epoch at the cut;
+text_at_version removed (replica-local DT LVs must not cross the boundary
+until I08); seeds must be exactly the seed actor's first operation with a
+text-baseline-v1 baseline. New tests: empty-baseline read+edit, dependent
+chain across two stores, sequence restart, smuggled seed actor, two native
+artifacts for one epoch.
