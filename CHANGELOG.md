@@ -42,5 +42,18 @@ No releases have been published.
   fault-injection VFS covering lost sync, torn write, disk-full and a
   WAL-reset regression. Still no projections, branches, native scope,
   checkout, replication, or CLI surface.
+- I05 phases 1-2 in progress on `i05-native-text-projections`: metadata
+  artifact admission with MV-register storage (`field_writes`, write identity
+  `(batch_id, op_index)`, causal supersession, arrival-order-independent
+  maximal alternatives), file projections at a cut (`files_at`/`paths_at`/
+  `prefix_conflicts_at`/`branch_heads`; `files_current`/`paths_current` stay
+  read-time rebuildable accelerations until I08/I12), liveness with no
+  implicit resurrection, collision and prefix-conflict sets reported but
+  never auto-resolved, conflict derivation (kinds 0/1/2 with stable
+  `ConflictId`s, recomputed from history, never persisted), tag-8 resolution
+  admission, and the canonical `SemanticManifestV1` at a cut, golden-pinned
+  and identical across two independent replicas. `publish` still refuses
+  native artifacts; native admission/reads (plan P6-P8) are phase 3. See
+  `docs/validation/I05-phase2-projections.md`.
 
 There is no working database engine, persisted format, server, or SDK.
