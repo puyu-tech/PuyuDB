@@ -422,6 +422,8 @@ fn validate_resolutions(
 ) -> Result<(), Error> {
     let conflicts = conflicts_impl(conn, parents)?;
     let register = register_impl(conn, parents)?;
+    // One full closure read shared by all resolutions in this batch.
+    let history_writes = load_writes(conn, parents)?;
     let ancestors = ancestor_map(conn, parents)?;
     let mut closure: HashSet<BatchId> = parents.iter().copied().collect();
     for set in ancestors.values() {
@@ -512,7 +514,7 @@ fn validate_resolutions(
                 // relabeling of one already declared for the file anywhere in
                 // the parent closure — including causally superseded (no
                 // longer maximal) declarations (§22.2).
-                let declared_anywhere = load_writes(conn, parents)?.iter().any(|w| {
+                let declared_anywhere = history_writes.iter().any(|w| {
                     w.file == file
                         && w.field == Field::Epoch.tag()
                         && decode_epoch_value(&w.value)

@@ -561,3 +561,10 @@ new-epoch requirement for Incorporate); branch_heads no longer walks through
 quarantined batches; the golden corpus resolution scenario was corrected to
 tag 0 + fresh Deleted assignment. Quarantine-inside-closure semantics pinned
 by tests.
+
+GATE B re-audit round 2: RetainEpoch/Incorporate admission fixes (0f39929)
+plus non-vacuous negatives (fresh writer stream per negative, asserting the
+specific invalid_operation gate) landed as the follow-up commit; the
+Incorporate check scans all epoch declarations in the parent closure, and
+RetainEpoch must name the conflict's selected epoch. Tag-2/tag-3 positive
+tests assert post-resolution cuts (epochs == [selected/new], conflicts empty).

@@ -1755,6 +1755,39 @@ mod tests {
         if a <= b { vec![a, b] } else { vec![b, a] }
     }
 
+    /// A first batch of a fresh writer stream (`seed`) declaring `parents` as
+    /// its intent-base cut (§13 allows a stream's first batch to declare
+    /// parents). Used for negative-resolution fixtures so they cannot collide
+    /// with a positive batch's (stream, sequence).
+    fn fresh_stream_child(
+        parents: Vec<BatchId>,
+        lamport: u64,
+        seed: &[u8; 32],
+        ops: Vec<profile::Operation>,
+        salt: u8,
+    ) -> Fixture {
+        let (manifest, chunks) = frame_ops(ops, salt);
+        let body = BatchBody {
+            space: SPACE,
+            branch: BranchId::from_array([2; 16]),
+            public_key: profile::public_key(seed),
+            writer_epoch: WriterEpoch::from_array([4; 16]),
+            sequence: 1,
+            previous: None,
+            parents,
+            lamport,
+            native_artifacts: Vec::new(),
+            metadata: manifest.id().expect("artifact id"),
+        };
+        let signature = profile::sign_batch(seed, &body.space, &body.id().expect("id"));
+        Fixture {
+            body,
+            signature,
+            manifest,
+            chunks,
+        }
+    }
+
     /// A child of `parent` on another writer stream (key `seed`), so it is
     /// causally concurrent with the first stream's children of the same parent.
     fn nth_writer_child(
@@ -3872,11 +3905,12 @@ mod tests {
             .collect();
         assert_eq!(epochs, vec![selected_epoch]);
         assert!(store.conflicts_at(&[r]).expect("conflicts").is_empty());
-        // Negative: RetainEpoch naming the edited (not selected) epoch.
-        let wrong = child_ops(
-            &select,
+        // Negative: RetainEpoch naming the edited (not selected) epoch, on a
+        // fresh writer stream so the equivocation gate cannot mask the check.
+        let wrong = fresh_stream_child(
+            sorted_parents(s, e),
             3,
-            3,
+            &[6; 32],
             vec![
                 resolution_op(
                     conflict_id,
@@ -3884,11 +3918,17 @@ mod tests {
                 ),
                 epoch_op(1, &opaque_epoch_with(1, 1)),
             ],
-            sorted_parents(s, e),
             104,
         );
         let ids = stage(&store, &wrong.chunks);
-        assert!(store.publish(&publication(&wrong, &ids)).is_err());
+        let err = store
+            .publish(&publication(&wrong, &ids))
+            .expect_err("wrong retain-epoch payload");
+        assert!(
+            err.to_string()
+                .contains("retain-epoch payload is not the conflict's selected epoch"),
+            "unexpected error: {err}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -3918,17 +3958,37 @@ mod tests {
             sorted_parents(s, e),
             105,
         );
-        publish_fixture(&store, &good);
-        // Negative: naming an epoch already declared anywhere in the closure,
-        // even the superseded create-time epoch O1.
+        let good_id = publish_fixture(&store, &good);
+        // Post-publish assertions: the fresh new-epoch write supersedes the
+        // conflicted selection and the conflict is gone at the resolution cut.
+        let register = store.register_at(&[good_id]).expect("register");
+        let epochs: Vec<_> = register
+            .iter()
+            .filter(|w| w.field == Field::Epoch)
+            .filter_map(|w| match &w.value {
+                FieldValue::Epoch(d) => Some(d.id().expect("id")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(epochs, vec![new_epoch.id().expect("id")]);
+        assert!(
+            store
+                .conflicts_at(&[good_id])
+                .expect("conflicts")
+                .is_empty()
+        );
+        // Negatives on fresh writer streams so the equivocation gate cannot
+        // mask the admission checks: naming an epoch already declared anywhere
+        // in the closure — even the superseded create-time epoch O1.
+        let mut seed = [6u8; 32];
         for (bad_epoch, salt) in [
             (opaque_epoch_with(1, 1), 106u8),
             (opaque_epoch_with(1, 2), 107u8),
         ] {
-            let bad = child_ops(
-                &select,
+            let bad = fresh_stream_child(
+                sorted_parents(s, e),
                 3,
-                3,
+                &seed,
                 vec![
                     resolution_op(
                         conflict_id,
@@ -3940,20 +4000,24 @@ mod tests {
                     epoch_op(1, &bad_epoch),
                     provenance_op(Some(provenance)),
                 ],
-                sorted_parents(s, e),
                 salt,
             );
+            seed[0] = seed[0].wrapping_add(1);
             let ids = stage(&store, &bad.chunks);
+            let err = store
+                .publish(&publication(&bad, &ids))
+                .expect_err("incorporate of already-declared epoch");
             assert!(
-                store.publish(&publication(&bad, &ids)).is_err(),
-                "incorporate of already-declared epoch accepted"
+                err.to_string()
+                    .contains("incorporation must name a new epoch not already declared"),
+                "unexpected error: {err}"
             );
         }
         // Negative: missing the provenance operation.
-        let no_prov = child_ops(
-            &select,
+        let no_prov = fresh_stream_child(
+            sorted_parents(s, e),
             3,
-            3,
+            &[9; 32],
             vec![
                 resolution_op(
                     conflict_id,
@@ -3964,11 +4028,17 @@ mod tests {
                 ),
                 epoch_op(1, &new_epoch),
             ],
-            sorted_parents(s, e),
             108,
         );
         let ids = stage(&store, &no_prov.chunks);
-        assert!(store.publish(&publication(&no_prov, &ids)).is_err());
+        let err = store
+            .publish(&publication(&no_prov, &ids))
+            .expect_err("missing provenance");
+        assert!(
+            err.to_string()
+                .contains("incorporation lacks the provenance operation"),
+            "unexpected error: {err}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
