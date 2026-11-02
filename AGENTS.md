@@ -12,9 +12,11 @@ The `Signed-off-by` must be the identity of the account making the commit
 Never hardcode a fixed shared name or email, so other contributors' commits
 are never signed with someone else's identity.
 
-If and only if an AI tool actually co-authored the commit, add its trailer
-too, e.g. `Co-Authored-By: Mistral Vibe <vibe@mistral.ai>` for commits
-co-authored by Mistral Vibe. Do not add that trailer to commits made without
-it.
+If and only if an AI tool actually co-authored the commit, add its own
+trailer too. Each tool uses its own identity in the same shape, e.g.
+`Co-Authored-By: Mistral Vibe <vibe@mistral.ai>` for commits co-authored by
+Mistral Vibe; a different model would put its own name and email there
+instead. Do not add any `Co-Authored-By` trailer to commits made without
+that tool.
 
 Do not use `git commit -s`.
