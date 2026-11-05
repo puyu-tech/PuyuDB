@@ -1805,7 +1805,9 @@ fn reject_network_fs(dir: &Path) -> Result<(), Error> {
 /// drive it without a real network mount.
 #[cfg(target_os = "linux")]
 fn network_fs_at(mountinfo: &str, dir: &Path, major: u64, minor: u64) -> Option<String> {
-    let mut best: Option<(usize, &str, &str)> = None; // (mount point len, mount, fstype)
+    // (mount point len, mount, fstype); the mount point is owned because it
+    // is unescaped into a local that must not be borrowed past the iteration.
+    let mut best: Option<(usize, String, &str)> = None;
     for line in mountinfo.lines() {
         let mut fields = line.split(' ');
         let (Some(_), Some(_), Some(dev), Some(_), Some(mount)) = (
@@ -1835,8 +1837,10 @@ fn network_fs_at(mountinfo: &str, dir: &Path, major: u64, minor: u64) -> Option<
             continue;
         };
         let len = mount_path.len();
-        if best.is_none_or(|(best_len, _, _)| len > best_len) {
-            best = Some((len, &mount_path, fstype));
+        // as_ref: is_none_or consumes its receiver, which would move `best`
+        // out of the loop variable.
+        if best.as_ref().is_none_or(|(best_len, _, _)| len > *best_len) {
+            best = Some((len, mount_path, fstype));
         }
     }
     let (_, mount, fstype) = best?;
