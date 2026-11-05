@@ -659,9 +659,10 @@ fn text_at_error_paths_map_to_the_real_stable_codes() {
 }
 
 /// T12 offline embed acceptance: a full create/transact/read/reopen cycle in
-/// a fresh temp dir, with no network, no account, and no daemon — plus an
-/// honest structural pin that puyudb-core declares no async/network/daemon
-/// dependency, so the embed path cannot open a socket.
+/// a fresh temp dir, with no network, no account, and no daemon — plus a
+/// structural dependency pin that puyudb-core declares no async/network/daemon
+/// dependency in its Cargo.toml (cargo deny's bans gate is the complementary
+/// check), so the embed path has no declared way to open a socket.
 #[test]
 fn offline_embed_acceptance_no_network_no_account_no_daemon() {
     let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");

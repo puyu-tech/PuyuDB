@@ -215,7 +215,10 @@ fn acked_transact_survives_a_later_armed_fault() {
     assert!(db.stage_chunk(chunk_id(b"other"), b"other").is_err());
     drop(db);
 
-    let db = reopen(&path);
+    // Reopen through the doc-hidden open_space_vfs hook on the now-disarmed
+    // fault VFS, so both facade VFS hooks are exercised by real tests.
+    reset();
+    let db = Database::open_space_vfs(&path, Some("puyu-fault"), &SPACE).expect("fault reopen");
     assert!(db.is_published(&receipt.batch_id).expect("visible"));
     assert_eq!(
         db.receipt_for(b"caller", b"k").expect("receipt"),

@@ -65,10 +65,11 @@ The fault-VFS harness is the existing `sqlite-fault` shim, now driven through
 `api_facade.rs::offline_embed_acceptance_no_network_no_account_no_daemon`:
 a full create → keyed transact → frontier/bootstrapped reads → drop → reopen
 → `receipt_for`/`is_published` cycle in a fresh temp dir, plus a structural
-pin that reads `crates/puyudb-core/Cargo.toml` at test time and asserts it
-declares no tokio/hyper/reqwest/tonic/async/socket/daemon dependency — the
-embed path cannot open a socket. No network mocks are faked; the whole suite
-runs offline. Error-code stability: `api_facade.rs::error_code_strings_cover_the_twelve_stable_codes`
+dependency pin that reads `crates/puyudb-core/Cargo.toml` at test time and
+asserts it declares no tokio/hyper/reqwest/tonic/async/socket/daemon
+dependency — no declared dependency can open a socket on the embed path
+(cargo deny's bans gate is the complementary CI check). No network mocks are
+faked; the whole suite runs offline. Error-code stability: `api_facade.rs::error_code_strings_cover_the_twelve_stable_codes`
 pins all twelve verbatim spec §14 strings plus the `internal` sentinel;
 `text_at_error_paths_map_to_the_real_stable_codes` pins the real mappings
 (Gate B C1): missing seed ⇒ `missing_dependency`, undeclared epoch at the cut
