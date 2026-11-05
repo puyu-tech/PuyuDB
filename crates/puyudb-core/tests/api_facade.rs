@@ -616,3 +616,97 @@ fn frontier_and_conflicts_at_concurrent_heads() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn text_at_error_paths_map_to_the_real_stable_codes() {
+    use puyudb_core::identity::EpochId;
+
+    let dir = temp();
+    let db = Database::create_space(&dir, &SPACE).expect("create");
+    // Root creating file 1 with a declared text epoch (the seed is never
+    // registered here).
+    let epoch_desc = text_epoch_descriptor(ArtifactId::from_array([1; 32]));
+    let epoch = epoch_desc.id().expect("epoch id");
+    let create = Operation::Create {
+        repository: RepositoryId::from_array([9; 16]),
+        file: FileId::from_array([1; 16]),
+        path: Path::new("a.txt").expect("path"),
+        mode: ModeTag::Regular,
+        epoch: epoch_desc,
+    };
+    let (meta, meta_ids) = frame_payload(&db, "metadata-v1", &ops_payload(vec![create], 1));
+    let body = root_body(meta.id().expect("id"));
+    let signature = sign(&body);
+    let root = db
+        .transact(
+            b"caller",
+            b"root",
+            &[],
+            &publication(&body, &meta, &meta_ids, &signature),
+        )
+        .expect("transact root")
+        .batch_id;
+
+    // Declared at the cut but no registered seed => missing_dependency.
+    let err = db.text_at(&[root], &epoch).expect_err("no seed");
+    assert_eq!(err.code(), "missing_dependency");
+    // Not a declared text epoch at this cut => invalid_operation.
+    let err = db
+        .text_at(&[root], &EpochId::from_array([0x99; 32]))
+        .expect_err("undeclared epoch");
+    assert_eq!(err.code(), "invalid_operation");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T12 offline embed acceptance: a full create/transact/read/reopen cycle in
+/// a fresh temp dir, with no network, no account, and no daemon — plus an
+/// honest structural pin that puyudb-core declares no async/network/daemon
+/// dependency, so the embed path cannot open a socket.
+#[test]
+fn offline_embed_acceptance_no_network_no_account_no_daemon() {
+    let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let manifest = std::fs::read_to_string(manifest_path).expect("read core manifest");
+    for dep in [
+        "tokio",
+        "hyper",
+        "reqwest",
+        "tonic",
+        "async-std",
+        "async_std",
+        "socket2",
+        "mio",
+        "daemon",
+    ] {
+        assert!(
+            !manifest.contains(dep),
+            "puyudb-core must not declare a dependency containing {dep:?}"
+        );
+    }
+
+    let dir = temp();
+    let db = Database::create_space(&dir, &SPACE).expect("create");
+    let (meta, meta_ids) = frame_payload(&db, "metadata-v1", &ops_payload(Vec::new(), 42));
+    let body = root_body(meta.id().expect("id"));
+    let signature = sign(&body);
+    let receipt = db
+        .transact(
+            b"caller",
+            b"offline",
+            &[],
+            &publication(&body, &meta, &meta_ids, &signature),
+        )
+        .expect("transact offline");
+    assert_eq!(
+        db.branch_frontier(&BRANCH).expect("frontier"),
+        vec![receipt.batch_id]
+    );
+    assert!(db.bootstrapped().expect("bootstrapped"));
+    drop(db);
+    let db = Database::open_space(&dir, &SPACE).expect("reopen offline");
+    assert_eq!(
+        db.receipt_for(b"caller", b"offline").expect("receipt"),
+        Some(receipt)
+    );
+    assert!(db.is_published(&receipt.batch_id).expect("visible"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

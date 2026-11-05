@@ -175,6 +175,10 @@ pub enum Error {
     /// idempotency-key reuse with different request content.
     #[error("precondition failed: {0}")]
     Precondition(String),
+    /// Writable open on a network filesystem (§8.1). Environmental, not a
+    /// §14 code.
+    #[error("network filesystem {0} is not supported for writable opens")]
+    NetworkFs(String),
     /// SQLite's integrity check failed at open.
     #[error("database failed integrity check: {0}")]
     Corrupt(String),
@@ -322,6 +326,11 @@ impl Store {
     ) -> Result<Self, Error> {
         let dir = dir.as_ref();
         fs::create_dir_all(dir)?;
+        // §8.1: writable opens on network filesystems are rejected. Linux-only
+        // std-only check (reject_network_fs below); other platforms keep the
+        // current behavior because portable detection does not exist.
+        #[cfg(target_os = "linux")]
+        reject_network_fs(dir)?;
         let owner = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -332,11 +341,6 @@ impl Store {
         // trusted — a stale PID can never break a live lock, and a crash
         // releases the lock because the fd closes; dropping the Store
         // releases it the same way.
-        // limitation: §8.1 also wants network filesystems rejected for
-        // writable opens, but portable detection (mountinfo/getfsstat/
-        // GetVolumeInformation per platform) is out of scope here; deferred
-        // and logged in the I06 plan note. On supported filesystems a second
-        // open still fails loudly via Busy below.
         // A file scanner can hold a byte-range lock on a file it has just seen
         // created, so a first failure is not proof that another process owns the
         // database. Retry briefly before reporting it as taken.
@@ -1764,6 +1768,117 @@ fn read_manifest(path: &Path) -> Result<SpaceId, Error> {
     SpaceId::from_str(&space).map_err(|err| Error::Manifest(err.to_string()))
 }
 
+/// Known network filesystem types rejected for writable opens (§8.1).
+/// Conservative list: unknown fstypes pass through, never mislabeled.
+#[cfg(target_os = "linux")]
+const NETWORK_FS_TYPES: [&str; 7] = ["nfs", "nfs4", "cifs", "smbfs", "smb2", "9p", "afs"];
+
+/// §8.1: reject a writable open whose space directory lives on a network
+/// filesystem. Linux-only and std-only (no new deps): the directory's device
+/// is resolved via `MetadataExt::dev()` and matched against
+/// `/proc/self/mountinfo` major:minor entries with a longest mount-point
+/// prefix match on the canonicalized path. A missing/unreadable mountinfo or
+/// an unknown fstype passes through — the check never guesses.
+#[cfg(target_os = "linux")]
+fn reject_network_fs(dir: &Path) -> Result<(), Error> {
+    use std::os::unix::fs::MetadataExt;
+
+    let dev = fs::metadata(dir).map_err(Error::Io)?.dev();
+    // Linux dev_t encoding: major/minor are not plain shifts of the whole
+    // word, so split them the way the kernel's MKDEV/major/minor macros do.
+    let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xffu64);
+    let minor = (dev & 0xff) | ((dev >> 12) & !0xffu64);
+    let canonical = fs::canonicalize(dir).map_err(Error::Io)?;
+    let mountinfo = match fs::read_to_string("/proc/self/mountinfo") {
+        Ok(text) => text,
+        // No mountinfo (e.g. chroot): pass through, documented above.
+        Err(_) => return Ok(()),
+    };
+    if let Some(fstype) = network_fs_at(&mountinfo, &canonical, major, minor) {
+        return Err(Error::NetworkFs(fstype));
+    }
+    Ok(())
+}
+
+/// The fstype of the longest mount-point match for `dir`'s device, when that
+/// mount is a known network filesystem. Pure parsing helper so tests can
+/// drive it without a real network mount.
+#[cfg(target_os = "linux")]
+fn network_fs_at(mountinfo: &str, dir: &Path, major: u64, minor: u64) -> Option<String> {
+    let mut best: Option<(usize, &str, &str)> = None; // (mount point len, mount, fstype)
+    for line in mountinfo.lines() {
+        let mut fields = line.split(' ');
+        let (Some(_), Some(_), Some(dev), Some(_), Some(mount)) = (
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+        ) else {
+            continue;
+        };
+        let Some((maj, min)) = dev.split_once(':') else {
+            continue;
+        };
+        if maj.parse::<u64>() != Ok(major) || min.parse::<u64>() != Ok(minor) {
+            continue;
+        }
+        let mount_path = unescape_mountinfo(mount);
+        if !is_mount_prefix(Path::new(&mount_path), dir) {
+            continue;
+        }
+        // Fields after the " - " separator: fstype, source, super options.
+        let Some((_, rest)) = line.split_once(" - ") else {
+            continue;
+        };
+        let Some(fstype) = rest.split(' ').next() else {
+            continue;
+        };
+        let len = mount_path.len();
+        if best.is_none_or(|(best_len, _, _)| len > best_len) {
+            best = Some((len, &mount_path, fstype));
+        }
+    }
+    let (_, mount, fstype) = best?;
+    NETWORK_FS_TYPES
+        .contains(&fstype)
+        .then(|| format!("{fstype} at {mount}"))
+}
+
+/// Whether `mount` is a path-component prefix of `path`.
+#[cfg(target_os = "linux")]
+fn is_mount_prefix(mount: &Path, path: &Path) -> bool {
+    let mount: Vec<_> = mount.components().collect();
+    let path: Vec<_> = path.components().collect();
+    mount.len() <= path.len() && mount.iter().zip(path.iter()).all(|(a, b)| a == b)
+}
+
+/// Undo mountinfo's octal escaping (\040 space, \011 tab, \012 newline,
+/// \134 backslash) in a mount point.
+#[cfg(target_os = "linux")]
+fn unescape_mountinfo(field: &str) -> String {
+    let mut out = String::with_capacity(field.len());
+    let mut chars = field.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            let (Some(a), Some(b), Some(d)) = (chars.next(), chars.next(), chars.next()) else {
+                out.push(c);
+                break;
+            };
+            match (a, b, d) {
+                ('0', '4', '0') => out.push(' '),
+                ('0', '1', '1') => out.push('\t'),
+                ('0', '1', '2') => out.push('\n'),
+                ('1', '3', '4') => out.push('\\'),
+                _ => out.push(c),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Create `format_meta` on a fresh database, or verify it on an existing one.
 /// `db_existed` is true when the database file already had a `batches` table;
 /// an existing database with an emptied `format_meta` is corruption, not a
@@ -1850,6 +1965,60 @@ mod tests {
     use crate::projection::{Field, FieldValue};
 
     const SPACE: SpaceId = SpaceId::from_array([1; 16]);
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn network_fs_detection_matches_longest_mount_and_rejects_only_known_types() {
+        // dev 0:225 -> major 0, minor 225.
+        let mountinfo = "\
+36 35 0:224 / / rw,relatime - ext4 /dev/sda1 rw
+37 36 0:225 / /mnt/net rw,relatime - nfs 192.168.1.9:/export rw
+38 36 0:225 /sub /mnt/net/sub rw,relatime - cifs //server/share rw
+39 36 0:226 / /mnt/local rw,relatime - ext4 /dev/sdb1 rw
+40 36 0:227 / /mnt/unknown rw,relatime - somefuse rw
+41 36 8:1 / /mnt/disk\\040with\\040space rw - xfs /dev/sdc1 rw
+";
+        // Longest mount-point match on the same device wins: /mnt/net/sub.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/net/sub/deep"), 0, 225),
+            Some("cifs at /mnt/net/sub".to_string())
+        );
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/net/other"), 0, 225),
+            Some("nfs at /mnt/net".to_string())
+        );
+        // A local filesystem on another device passes through.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/local/x"), 0, 226),
+            None
+        );
+        // Unknown fstype passes through — never mislabeled as network.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/unknown/x"), 0, 227),
+            None
+        );
+        // No mount for the device passes through.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/elsewhere"), 9, 9),
+            None
+        );
+        // Octal escaping in mount points is undone before matching.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/disk with space/f"), 8, 1),
+            None
+        );
+        // A network mount under the escaped path is still found.
+        let escaped_net = "50 36 8:2 / /mnt/disk\\040with\\040space/net rw - 9p trans=virtio rw\n";
+        assert_eq!(
+            network_fs_at(escaped_net, Path::new("/mnt/disk with space/net/f"), 8, 2),
+            Some("9p at /mnt/disk with space/net".to_string())
+        );
+        // Component-boundary prefix only: /mnt/netx is not under /mnt/net.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/netx"), 0, 225),
+            None
+        );
+    }
 
     fn temp() -> PathBuf {
         // The clock alone is not unique across parallel tests on every

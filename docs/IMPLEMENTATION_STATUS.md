@@ -605,23 +605,39 @@ dt_text::tests::frontier_convention_is_last_used_index and the spec §12.4
 sentence corrected to match the pinned rev; metadata-id-in-native-slots
 rejected; add_remote_insert marked doc(hidden).
 
-## Issue I06 — exposed embedded transaction interface (in progress, branch `i06-embedded-transaction-interface`)
+## Issue I06 — exposed embedded transaction interface (complete, branch `i06-embedded-transaction-interface`)
 
 Phase 1 (plan P1+P2) landed in 7a7308d: public facade `puyudb_core::api` with
 `Database::create_space`/`open_space` (owner lock; second open returns
 `DatabaseBusy` with a non-secret owner-lock hint; create-on-existing and
-open-of-missing are `precondition_failed`), the twelve §14 stable error codes
-on `api::Error::code()`, and the keyed transaction interface
+open-of-missing are `precondition_failed`), the §14 stable error codes on
+`api::Error::code()` (eleven at 7a7308d; the twelfth, `unsupported_version`,
+landed with 25c6531 per Gate A), and the keyed transaction interface
 `Database::transact(caller, key, expected_frontier, publication)` with a
 branch-frontier CAS inside the atomic publish (idempotent retry returns the
 stored receipt before the CAS, §13.1). Core stays embeddable: no Tokio, no
 network, no CLI.
 
-Phase 2 (plan P3+P4) adds the read API on the handle (explicit cut of heads as
-the version identity until I08): `bootstrapped`, `branch_frontier`,
-`files_at`, `paths_at`, `prefix_conflicts_at`, `epochs_at`, `conflicts_at`,
-`semantic_manifest_at`, `text_at`, `artifact_availability`, `is_published`,
-`receipt_for` — all read-only with no engine lock across calls — plus
-owner-lock semantics per §8.1 (flock-based lock: stale PID can never break a
-live lock; drop/crash releases it). Network-filesystem rejection for writable
-opens is documented as a deferred limitation (not portable to detect).
+Phase 2 (plan P3+P4) landed in 25c6531: the read API on the handle (explicit
+cut of heads as the version identity until I08): `bootstrapped`,
+`branch_frontier`, `files_at`, `paths_at`, `prefix_conflicts_at`,
+`epochs_at`, `conflicts_at`, `semantic_manifest_at`, `text_at`,
+`artifact_availability`, `is_published`, `receipt_for` — all read-only with
+no engine lock across calls — plus owner-lock semantics per §8.1 (flock-based
+lock: stale PID can never break a live lock; drop/crash releases it).
+
+Phase 3 (plan P5, final) adds the T04/T12 evidence through the public API and
+the validation doc `docs/validation/I06-embedded-transaction.md`: process-kill
+and fault-VFS (power-loss model) tests driving `Database` only — ack implies
+durable visibility after reopen, no ack implies nothing visible and the key
+stays reusable, unknown-after-commit retry returns the same receipt, crash
+releases the owner lock; an offline embed acceptance test (no network, no
+account, no daemon, plus a manifest pin that core declares no async/network
+dependency); error-code stability vectors for all twelve §14 strings plus the
+`internal` sentinel, including the real `text_at` mappings (`missing_dependency`
+for a missing seed, `invalid_operation` for an undeclared epoch). §8.1
+network-filesystem rejection for writable opens landed Linux-only and
+std-only (`/proc/self/mountinfo` major:minor + longest mount-point match,
+conservative known-network fstype list; unknown types pass through, never
+mislabeled) as `publication::Error::NetworkFs`, surfaced by the facade as the
+non-§14 `Internal` variant.

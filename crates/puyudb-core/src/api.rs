@@ -158,6 +158,11 @@ impl From<publication::Error> for Error {
                 Self::PreconditionFailed("manifest and database name different spaces".into())
             }
             P::Corrupt(detail) => Self::Corruption(detail),
+            // §8.1 writable-open environment rejection; environmental, not a
+            // §14 code, so it reports the non-stable "internal" sentinel.
+            P::NetworkFs(detail) => {
+                Self::Internal(format!("writable open rejected (§8.1): {detail}"))
+            }
         }
     }
 }
@@ -243,6 +248,40 @@ impl Database {
             return Err(Error::PreconditionFailed("space not found".into()));
         }
         let store = Store::open_vfs_mode(dir, None, space, OpenMode::Open)
+            .map_err(|err| map_open(dir, err))?;
+        Ok(Self { store })
+    }
+
+    /// Fault-injection hook mirroring `Store::open_vfs` for the create path.
+    /// Production callers use [`Database::create_space`].
+    #[doc(hidden)]
+    pub fn create_space_vfs(
+        dir: impl AsRef<Path>,
+        vfs: Option<&str>,
+        space: &SpaceId,
+    ) -> Result<Self, Error> {
+        let dir = dir.as_ref();
+        if dir.join(publication::MANIFEST_NAME).exists() {
+            return Err(Error::PreconditionFailed("space already exists".into()));
+        }
+        let store = Store::open_vfs_mode(dir, vfs, space, OpenMode::Create)
+            .map_err(|err| map_open(dir, err))?;
+        Ok(Self { store })
+    }
+
+    /// Fault-injection hook mirroring `Store::open_vfs` for the open path.
+    /// Production callers use [`Database::open_space`].
+    #[doc(hidden)]
+    pub fn open_space_vfs(
+        dir: impl AsRef<Path>,
+        vfs: Option<&str>,
+        space: &SpaceId,
+    ) -> Result<Self, Error> {
+        let dir = dir.as_ref();
+        if !dir.join(publication::MANIFEST_NAME).exists() {
+            return Err(Error::PreconditionFailed("space not found".into()));
+        }
+        let store = Store::open_vfs_mode(dir, vfs, space, OpenMode::Open)
             .map_err(|err| map_open(dir, err))?;
         Ok(Self { store })
     }
@@ -409,7 +448,10 @@ impl Database {
     ///
     /// # Errors
     /// Same cut gate as [`Database::files_at`], plus
-    /// [`Error::ContentUnavailable`] when the epoch has no registered seed.
+    /// [`Error::MissingDependency`] (`missing_dependency`) when the epoch is
+    /// declared at the cut but has no registered seed, and
+    /// [`Error::InvalidOperation`] (`invalid_operation`) when `epoch` is not
+    /// a declared text epoch at the cut.
     pub fn text_at(&self, cut: &[BatchId], epoch: &EpochId) -> Result<String, Error> {
         Ok(self.store.text_at(cut, epoch)?)
     }
