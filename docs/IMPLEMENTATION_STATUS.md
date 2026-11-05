@@ -604,3 +604,24 @@ frontier convention (last used index, not next) is probe-pinned by
 dt_text::tests::frontier_convention_is_last_used_index and the spec §12.4
 sentence corrected to match the pinned rev; metadata-id-in-native-slots
 rejected; add_remote_insert marked doc(hidden).
+
+## Issue I06 — exposed embedded transaction interface (in progress, branch `i06-embedded-transaction-interface`)
+
+Phase 1 (plan P1+P2) landed in 7a7308d: public facade `puyudb_core::api` with
+`Database::create_space`/`open_space` (owner lock; second open returns
+`DatabaseBusy` with a non-secret owner-lock hint; create-on-existing and
+open-of-missing are `precondition_failed`), the twelve §14 stable error codes
+on `api::Error::code()`, and the keyed transaction interface
+`Database::transact(caller, key, expected_frontier, publication)` with a
+branch-frontier CAS inside the atomic publish (idempotent retry returns the
+stored receipt before the CAS, §13.1). Core stays embeddable: no Tokio, no
+network, no CLI.
+
+Phase 2 (plan P3+P4) adds the read API on the handle (explicit cut of heads as
+the version identity until I08): `bootstrapped`, `branch_frontier`,
+`files_at`, `paths_at`, `prefix_conflicts_at`, `epochs_at`, `conflicts_at`,
+`semantic_manifest_at`, `text_at`, `artifact_availability`, `is_published`,
+`receipt_for` — all read-only with no engine lock across calls — plus
+owner-lock semantics per §8.1 (flock-based lock: stale PID can never break a
+live lock; drop/crash releases it). Network-filesystem rejection for writable
+opens is documented as a deferred limitation (not portable to detect).

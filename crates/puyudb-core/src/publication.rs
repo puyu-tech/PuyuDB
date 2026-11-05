@@ -328,6 +328,15 @@ impl Store {
             .read(true)
             .write(true)
             .open(dir.join(OWNER_LOCK_NAME))?;
+        // §8.1 owner lock: flock-based, so no PID text is ever written or
+        // trusted — a stale PID can never break a live lock, and a crash
+        // releases the lock because the fd closes; dropping the Store
+        // releases it the same way.
+        // limitation: §8.1 also wants network filesystems rejected for
+        // writable opens, but portable detection (mountinfo/getfsstat/
+        // GetVolumeInformation per platform) is out of scope here; deferred
+        // and logged in the I06 plan note. On supported filesystems a second
+        // open still fails loudly via Busy below.
         // A file scanner can hold a byte-range lock on a file it has just seen
         // created, so a first failure is not proof that another process owns the
         // database. Retry briefly before reporting it as taken.
@@ -1246,6 +1255,19 @@ impl Store {
             |row| row.get(0),
         )?;
         Ok(count == 1)
+    }
+
+    /// Whether the space has any visible (non-quarantined) batch (I06 P3).
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn bootstrapped(&self) -> Result<bool, Error> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM batches WHERE quarantined = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     /// Staged chunks that no admitted artifact references.

@@ -1,12 +1,20 @@
-//! I06 P1/P2 integration tests: the public facade (create/open/busy/§14
-//! error codes) and the keyed transaction interface with branch-frontier CAS.
+//! I06 P1–P4 integration tests: the public facade (create/open/busy/§14
+//! error codes), the keyed transaction interface with branch-frontier CAS,
+//! the read API at explicit cuts, and owner-lock release on drop.
 
 use std::path::PathBuf;
 
-use puyudb_core::api::{Database, Error};
-use puyudb_core::identity::{ArtifactId, BranchId, ChunkId, SpaceId, WriterEpoch};
-use puyudb_core::profile::{self, ArtifactManifest, BatchBody, MetadataArtifact};
+use puyudb_core::api::{Availability, Database, Error};
+use puyudb_core::identity::{
+    ArtifactId, BatchId, BranchId, ChunkId, FileId, GenerationNonce, RepositoryId, SpaceId,
+    WriterEpoch,
+};
+use puyudb_core::profile::{
+    self, ArtifactManifest, BatchBody, EpochDescriptor, EpochKind, MetadataArtifact, ModeTag,
+    NativeArtifact, Operation, Path,
+};
 use puyudb_core::publication::Publication;
+use puyudb_crdt::dt_text::TextDoc;
 
 const SPACE: SpaceId = SpaceId::from_array([1; 16]);
 const BRANCH: BranchId = BranchId::from_array([2; 16]);
@@ -94,13 +102,59 @@ fn publication<'a>(
     chunks: &'a [ChunkId],
     signature: &'a [u8; 64],
 ) -> Publication<'a> {
+    publication_multi(body, std::slice::from_ref(manifest), chunks, signature)
+}
+
+fn publication_multi<'a>(
+    body: &'a BatchBody,
+    artifacts: &'a [ArtifactManifest],
+    chunks: &'a [ChunkId],
+    signature: &'a [u8; 64],
+) -> Publication<'a> {
     Publication {
         body,
         signature_key: &body.public_key,
         signature,
-        artifacts: std::slice::from_ref(manifest),
+        artifacts,
         chunks,
         peer: 1,
+    }
+}
+
+/// Frame an arbitrary payload as an artifact and stage its chunks through
+/// the facade.
+fn frame_payload(db: &Database, kind: &str, payload: &[u8]) -> (ArtifactManifest, Vec<ChunkId>) {
+    let manifest = ArtifactManifest::for_payload(kind, payload).expect("manifest");
+    let chunks = payload
+        .chunks(profile::CHUNK_RAW_BYTES)
+        .map(|c| {
+            let id = profile::chunk_id(c);
+            db.stage_chunk(id, c).expect("stage");
+            id
+        })
+        .collect();
+    (manifest, chunks)
+}
+
+/// A metadata artifact payload carrying real operations plus a distinct
+/// context assertion.
+fn ops_payload(ops: Vec<Operation>, salt: u8) -> Vec<u8> {
+    MetadataArtifact {
+        operations: ops,
+        context_assertions: vec![vec![salt]],
+    }
+    .encode()
+    .expect("metadata artifact")
+}
+
+fn text_epoch_descriptor(baseline: ArtifactId) -> EpochDescriptor {
+    EpochDescriptor {
+        file: FileId::from_array([1; 16]),
+        nonce: GenerationNonce::from_array([1; 16]),
+        kind: EpochKind::Text,
+        baseline,
+        seed_profile: Some(profile::TEXT_PROFILE.to_owned()),
+        git_oid: None,
     }
 }
 
@@ -284,6 +338,281 @@ fn same_key_different_content_fails_precondition() {
     assert_eq!(
         db.receipt_for(b"caller", b"key").expect("receipt lookup"),
         Some(first)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn error_code_strings_cover_the_twelve_stable_codes() {
+    let cases: [(Error, &str); 12] = [
+        (Error::InvalidEncoding("d".into()), "invalid_encoding"),
+        (Error::UnsupportedVersion("d".into()), "unsupported_version"),
+        (
+            Error::UnsupportedCapability("d".into()),
+            "unsupported_capability",
+        ),
+        (Error::HashMismatch("d".into()), "hash_mismatch"),
+        (Error::InvalidSignature("d".into()), "invalid_signature"),
+        (Error::WriterEquivocation("d".into()), "writer_equivocation"),
+        (Error::MissingDependency("d".into()), "missing_dependency"),
+        (
+            Error::InvalidNativeScope("d".into()),
+            "invalid_native_scope",
+        ),
+        (Error::InvalidOperation("d".into()), "invalid_operation"),
+        (Error::PreconditionFailed("d".into()), "precondition_failed"),
+        (Error::ContentUnavailable("d".into()), "content_unavailable"),
+        (Error::Corruption("d".into()), "corruption"),
+    ];
+    for (err, code) in cases {
+        assert_eq!(err.code(), code);
+    }
+    // Environmental failures are deliberately not §14 codes.
+    assert_eq!(Error::Internal("d".into()).code(), "internal");
+}
+
+#[test]
+fn owner_lock_is_released_on_drop() {
+    let dir = temp();
+    let db = Database::create_space(&dir, &SPACE).expect("create");
+    drop(db);
+    // The OS lock went away with the handle: a second open succeeds (§8.1;
+    // drop and crash release the flock the same way).
+    let _db = Database::open_space(&dir, &SPACE).expect("open after drop");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn read_apis_roundtrip_on_a_text_epoch() {
+    let dir = temp();
+    let db = Database::create_space(&dir, &SPACE).expect("create");
+    assert!(!db.bootstrapped().expect("bootstrapped"));
+    assert!(db.branch_frontier(&BRANCH).expect("frontier").is_empty());
+
+    // Baseline artifact and a text epoch over it, staged through the facade.
+    let (baseline_manifest, baseline_ids) = frame_payload(&db, "text-baseline-v1", b"hello");
+    db.stage_artifact(&baseline_manifest, &baseline_ids)
+        .expect("stage baseline");
+    let epoch_desc = text_epoch_descriptor(baseline_manifest.id().expect("id"));
+    let epoch = epoch_desc.id().expect("epoch id");
+    let create = Operation::Create {
+        repository: RepositoryId::from_array([9; 16]),
+        file: FileId::from_array([1; 16]),
+        path: Path::new("a.txt").expect("path"),
+        mode: ModeTag::Regular,
+        epoch: epoch_desc.clone(),
+    };
+    let (meta_manifest, meta_ids) =
+        frame_payload(&db, "metadata-v1", &ops_payload(vec![create], 1));
+    let meta_artifact = meta_manifest.id().expect("id");
+    let body = root_body(meta_artifact);
+    let signature = sign(&body);
+    let receipt = db
+        .transact(
+            b"caller",
+            b"root",
+            &[],
+            &publication(&body, &meta_manifest, &meta_ids, &signature),
+        )
+        .expect("transact root");
+    let root = receipt.batch_id;
+
+    // Register the epoch seed through the facade.
+    let seed_name = profile::seed_actor_name(&epoch);
+    let mut doc = TextDoc::empty();
+    let agent = doc.agent_id(&seed_name);
+    doc.add_insert(agent, &[], 0, "hello");
+    let seed_bytes = doc.encode();
+    let (seed_manifest, seed_ids) = frame_payload(
+        &db,
+        "native-change-v1",
+        &NativeArtifact {
+            epoch,
+            profile: profile::TEXT_PROFILE.to_owned(),
+            native: seed_bytes.clone(),
+        }
+        .encode()
+        .expect("native artifact"),
+    );
+    db.register_seed(&epoch, &seed_manifest, &seed_ids)
+        .expect("register seed");
+
+    // Read APIs at the root cut.
+    assert!(db.bootstrapped().expect("bootstrapped"));
+    assert_eq!(db.branch_frontier(&BRANCH).expect("frontier"), vec![root]);
+    assert!(db.is_published(&root).expect("is_published"));
+    assert!(
+        !db.is_published(&BatchId::from_array([0x77; 32]))
+            .expect("is_published")
+    );
+    let files = db.files_at(&[root]).expect("files_at");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].file, FileId::from_array([1; 16]));
+    assert_eq!(files[0].paths, vec![Path::new("a.txt").expect("path")]);
+    assert_eq!(
+        db.paths_at(&[root]).expect("paths_at"),
+        vec![(
+            Path::new("a.txt").expect("path"),
+            vec![FileId::from_array([1; 16])]
+        )]
+    );
+    let epochs = db
+        .epochs_at(&[root], FileId::from_array([1; 16]))
+        .expect("epochs_at");
+    assert_eq!(epochs.len(), 1);
+    assert_eq!(epochs[0].0, epoch);
+    assert!(db.conflicts_at(&[root]).expect("conflicts").is_empty());
+    assert!(db.prefix_conflicts_at(&[root]).expect("prefix").is_empty());
+    let manifest = db.semantic_manifest_at(&[root]).expect("manifest");
+    assert_eq!(manifest.entries.len(), 1);
+    assert_eq!(manifest.entries[0].file, FileId::from_array([1; 16]));
+    let _manifest_id = manifest.id().expect("manifest id");
+    assert_eq!(db.text_at(&[root], &epoch).expect("text_at"), "hello");
+    assert_eq!(
+        db.artifact_availability(&meta_artifact)
+            .expect("availability"),
+        Some(Availability::Resident)
+    );
+    assert_eq!(
+        db.receipt_for(b"caller", b"root").expect("receipt lookup"),
+        Some(receipt)
+    );
+
+    // A native edit batch through transact; the text read reflects it.
+    let mut full = TextDoc::load(&seed_bytes).expect("load seed");
+    let seed_frontier = full.local_frontier();
+    let writer_name = profile::writer_actor_name(
+        &profile::public_key(&KEY_SEED),
+        &BRANCH,
+        &WRITER_EPOCH,
+        &epoch,
+    );
+    let writer = full.agent_id(&writer_name);
+    full.add_insert(writer, &seed_frontier, 5, " world");
+    let change = full.encode_from(&seed_frontier);
+    let (change_manifest, change_ids) = frame_payload(
+        &db,
+        "native-change-v1",
+        &NativeArtifact {
+            epoch,
+            profile: profile::TEXT_PROFILE.to_owned(),
+            native: change,
+        }
+        .encode()
+        .expect("native artifact"),
+    );
+    let change_artifact_id = change_manifest.id().expect("id");
+    let (meta2, meta2_ids) = frame_payload(&db, "metadata-v1", &ops_payload(Vec::new(), 2));
+    let mut body2 = child_body(&body, meta2.id().expect("id"));
+    body2.native_artifacts = vec![change_artifact_id];
+    let signature2 = sign(&body2);
+    let chunks2: Vec<ChunkId> = [change_ids, meta2_ids].concat();
+    let artifacts2 = [change_manifest, meta2];
+    let receipt2 = db
+        .transact(
+            b"caller",
+            b"edit",
+            &[root],
+            &publication_multi(&body2, &artifacts2, &chunks2, &signature2),
+        )
+        .expect("transact edit");
+    assert_eq!(
+        db.branch_frontier(&BRANCH).expect("frontier"),
+        vec![receipt2.batch_id]
+    );
+    assert_eq!(
+        db.text_at(&[receipt2.batch_id], &epoch).expect("text_at"),
+        "hello world"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn frontier_and_conflicts_at_concurrent_heads() {
+    let dir = temp();
+    let db = Database::create_space(&dir, &SPACE).expect("create");
+    // Root: create file 1 at "a.txt" with a text epoch (the baseline artifact
+    // is not needed for projection-only reads).
+    let epoch_desc = text_epoch_descriptor(ArtifactId::from_array([1; 32]));
+    let create = Operation::Create {
+        repository: RepositoryId::from_array([9; 16]),
+        file: FileId::from_array([1; 16]),
+        path: Path::new("a.txt").expect("path"),
+        mode: ModeTag::Regular,
+        epoch: epoch_desc,
+    };
+    let (meta, meta_ids) = frame_payload(&db, "metadata-v1", &ops_payload(vec![create], 1));
+    let body = root_body(meta.id().expect("id"));
+    let signature = sign(&body);
+    let root = db
+        .transact(
+            b"caller",
+            b"root",
+            &[],
+            &publication(&body, &meta, &meta_ids, &signature),
+        )
+        .expect("transact root")
+        .batch_id;
+
+    // Two causally concurrent children on fresh writer streams assigning
+    // conflicting paths ("dir" vs "dir/file" — also a prefix conflict). Each
+    // extends from the current frontier, so the CAS expectation moves with it.
+    let mut expected = vec![root];
+    let mut heads = Vec::new();
+    for (seed, path, salt) in [([5u8; 32], "dir", 2u8), ([6u8; 32], "dir/file", 3u8)] {
+        let (m, ids) = frame_payload(
+            &db,
+            "metadata-v1",
+            &ops_payload(
+                vec![Operation::Path {
+                    file: FileId::from_array([1; 16]),
+                    path: Path::new(path).expect("path"),
+                }],
+                salt,
+            ),
+        );
+        let body = BatchBody {
+            space: SPACE,
+            branch: BRANCH,
+            public_key: profile::public_key(&seed),
+            writer_epoch: WRITER_EPOCH,
+            sequence: 1,
+            previous: None,
+            parents: vec![root],
+            lamport: 2,
+            native_artifacts: Vec::new(),
+            metadata: m.id().expect("id"),
+        };
+        let signature = profile::sign_batch(&seed, &body.space, &body.id().expect("id"));
+        let receipt = db
+            .transact(
+                b"caller",
+                &[salt],
+                &expected,
+                &publication(&body, &m, &ids, &signature),
+            )
+            .expect("concurrent transact");
+        heads.push(receipt.batch_id);
+        expected = vec![receipt.batch_id];
+    }
+    heads.sort_unstable();
+    assert_eq!(db.branch_frontier(&BRANCH).expect("frontier"), heads);
+    let conflicts = db.conflicts_at(&heads).expect("conflicts");
+    assert!(
+        conflicts
+            .iter()
+            .any(|c| c.kind == profile::ConflictKind::Register
+                && c.file == FileId::from_array([1; 16])),
+        "expected a register conflict on the concurrent path writes: {conflicts:?}"
+    );
+    let prefix = db.prefix_conflicts_at(&heads).expect("prefix");
+    let dir_path = Path::new("dir").expect("path");
+    let nested_path = Path::new("dir/file").expect("path");
+    assert!(
+        prefix.len() == 1
+            && (prefix[0] == (dir_path.clone(), nested_path.clone())
+                || prefix[0] == (nested_path.clone(), dir_path.clone())),
+        "expected the dir / dir/file prefix conflict: {prefix:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

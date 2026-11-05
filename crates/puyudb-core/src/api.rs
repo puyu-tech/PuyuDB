@@ -1,24 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Public embedded facade for one local space (I06 P1/P2).
+//! Public embedded facade for one local space (I06 P1–P3).
 //!
 //! [`Database`] is the entry point for embedding PuyuDB in a synchronous
 //! application: no Tokio, no network, no CLI, no required runtime. Per §8.1,
 //! [`Database::open_space`] never silently becomes an RPC client — it either
-//! acquires the owner lock or fails with [`Error::Busy`]. All writes go
-//! through [`Database::transact`], which takes a fully built [`Publication`]
-//! (never a callback, so no core lock is held across user code) and reports
-//! the §14 stable error codes.
+//! acquires the owner lock or fails with [`Error::Busy`]. Writes go through
+//! [`Database::transact`], which takes a fully built [`Publication`] (never a
+//! callback, so no core lock is held across user code). The read methods
+//! (`branch_frontier`, `files_at`, `text_at`, …) are read-only, hold no
+//! engine lock across the call, and take an explicit cut `&[BatchId]` of
+//! heads as the version identity until I08 lands version handles.
 
 use std::path::Path;
 
 use thiserror::Error;
 
-use crate::identity::{BatchId, ChunkId, EpochId, SpaceId};
-use crate::profile::ArtifactManifest;
+use crate::identity::{ArtifactId, BatchId, BranchId, ChunkId, EpochId, FileId, SpaceId};
+use crate::profile::{self, ArtifactManifest};
 use crate::publication::{self, OpenMode, Store};
 
-pub use crate::publication::{Publication, Receipt};
+pub use crate::projection::FileProjection;
+pub use crate::publication::{Availability, Publication, Receipt};
 
 /// A second open of an owned space (§8.1).
 ///
@@ -40,7 +43,7 @@ impl DatabaseBusy {
 
 /// Public failure of the embedded facade.
 ///
-/// The first eleven variants are exactly the §14 stable codes of
+/// The first twelve variants are exactly the §14 stable codes of
 /// `docs/spec/canonical-profile-v1.md`; [`Error::code`] returns them and
 /// callers must never parse the rendered message instead. [`Error::Busy`] and
 /// [`Error::Internal`] are environmental (owner lock, io, sqlite, unpatched
@@ -52,8 +55,10 @@ pub enum Error {
     /// §14 `invalid_encoding`.
     #[error("invalid_encoding: {0}")]
     InvalidEncoding(String),
-    /// §14 `unsupported_capability`. Profile `unsupported_version` folds
-    /// into this variant at this facade.
+    /// §14 `unsupported_version`.
+    #[error("unsupported_version: {0}")]
+    UnsupportedVersion(String),
+    /// §14 `unsupported_capability`.
     #[error("unsupported_capability: {0}")]
     UnsupportedCapability(String),
     /// §14 `hash_mismatch`.
@@ -102,6 +107,7 @@ impl Error {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::InvalidEncoding(_) => "invalid_encoding",
+            Self::UnsupportedVersion(_) => "unsupported_version",
             Self::UnsupportedCapability(_) => "unsupported_capability",
             Self::HashMismatch(_) => "hash_mismatch",
             Self::InvalidSignature(_) => "invalid_signature",
@@ -172,9 +178,7 @@ impl From<crate::profile::Error> for Error {
     fn from(error: crate::profile::Error) -> Self {
         match error {
             crate::profile::Error::Encoding(detail) => Self::InvalidEncoding(detail),
-            crate::profile::Error::Version(detail) => {
-                Self::UnsupportedCapability(format!("unsupported_version: {detail}"))
-            }
+            crate::profile::Error::Version(detail) => Self::UnsupportedVersion(detail),
             crate::profile::Error::Capability(detail) => Self::UnsupportedCapability(detail),
             crate::profile::Error::HashMismatch(detail) => Self::HashMismatch(detail),
             crate::profile::Error::Signature(detail) => Self::InvalidSignature(detail),
@@ -312,5 +316,128 @@ impl Database {
     /// Returns [`Error::Internal`] when the read fails.
     pub fn receipt_for(&self, caller: &[u8], key: &[u8]) -> Result<Option<Receipt>, Error> {
         Ok(self.store.receipt_for(caller, key)?)
+    }
+
+    /// Whether the space has any visible (non-quarantined) batch.
+    ///
+    /// Read-only; no engine lock is held across the call.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails.
+    pub fn bootstrapped(&self) -> Result<bool, Error> {
+        Ok(self.store.bootstrapped()?)
+    }
+
+    /// Current visible heads of `branch` — the branch frontier (§5.3).
+    ///
+    /// Read-only. Until I08 lands version handles, this cut of heads is the
+    /// "version" identity accepted by the `*_at` reads below.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails.
+    pub fn branch_frontier(&self, branch: &BranchId) -> Result<Vec<BatchId>, Error> {
+        Ok(self.store.branch_heads(branch)?)
+    }
+
+    /// Per-file register projections at `cut` (spec §7.2 entries), sorted by
+    /// raw `FileId` bytes. Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidEncoding`]/[`Error::Internal`] when the cut
+    /// exceeds the frontier cap or the read fails.
+    pub fn files_at(&self, cut: &[BatchId]) -> Result<Vec<FileProjection>, Error> {
+        Ok(self.store.files_at(cut)?)
+    }
+
+    /// Path assignments at `cut`: each path with the files assigned to it.
+    /// Read-only.
+    ///
+    /// # Errors
+    /// Same cut gate as [`Database::files_at`].
+    pub fn paths_at(&self, cut: &[BatchId]) -> Result<Vec<(profile::Path, Vec<FileId>)>, Error> {
+        Ok(self.store.paths_at(cut)?)
+    }
+
+    /// Prefix conflicts at `cut`: path pairs where one is a prefix of the
+    /// other. Reported, never auto-resolved. Read-only.
+    ///
+    /// # Errors
+    /// Same cut gate as [`Database::files_at`].
+    pub fn prefix_conflicts_at(
+        &self,
+        cut: &[BatchId],
+    ) -> Result<Vec<(profile::Path, profile::Path)>, Error> {
+        Ok(self.store.prefix_conflicts_at(cut)?)
+    }
+
+    /// All epochs declared for `file` at `cut`, old epochs included (§8.2).
+    /// Read-only.
+    ///
+    /// # Errors
+    /// Same cut gate as [`Database::files_at`].
+    pub fn epochs_at(
+        &self,
+        cut: &[BatchId],
+        file: FileId,
+    ) -> Result<Vec<(EpochId, profile::EpochDescriptor)>, Error> {
+        Ok(self.store.epochs_at(cut, file)?)
+    }
+
+    /// Conflicts visible at `cut`, recomputed from history with stable
+    /// `ConflictId`s (spec §9). Read-only.
+    ///
+    /// # Errors
+    /// Same cut gate as [`Database::files_at`].
+    pub fn conflicts_at(&self, cut: &[BatchId]) -> Result<Vec<profile::Conflict>, Error> {
+        Ok(self.store.conflicts_at(cut)?)
+    }
+
+    /// The canonical semantic manifest at `cut` (spec §7.2); call
+    /// `SemanticManifest::id` for the comparison hash. Read-only.
+    ///
+    /// # Errors
+    /// Same cut gate as [`Database::files_at`].
+    pub fn semantic_manifest_at(
+        &self,
+        cut: &[BatchId],
+    ) -> Result<profile::SemanticManifest, Error> {
+        Ok(self.store.semantic_manifest_at(cut)?)
+    }
+
+    /// Current text of the text `epoch` at `cut` (seed plus the cut's native
+    /// changes, arrival-order independent). Read-only.
+    ///
+    /// # Errors
+    /// Same cut gate as [`Database::files_at`], plus
+    /// [`Error::ContentUnavailable`] when the epoch has no registered seed.
+    pub fn text_at(&self, cut: &[BatchId], epoch: &EpochId) -> Result<String, Error> {
+        Ok(self.store.text_at(cut, epoch)?)
+    }
+
+    /// Hydration state recorded for one artifact. Read-only.
+    ///
+    /// This is the per-artifact `content_availability` record exactly as
+    /// stored: on this local store publication writes `Resident` only after
+    /// the artifact's own chunks were staged and raw-hash verified inside the
+    /// publication commit. Per §22.2, Applied means complete validated
+    /// history plus every required artifact, and Hydrated additionally means
+    /// every content artifact in the ancestor closure is resident and
+    /// raw-hash verified; this facade does NOT run a closure-wide hydration
+    /// pass, so `Resident` here must not be read as a Hydrated claim for the
+    /// whole closure.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails and
+    /// [`Error::Corruption`] for an unknown stored state.
+    pub fn artifact_availability(&self, id: &ArtifactId) -> Result<Option<Availability>, Error> {
+        Ok(self.store.artifact_availability(id)?)
+    }
+
+    /// Whether `id` is a visible (non-quarantined) publication. Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails.
+    pub fn is_published(&self, id: &BatchId) -> Result<bool, Error> {
+        Ok(self.store.is_published(id)?)
     }
 }
