@@ -170,6 +170,15 @@ pub enum Error {
     /// The manifest and the database name different spaces.
     #[error("manifest and database name different spaces")]
     SpaceMismatch,
+    /// A caller-supplied precondition did not hold: create on an existing
+    /// space, open of a missing space, branch-frontier CAS mismatch, or
+    /// idempotency-key reuse with different request content.
+    #[error("precondition failed: {0}")]
+    Precondition(String),
+    /// Writable open on a network filesystem (§8.1). Environmental, not a
+    /// §14 code.
+    #[error("network filesystem {0} is not supported for writable opens")]
+    NetworkFs(String),
     /// SQLite's integrity check failed at open.
     #[error("database failed integrity check: {0}")]
     Corrupt(String),
@@ -190,7 +199,21 @@ const STORAGE_PROFILE: &str = "sqlite-wal-full-v1";
 /// `lock` profile of the manifest.
 const LOCK_PROFILE: &str = "owner-file-v1";
 /// Per-space manifest file name inside the space directory.
-const MANIFEST_NAME: &str = "manifest.toml";
+pub(crate) const MANIFEST_NAME: &str = "manifest.toml";
+/// Owner-lock file name inside the space directory.
+pub(crate) const OWNER_LOCK_NAME: &str = "owner.lock";
+
+/// How [`Store::open_vfs_mode`] treats the space manifest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenMode {
+    /// Fail with [`Error::Precondition`] when the manifest already exists.
+    Create,
+    /// Fail with [`Error::Precondition`] when the manifest is missing.
+    Open,
+    /// Create the manifest when missing, open an existing one (the historic
+    /// [`Store::open`] behavior).
+    Any,
+}
 
 /// One signed batch proposed for publication.
 ///
@@ -290,14 +313,34 @@ impl Store {
         vfs: Option<&str>,
         space: &SpaceId,
     ) -> Result<Self, Error> {
+        Self::open_vfs_mode(dir, vfs, space, OpenMode::Any)
+    }
+
+    /// Open the ledger with an explicit create/open precondition on the space
+    /// manifest, checked under the owner lock (I06 facade).
+    pub(crate) fn open_vfs_mode(
+        dir: impl AsRef<Path>,
+        vfs: Option<&str>,
+        space: &SpaceId,
+        mode: OpenMode,
+    ) -> Result<Self, Error> {
         let dir = dir.as_ref();
         fs::create_dir_all(dir)?;
+        // §8.1: writable opens on network filesystems are rejected. Linux-only
+        // std-only check (reject_network_fs below); other platforms keep the
+        // current behavior because portable detection does not exist.
+        #[cfg(target_os = "linux")]
+        reject_network_fs(dir)?;
         let owner = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(dir.join("owner.lock"))?;
+            .open(dir.join(OWNER_LOCK_NAME))?;
+        // §8.1 owner lock: flock-based, so no PID text is ever written or
+        // trusted — a stale PID can never break a live lock, and a crash
+        // releases the lock because the fd closes; dropping the Store
+        // releases it the same way.
         // A file scanner can hold a byte-range lock on a file it has just seen
         // created, so a first failure is not proof that another process owns the
         // database. Retry briefly before reporting it as taken.
@@ -315,6 +358,11 @@ impl Store {
             if existing != *space {
                 return Err(Error::SpaceMismatch);
             }
+            if mode == OpenMode::Create {
+                return Err(Error::Precondition("space already exists".into()));
+            }
+        } else if mode == OpenMode::Open {
+            return Err(Error::Precondition("space not found".into()));
         }
         let db_path = dir.join("space.sqlite");
         let conn = if let Some(vfs) = vfs {
@@ -515,7 +563,7 @@ impl Store {
     /// A failed admission or a missing chunk leaves no new visible batch. A
     /// missing parent stays pending. `Ok` means the commit returned under WAL/FULL.
     pub fn publish(&self, publication: &Publication<'_>) -> Result<Receipt, Error> {
-        self.publish_inner(publication, None)
+        self.publish_inner(publication, None, None)
     }
 
     /// Publish with an idempotency key.
@@ -526,7 +574,8 @@ impl Store {
     /// committed leaves no row, so the key stays usable (cancel-before-publish).
     ///
     /// # Errors
-    /// Same as [`Store::publish`], plus [`Error::Rejected`] on key reuse.
+    /// Same as [`Store::publish`], plus [`Error::Precondition`] on key reuse
+    /// with different request content.
     pub fn publish_keyed(
         &self,
         caller: &[u8],
@@ -538,13 +587,44 @@ impl Store {
                 "idempotency caller or key exceeds the size cap".into(),
             ));
         }
-        self.publish_inner(publication, Some((caller, key)))
+        self.publish_inner(publication, Some((caller, key)), None)
+    }
+
+    /// Publish with an idempotency key and a branch-frontier CAS (I06 P2, §13.1).
+    ///
+    /// Inside the `BEGIN IMMEDIATE` closure, after the idempotency and
+    /// visible-batch checks but before admission, the visible heads of
+    /// `publication.body.branch` are recomputed and must equal the sorted
+    /// `expected_frontier`; an empty `expected_frontier` is satisfied only
+    /// when the branch currently has no visible heads. A mismatch is
+    /// [`Error::Precondition`] and leaves the key reusable.
+    ///
+    /// The idempotency check runs first, so a retry of one's own committed
+    /// batch returns the stored receipt before the CAS (§13.1).
+    ///
+    /// # Errors
+    /// Same as [`Store::publish_keyed`], plus [`Error::Precondition`] on a
+    /// frontier mismatch.
+    pub fn publish_transact(
+        &self,
+        caller: &[u8],
+        key: &[u8],
+        expected_frontier: &[BatchId],
+        publication: &Publication<'_>,
+    ) -> Result<Receipt, Error> {
+        if caller.len() > MAX_IDEMPOTENCY_PART_BYTES || key.len() > MAX_IDEMPOTENCY_PART_BYTES {
+            return Err(Error::Rejected(
+                "idempotency caller or key exceeds the size cap".into(),
+            ));
+        }
+        self.publish_inner(publication, Some((caller, key)), Some(expected_frontier))
     }
 
     fn publish_inner(
         &self,
         publication: &Publication<'_>,
         idempotency: Option<(&[u8], &[u8])>,
+        expected_frontier: Option<&[BatchId]>,
     ) -> Result<Receipt, Error> {
         if publication.body.space != self.space {
             return Err(Error::Rejected(
@@ -654,7 +734,7 @@ impl Store {
                     .ok();
                 match existing {
                     Some(row) if row.hash.as_slice() != &hash[..] => {
-                        return Err(Error::Rejected(
+                        return Err(Error::Precondition(
                             "idempotency key already used for a different request".into(),
                         ));
                     }
@@ -691,6 +771,25 @@ impl Store {
                     batch_id,
                     event_cursor: cursor,
                 });
+            }
+            // I06 P2: branch-frontier CAS, after the idempotency and
+            // visible-batch checks (a retry of an own committed batch returns
+            // its stored receipt first, §13.1) and before admission. An empty
+            // expected frontier is satisfied only by a branch with no visible
+            // heads. `branch_heads` is ordered by batch id; sort both sides so
+            // the comparison is exactly "sorted expected == current heads".
+            if let Some(expected) = expected_frontier {
+                let mut heads = self.branch_heads(&publication.body.branch)?;
+                let mut want: Vec<BatchId> = expected.to_vec();
+                heads.sort_unstable();
+                want.sort_unstable();
+                if heads != want {
+                    return Err(Error::Precondition(format!(
+                        "branch frontier mismatch: expected {} head(s), found {}",
+                        want.len(),
+                        heads.len()
+                    )));
+                }
             }
             self.admit_stream(publication.body, &batch_id)?;
             self.admit_parents(publication.body)?;
@@ -1160,6 +1259,19 @@ impl Store {
             |row| row.get(0),
         )?;
         Ok(count == 1)
+    }
+
+    /// Whether the space has any visible (non-quarantined) batch (I06 P3).
+    ///
+    /// # Errors
+    /// Returns a SQLite error if the read fails.
+    pub fn bootstrapped(&self) -> Result<bool, Error> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM batches WHERE quarantined = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     /// Staged chunks that no admitted artifact references.
@@ -1656,6 +1768,121 @@ fn read_manifest(path: &Path) -> Result<SpaceId, Error> {
     SpaceId::from_str(&space).map_err(|err| Error::Manifest(err.to_string()))
 }
 
+/// Known network filesystem types rejected for writable opens (§8.1).
+/// Conservative list: unknown fstypes pass through, never mislabeled.
+#[cfg(target_os = "linux")]
+const NETWORK_FS_TYPES: [&str; 7] = ["nfs", "nfs4", "cifs", "smbfs", "smb2", "9p", "afs"];
+
+/// §8.1: reject a writable open whose space directory lives on a network
+/// filesystem. Linux-only and std-only (no new deps): the directory's device
+/// is resolved via `MetadataExt::dev()` and matched against
+/// `/proc/self/mountinfo` major:minor entries with a longest mount-point
+/// prefix match on the canonicalized path. A missing/unreadable mountinfo or
+/// an unknown fstype passes through — the check never guesses.
+#[cfg(target_os = "linux")]
+fn reject_network_fs(dir: &Path) -> Result<(), Error> {
+    use std::os::unix::fs::MetadataExt;
+
+    let dev = fs::metadata(dir).map_err(Error::Io)?.dev();
+    // Linux dev_t encoding: major/minor are not plain shifts of the whole
+    // word, so split them the way the kernel's MKDEV/major/minor macros do.
+    let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xffu64);
+    let minor = (dev & 0xff) | ((dev >> 12) & !0xffu64);
+    let canonical = fs::canonicalize(dir).map_err(Error::Io)?;
+    let mountinfo = match fs::read_to_string("/proc/self/mountinfo") {
+        Ok(text) => text,
+        // No mountinfo (e.g. chroot): pass through, documented above.
+        Err(_) => return Ok(()),
+    };
+    if let Some(fstype) = network_fs_at(&mountinfo, &canonical, major, minor) {
+        return Err(Error::NetworkFs(fstype));
+    }
+    Ok(())
+}
+
+/// The fstype of the longest mount-point match for `dir`'s device, when that
+/// mount is a known network filesystem. Pure parsing helper so tests can
+/// drive it without a real network mount.
+#[cfg(target_os = "linux")]
+fn network_fs_at(mountinfo: &str, dir: &Path, major: u64, minor: u64) -> Option<String> {
+    // (mount point len, mount, fstype); the mount point is owned because it
+    // is unescaped into a local that must not be borrowed past the iteration.
+    let mut best: Option<(usize, String, &str)> = None;
+    for line in mountinfo.lines() {
+        let mut fields = line.split(' ');
+        let (Some(_), Some(_), Some(dev), Some(_), Some(mount)) = (
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+        ) else {
+            continue;
+        };
+        let Some((maj, min)) = dev.split_once(':') else {
+            continue;
+        };
+        if maj.parse::<u64>() != Ok(major) || min.parse::<u64>() != Ok(minor) {
+            continue;
+        }
+        let mount_path = unescape_mountinfo(mount);
+        if !is_mount_prefix(Path::new(&mount_path), dir) {
+            continue;
+        }
+        // Fields after the " - " separator: fstype, source, super options.
+        let Some((_, rest)) = line.split_once(" - ") else {
+            continue;
+        };
+        let Some(fstype) = rest.split(' ').next() else {
+            continue;
+        };
+        let len = mount_path.len();
+        // as_ref: is_none_or consumes its receiver, which would move `best`
+        // out of the loop variable.
+        if best.as_ref().is_none_or(|(best_len, _, _)| len > *best_len) {
+            best = Some((len, mount_path, fstype));
+        }
+    }
+    let (_, mount, fstype) = best?;
+    NETWORK_FS_TYPES
+        .contains(&fstype)
+        .then(|| format!("{fstype} at {mount}"))
+}
+
+/// Whether `mount` is a path-component prefix of `path`.
+#[cfg(target_os = "linux")]
+fn is_mount_prefix(mount: &Path, path: &Path) -> bool {
+    let mount: Vec<_> = mount.components().collect();
+    let path: Vec<_> = path.components().collect();
+    mount.len() <= path.len() && mount.iter().zip(path.iter()).all(|(a, b)| a == b)
+}
+
+/// Undo mountinfo's octal escaping (\040 space, \011 tab, \012 newline,
+/// \134 backslash) in a mount point.
+#[cfg(target_os = "linux")]
+fn unescape_mountinfo(field: &str) -> String {
+    let mut out = String::with_capacity(field.len());
+    let mut chars = field.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            let (Some(a), Some(b), Some(d)) = (chars.next(), chars.next(), chars.next()) else {
+                out.push(c);
+                break;
+            };
+            match (a, b, d) {
+                ('0', '4', '0') => out.push(' '),
+                ('0', '1', '1') => out.push('\t'),
+                ('0', '1', '2') => out.push('\n'),
+                ('1', '3', '4') => out.push('\\'),
+                _ => out.push(c),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Create `format_meta` on a fresh database, or verify it on an existing one.
 /// `db_existed` is true when the database file already had a `batches` table;
 /// an existing database with an emptied `format_meta` is corruption, not a
@@ -1742,6 +1969,60 @@ mod tests {
     use crate::projection::{Field, FieldValue};
 
     const SPACE: SpaceId = SpaceId::from_array([1; 16]);
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn network_fs_detection_matches_longest_mount_and_rejects_only_known_types() {
+        // dev 0:225 -> major 0, minor 225.
+        let mountinfo = "\
+36 35 0:224 / / rw,relatime - ext4 /dev/sda1 rw
+37 36 0:225 / /mnt/net rw,relatime - nfs 192.168.1.9:/export rw
+38 36 0:225 /sub /mnt/net/sub rw,relatime - cifs //server/share rw
+39 36 0:226 / /mnt/local rw,relatime - ext4 /dev/sdb1 rw
+40 36 0:227 / /mnt/unknown rw,relatime - somefuse rw
+41 36 8:1 / /mnt/disk\\040with\\040space rw - xfs /dev/sdc1 rw
+";
+        // Longest mount-point match on the same device wins: /mnt/net/sub.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/net/sub/deep"), 0, 225),
+            Some("cifs at /mnt/net/sub".to_string())
+        );
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/net/other"), 0, 225),
+            Some("nfs at /mnt/net".to_string())
+        );
+        // A local filesystem on another device passes through.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/local/x"), 0, 226),
+            None
+        );
+        // Unknown fstype passes through — never mislabeled as network.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/unknown/x"), 0, 227),
+            None
+        );
+        // No mount for the device passes through.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/elsewhere"), 9, 9),
+            None
+        );
+        // Octal escaping in mount points is undone before matching.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/disk with space/f"), 8, 1),
+            None
+        );
+        // A network mount under the escaped path is still found.
+        let escaped_net = "50 36 8:2 / /mnt/disk\\040with\\040space/net rw - 9p trans=virtio rw\n";
+        assert_eq!(
+            network_fs_at(escaped_net, Path::new("/mnt/disk with space/net/f"), 8, 2),
+            Some("9p at /mnt/disk with space/net".to_string())
+        );
+        // Component-boundary prefix only: /mnt/netx is not under /mnt/net.
+        assert_eq!(
+            network_fs_at(mountinfo, Path::new("/mnt/netx"), 0, 225),
+            None
+        );
+    }
 
     fn temp() -> PathBuf {
         // The clock alone is not unique across parallel tests on every
@@ -2709,7 +2990,7 @@ mod tests {
         let err = store
             .publish_keyed(caller, key, &publication(&second, &second_ids))
             .expect_err("key reuse");
-        assert!(matches!(err, Error::Rejected(_)));
+        assert!(matches!(err, Error::Precondition(_)));
         // A request that failed before commit leaves no row: the key stays
         // usable and the retry publishes normally.
         let third = child(&f, 2, 2, 9, vec![f.body.id().expect("id")]);
@@ -2756,7 +3037,7 @@ mod tests {
         let err = store
             .publish_keyed(caller, key_a, &publication(&second, &second_ids))
             .expect_err("key reuse");
-        assert!(matches!(err, Error::Rejected(_)));
+        assert!(matches!(err, Error::Precondition(_)));
         assert_eq!(store.receipt_for(caller, key_a).expect("receipt"), Some(r1));
         // Equivocation quarantines `first`; the stored receipt must stop
         // resolving on both the keyed path and receipt_for.
