@@ -4,8 +4,11 @@
 //!
 //! The I03 canonical identity/profile layer is the admission input. I04 adds
 //! the local publication ledger: staged chunks, one atomic batch commit, and
-//! a durable ack only after that commit.
+//! a durable ack only after that commit. I06 adds the public embedded facade
+//! (`api`): create/open, the §14 error codes, and the keyed transaction
+//! interface.
 
+pub mod api;
 pub mod canon;
 pub mod identity;
 pub mod native;

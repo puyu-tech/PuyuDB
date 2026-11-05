@@ -170,6 +170,11 @@ pub enum Error {
     /// The manifest and the database name different spaces.
     #[error("manifest and database name different spaces")]
     SpaceMismatch,
+    /// A caller-supplied precondition did not hold: create on an existing
+    /// space, open of a missing space, branch-frontier CAS mismatch, or
+    /// idempotency-key reuse with different request content.
+    #[error("precondition failed: {0}")]
+    Precondition(String),
     /// SQLite's integrity check failed at open.
     #[error("database failed integrity check: {0}")]
     Corrupt(String),
@@ -190,7 +195,21 @@ const STORAGE_PROFILE: &str = "sqlite-wal-full-v1";
 /// `lock` profile of the manifest.
 const LOCK_PROFILE: &str = "owner-file-v1";
 /// Per-space manifest file name inside the space directory.
-const MANIFEST_NAME: &str = "manifest.toml";
+pub(crate) const MANIFEST_NAME: &str = "manifest.toml";
+/// Owner-lock file name inside the space directory.
+pub(crate) const OWNER_LOCK_NAME: &str = "owner.lock";
+
+/// How [`Store::open_vfs_mode`] treats the space manifest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenMode {
+    /// Fail with [`Error::Precondition`] when the manifest already exists.
+    Create,
+    /// Fail with [`Error::Precondition`] when the manifest is missing.
+    Open,
+    /// Create the manifest when missing, open an existing one (the historic
+    /// [`Store::open`] behavior).
+    Any,
+}
 
 /// One signed batch proposed for publication.
 ///
@@ -290,6 +309,17 @@ impl Store {
         vfs: Option<&str>,
         space: &SpaceId,
     ) -> Result<Self, Error> {
+        Self::open_vfs_mode(dir, vfs, space, OpenMode::Any)
+    }
+
+    /// Open the ledger with an explicit create/open precondition on the space
+    /// manifest, checked under the owner lock (I06 facade).
+    pub(crate) fn open_vfs_mode(
+        dir: impl AsRef<Path>,
+        vfs: Option<&str>,
+        space: &SpaceId,
+        mode: OpenMode,
+    ) -> Result<Self, Error> {
         let dir = dir.as_ref();
         fs::create_dir_all(dir)?;
         let owner = OpenOptions::new()
@@ -297,7 +327,7 @@ impl Store {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(dir.join("owner.lock"))?;
+            .open(dir.join(OWNER_LOCK_NAME))?;
         // A file scanner can hold a byte-range lock on a file it has just seen
         // created, so a first failure is not proof that another process owns the
         // database. Retry briefly before reporting it as taken.
@@ -315,6 +345,11 @@ impl Store {
             if existing != *space {
                 return Err(Error::SpaceMismatch);
             }
+            if mode == OpenMode::Create {
+                return Err(Error::Precondition("space already exists".into()));
+            }
+        } else if mode == OpenMode::Open {
+            return Err(Error::Precondition("space not found".into()));
         }
         let db_path = dir.join("space.sqlite");
         let conn = if let Some(vfs) = vfs {
@@ -515,7 +550,7 @@ impl Store {
     /// A failed admission or a missing chunk leaves no new visible batch. A
     /// missing parent stays pending. `Ok` means the commit returned under WAL/FULL.
     pub fn publish(&self, publication: &Publication<'_>) -> Result<Receipt, Error> {
-        self.publish_inner(publication, None)
+        self.publish_inner(publication, None, None)
     }
 
     /// Publish with an idempotency key.
@@ -526,7 +561,8 @@ impl Store {
     /// committed leaves no row, so the key stays usable (cancel-before-publish).
     ///
     /// # Errors
-    /// Same as [`Store::publish`], plus [`Error::Rejected`] on key reuse.
+    /// Same as [`Store::publish`], plus [`Error::Precondition`] on key reuse
+    /// with different request content.
     pub fn publish_keyed(
         &self,
         caller: &[u8],
@@ -538,13 +574,44 @@ impl Store {
                 "idempotency caller or key exceeds the size cap".into(),
             ));
         }
-        self.publish_inner(publication, Some((caller, key)))
+        self.publish_inner(publication, Some((caller, key)), None)
+    }
+
+    /// Publish with an idempotency key and a branch-frontier CAS (I06 P2, §13.1).
+    ///
+    /// Inside the `BEGIN IMMEDIATE` closure, after the idempotency and
+    /// visible-batch checks but before admission, the visible heads of
+    /// `publication.body.branch` are recomputed and must equal the sorted
+    /// `expected_frontier`; an empty `expected_frontier` is satisfied only
+    /// when the branch currently has no visible heads. A mismatch is
+    /// [`Error::Precondition`] and leaves the key reusable.
+    ///
+    /// The idempotency check runs first, so a retry of one's own committed
+    /// batch returns the stored receipt before the CAS (§13.1).
+    ///
+    /// # Errors
+    /// Same as [`Store::publish_keyed`], plus [`Error::Precondition`] on a
+    /// frontier mismatch.
+    pub fn publish_transact(
+        &self,
+        caller: &[u8],
+        key: &[u8],
+        expected_frontier: &[BatchId],
+        publication: &Publication<'_>,
+    ) -> Result<Receipt, Error> {
+        if caller.len() > MAX_IDEMPOTENCY_PART_BYTES || key.len() > MAX_IDEMPOTENCY_PART_BYTES {
+            return Err(Error::Rejected(
+                "idempotency caller or key exceeds the size cap".into(),
+            ));
+        }
+        self.publish_inner(publication, Some((caller, key)), Some(expected_frontier))
     }
 
     fn publish_inner(
         &self,
         publication: &Publication<'_>,
         idempotency: Option<(&[u8], &[u8])>,
+        expected_frontier: Option<&[BatchId]>,
     ) -> Result<Receipt, Error> {
         if publication.body.space != self.space {
             return Err(Error::Rejected(
@@ -654,7 +721,7 @@ impl Store {
                     .ok();
                 match existing {
                     Some(row) if row.hash.as_slice() != &hash[..] => {
-                        return Err(Error::Rejected(
+                        return Err(Error::Precondition(
                             "idempotency key already used for a different request".into(),
                         ));
                     }
@@ -691,6 +758,25 @@ impl Store {
                     batch_id,
                     event_cursor: cursor,
                 });
+            }
+            // I06 P2: branch-frontier CAS, after the idempotency and
+            // visible-batch checks (a retry of an own committed batch returns
+            // its stored receipt first, §13.1) and before admission. An empty
+            // expected frontier is satisfied only by a branch with no visible
+            // heads. `branch_heads` is ordered by batch id; sort both sides so
+            // the comparison is exactly "sorted expected == current heads".
+            if let Some(expected) = expected_frontier {
+                let mut heads = self.branch_heads(&publication.body.branch)?;
+                let mut want: Vec<BatchId> = expected.to_vec();
+                heads.sort_unstable();
+                want.sort_unstable();
+                if heads != want {
+                    return Err(Error::Precondition(format!(
+                        "branch frontier mismatch: expected {} head(s), found {}",
+                        want.len(),
+                        heads.len()
+                    )));
+                }
             }
             self.admit_stream(publication.body, &batch_id)?;
             self.admit_parents(publication.body)?;
@@ -2709,7 +2795,7 @@ mod tests {
         let err = store
             .publish_keyed(caller, key, &publication(&second, &second_ids))
             .expect_err("key reuse");
-        assert!(matches!(err, Error::Rejected(_)));
+        assert!(matches!(err, Error::Precondition(_)));
         // A request that failed before commit leaves no row: the key stays
         // usable and the retry publishes normally.
         let third = child(&f, 2, 2, 9, vec![f.body.id().expect("id")]);
@@ -2756,7 +2842,7 @@ mod tests {
         let err = store
             .publish_keyed(caller, key_a, &publication(&second, &second_ids))
             .expect_err("key reuse");
-        assert!(matches!(err, Error::Rejected(_)));
+        assert!(matches!(err, Error::Precondition(_)));
         assert_eq!(store.receipt_for(caller, key_a).expect("receipt"), Some(r1));
         // Equivocation quarantines `first`; the stored receipt must stop
         // resolving on both the keyed path and receipt_for.
