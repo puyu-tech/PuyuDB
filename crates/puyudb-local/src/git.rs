@@ -863,6 +863,14 @@ pub fn read_worktree_file(
     cap: u64,
 ) -> Result<Option<Vec<u8>>, Error> {
     let rel = std::str::from_utf8(rel_path).map_err(|_| parse_err("worktree path is not UTF-8"))?;
+    // Hardened precondition: the relative path is spec-§11-validated BEFORE
+    // joining, so callers cannot escape the toplevel via `..` or a reserved
+    // segment even if they skip the earlier policy gate.
+    if let Err(err) = Path::new(rel) {
+        return Err(parse_err(format!(
+            "worktree path {rel:?} fails spec §11: {err}"
+        )));
+    }
     let full = repo.toplevel.join(FsPath::new(rel));
     let meta = match std::fs::symlink_metadata(&full) {
         Ok(m) => m,
@@ -1020,6 +1028,9 @@ pub fn conversion_profiles(
 /// apply a built-in conversion, so blob and worktree bytes can differ even
 /// when no path attribute is set (§7.3: do not label them the same object).
 /// Read-only `git config --get`; exit 1 ("unset") is not an error.
+///
+/// This is a report-level over-approximation (it upgrades every attribute-
+/// clean path to BuiltIn), NOT a per-file fact: P3 must not treat it as one.
 ///
 /// # Errors
 /// See [`Error`].
@@ -1289,18 +1300,43 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
         );
     }
     for r in &capture.status {
-        if let StatusRecord::Untracked(path) | StatusRecord::Ignored(path) = r {
-            by_path.entry(path.clone()).or_insert_with(|| Candidate {
-                path: path.clone(),
-                source: Source::Untracked,
-                mode: 0o100644,
-                oid: None,
-                size_hint: None,
-                skip_worktree: false,
-                intent_to_add: false,
-                unmerged_stages: Vec::new(),
-                worktree_dirty: false,
-            });
+        match r {
+            StatusRecord::Untracked(path) | StatusRecord::Ignored(path) => {
+                by_path.entry(path.clone()).or_insert_with(|| Candidate {
+                    path: path.clone(),
+                    source: Source::Untracked,
+                    mode: 0o100644,
+                    oid: None,
+                    size_hint: None,
+                    skip_worktree: false,
+                    intent_to_add: false,
+                    unmerged_stages: Vec::new(),
+                    worktree_dirty: false,
+                });
+            }
+            // Gate A finding 8: a real conflict emits ls-files stages 1/2/3
+            // with NO stage-0 entry, plus one `u` record. The conflicted path
+            // must still become a candidate so it is reported as Unmerged
+            // conflict metadata — never silently absent from the preview.
+            StatusRecord::Unmerged { path, stages, .. } => {
+                let stages = if stages.is_empty() {
+                    unmerged.get(path.as_slice()).cloned().unwrap_or_default()
+                } else {
+                    stages.clone()
+                };
+                by_path.entry(path.clone()).or_insert_with(|| Candidate {
+                    path: path.clone(),
+                    source: Source::Tracked,
+                    mode: 0o100644,
+                    oid: None,
+                    size_hint: None,
+                    skip_worktree: false,
+                    intent_to_add: false,
+                    unmerged_stages: stages,
+                    worktree_dirty: dirty.contains(path.as_slice()),
+                });
+            }
+            _ => {}
         }
     }
     by_path.into_values().collect()
@@ -1528,7 +1564,19 @@ pub fn preview(repo: &GitRepo, capture: &Capture) -> Result<ImportPreview, Error
                 None if cand.mode == 0o120000 => {
                     Some(read_symlink_target(repo, &cand.path, read_cap)?)
                 }
-                None => read_worktree_file(repo, &cand.path, read_cap)?,
+                None => {
+                    let bytes = read_worktree_file(repo, &cand.path, read_cap)?;
+                    if bytes.is_none() && cand.size_hint.is_some() {
+                        // Scan race: the file vanished between status and
+                        // stat/read. Report it instead of silently classifying
+                        // opaque (§7.2/6 recheck reconciles later).
+                        limitations.push(format!(
+                            "path {} vanished during the scan (status/stat race); classified opaque",
+                            String::from_utf8_lossy(&cand.path)
+                        ));
+                    }
+                    bytes
+                }
             }
         } else {
             None
@@ -1805,6 +1853,62 @@ mod tests {
             &mut limitations,
         );
         assert_eq!(e.excluded, Some(Exclusion::IntentToAdd));
+    }
+
+    /// Gate A re-run finding 8: a real conflict has ls-files stages 1/2/3 and
+    /// NO stage-0 entry, plus one status `u` record. The conflicted path must
+    /// still appear in the preview as Unmerged conflict metadata.
+    #[test]
+    fn unmerged_conflict_is_visible_in_candidates() {
+        let oid1 = sha1_oid(1);
+        let oid2 = sha1_oid(2);
+        let oid3 = sha1_oid(3);
+        let hex = |o: GitOid| ObjectFormat::Sha1.to_hex(&o).unwrap();
+        let zero = ObjectFormat::Sha1.zero_oid_hex();
+        // Index: only stages 1,2,3 for merged.txt (no stage 0).
+        let mut ls = Vec::new();
+        for (stage, oid) in [(1u8, oid1), (2, oid2), (3, oid3)] {
+            ls.extend_from_slice(b"M 100644 ");
+            ls.extend_from_slice(&hex(oid));
+            ls.push(b' ');
+            ls.push(b'0' + stage);
+            ls.extend_from_slice(b"\tmerged.txt\0");
+        }
+        // Status: one `u` record (11 fields).
+        let mut st = Vec::new();
+        st.extend_from_slice(b"u AA N... 000000 100644 100644 100644 ");
+        st.extend_from_slice(&zero);
+        st.push(b' ');
+        st.extend_from_slice(&hex(oid2));
+        st.push(b' ');
+        st.extend_from_slice(&hex(oid3));
+        st.extend_from_slice(b" merged.txt\0");
+        let capture = Capture {
+            repo: test_repo(),
+            index: parse_ls_files(&ls, ObjectFormat::Sha1).unwrap(),
+            status: parse_status(&st, ObjectFormat::Sha1).unwrap(),
+            fingerprint: [0; 32],
+        };
+        let cands = build_candidates(&capture);
+        assert_eq!(cands.len(), 1, "conflicted path must be a candidate");
+        assert_eq!(cands[0].path, b"merged.txt");
+        assert_eq!(
+            cands[0].unmerged_stages,
+            vec![(2, oid2), (3, oid3)],
+            "stage 1 (absent) is not listed"
+        );
+        let mut limitations = Vec::new();
+        let e = decide(
+            &cands[0],
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+            &mut limitations,
+        );
+        assert_eq!(e.excluded, Some(Exclusion::Unmerged));
+        assert_eq!(e.unmerged_stages.len(), 2);
+        assert!(limitations.iter().any(|l| l.contains("conflict metadata")));
     }
 
     /// Gate A finding 2: an oversize untracked entry is excluded/classified by
@@ -2102,6 +2206,90 @@ mod tests {
         assert!(epv.entries.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&empty_dir);
+    }
+
+    /// Gate A re-run finding 8, live: a real merge conflict (stages 1/2/3, no
+    /// stage 0, one `u` record) must surface in the preview as Unmerged
+    /// conflict metadata, never silently absent.
+    #[test]
+    fn smoke_merge_conflict_is_reported() {
+        if !git_available() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("puyudb-i07-conf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q", "-b", "main", "."]);
+        git(&["config", "user.email", "t@t"]);
+        git(&["config", "user.name", "t"]);
+        std::fs::write(dir.join("ok.txt"), "ok\n").unwrap();
+        std::fs::write(dir.join("c.txt"), "base\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-qm", "base"]);
+        git(&["checkout", "-qb", "side"]);
+        std::fs::write(dir.join("c.txt"), "side\n").unwrap();
+        git(&["add", "c.txt"]);
+        git(&["commit", "-qm", "side"]);
+        git(&["checkout", "-q", "main"]);
+        std::fs::write(dir.join("c.txt"), "main\n").unwrap();
+        git(&["add", "c.txt"]);
+        git(&["commit", "-qm", "main"]);
+        // Merge now conflicts; the repo is left mid-merge (read-only for us).
+        let out = Command::new("git")
+            .args(["merge", "side"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "expected a merge conflict");
+        let repo = discover(&dir).unwrap();
+        match repo.head {
+            Head::Commit(_) => {}
+            other => panic!("expected commit HEAD mid-merge, got {other:?}"),
+        }
+        let cap = capture(&repo).unwrap();
+        // Index has stages 1/2/3 for c.txt and a stage-0 entry for ok.txt.
+        let c_stages: Vec<u8> = cap
+            .index
+            .iter()
+            .filter(|e| e.path == b"c.txt")
+            .map(|e| e.stage)
+            .collect();
+        assert_eq!(c_stages, vec![1, 2, 3]);
+        assert!(
+            cap.index
+                .iter()
+                .any(|e| e.path == b"ok.txt" && e.stage == 0)
+        );
+        let pv = preview(&repo, &cap).unwrap();
+        let c = pv
+            .entries
+            .iter()
+            .find(|e| e.path == "c.txt")
+            .expect("conflicted path must be present in the preview");
+        assert_eq!(c.excluded, Some(Exclusion::Unmerged));
+        assert_eq!(c.unmerged_stages.len(), 3);
+        assert!(
+            pv.limitations
+                .iter()
+                .any(|l| l.contains("conflict metadata"))
+        );
+        // The unconflicted file is still included normally.
+        let ok = pv.entries.iter().find(|e| e.path == "ok.txt").unwrap();
+        assert!(ok.excluded.is_none());
+        assert_eq!(ok.class, Some(ContentClass::Text));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// SHA-256 repos produce typed 32-byte OIDs (spec §8.1 algorithm tag 2).
