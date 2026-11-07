@@ -85,7 +85,8 @@ struct Output {
 
 /// Run one read-only git command with `dir` as the working directory.
 ///
-/// `args` are compile-time literals; no untrusted data is ever placed on the
+/// `args` are compile-time literals (plus the filter neutralizers from
+/// [`with_filter_neutralizers`]); no untrusted data is ever placed on the
 /// command line (paths flow through NUL-delimited stdin or not at all), and
 /// `--end-of-options` is passed by callers whose command accepts it. Stdout
 /// is capped at `cap` bytes; stderr at [`MAX_STDERR`]. Stdin is written on a
@@ -93,7 +94,7 @@ struct Output {
 /// stdout pipe.
 fn run_git(
     dir: &FsPath,
-    args: &[&str],
+    args: &[String],
     stdin_data: Option<&[u8]>,
     cap: u64,
 ) -> Result<Output, Error> {
@@ -159,7 +160,7 @@ fn run_git(
     if out.len() as u64 > cap {
         return Err(parse_err(format!(
             "git {} output exceeds the {cap} byte cap",
-            args.first().copied().unwrap_or("?")
+            args.first().map_or("?", String::as_str)
         )));
     }
     Ok(Output {
@@ -167,6 +168,62 @@ fn run_git(
         stdout: out,
         stderr: err,
     })
+}
+
+/// Every configured `filter.<driver>.*` is overridden with an EMPTY command
+/// for our read-only invocations. In git's `apply_filter`, `cmd && *cmd` is
+/// required before anything is spawned, so an empty command means zero
+/// filter processes ever run — D5 (import never executes user filters, even
+/// when `git status` rehashes racy worktree entries). Enumerated via
+/// read-only `git config --get-regexp` (exit 1 = none configured).
+fn filter_neutralizers(dir: &FsPath) -> Vec<String> {
+    let out = run_git(
+        dir,
+        &[
+            "config".to_owned(),
+            "--get-regexp".to_owned(),
+            "^filter\\.".to_owned(),
+        ],
+        None,
+        MAX_PLUMBING_OUTPUT,
+    );
+    let Ok(out) = out else { return Vec::new() };
+    if !out.status.success() {
+        return Vec::new(); // exit 1: no filter.* config at all
+    }
+    let mut drivers: Vec<String> = Vec::new();
+    for line in out.stdout.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        // "filter.<driver>.<capability> <value>"
+        let Some(key) = line.split(|b| *b == b' ').next() else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(key);
+        let mut parts = text.split('.');
+        if parts.next() != Some("filter") {
+            continue;
+        }
+        if let Some(driver) = parts.next()
+            && !driver.is_empty()
+            && !drivers.iter().any(|d| d == driver)
+        {
+            drivers.push(driver.to_owned());
+        }
+    }
+    let mut args = Vec::new();
+    for driver in drivers {
+        for cap in ["clean", "smudge", "process"] {
+            args.push("-c".to_owned());
+            args.push(format!("filter.{driver}.{cap}="));
+        }
+    }
+    args
+}
+
+/// Base args + filter neutralizers, as owned strings for `run_git`.
+fn with_filter_neutralizers(dir: &FsPath, base: &[&str]) -> Vec<String> {
+    let mut args = filter_neutralizers(dir);
+    args.extend(base.iter().map(|s| (*s).to_owned()));
+    args
 }
 
 /// Run git expecting success; non-zero exit is [`Error::Git`] with bounded
@@ -188,7 +245,8 @@ fn git_ok_codes(
     cap: u64,
     ok_codes: &[i32],
 ) -> Result<Vec<u8>, Error> {
-    let out = run_git(dir, args, stdin_data, cap)?;
+    let args = with_filter_neutralizers(dir, args);
+    let out = run_git(dir, &args, stdin_data, cap)?;
     if !out.status.success() && !ok_codes.contains(&out.status.code().unwrap_or(-1)) {
         let msg = String::from_utf8_lossy(&out.stderr).trim().to_owned();
         return Err(Error::Git(format!("git {}: {msg}", args.join(" "))));
@@ -351,9 +409,15 @@ fn resolve_under(base: &FsPath, raw: &[u8]) -> Result<PathBuf, Error> {
 }
 
 fn discover_head(dir: &FsPath, format: ObjectFormat) -> Result<Head, Error> {
+    // rev-parse never touches worktree content, so no filter neutralizers.
     let out = run_git(
         dir,
-        &["rev-parse", "--verify", "-q", "HEAD"],
+        &[
+            "rev-parse".to_owned(),
+            "--verify".to_owned(),
+            "-q".to_owned(),
+            "HEAD".to_owned(),
+        ],
         None,
         MAX_HEADER,
     )?;
@@ -627,6 +691,7 @@ pub fn capture(repo: &GitRepo) -> Result<Capture, Error> {
     let status_raw = git_ok(
         &repo.toplevel,
         &[
+            "--no-optional-locks",
             "status",
             "--porcelain=v2",
             "-z",
@@ -776,7 +841,10 @@ impl BlobReader {
     /// [`Error::Environment`] when git cannot be spawned.
     pub fn open(repo: &GitRepo) -> Result<Self, Error> {
         let mut child = Command::new("git")
-            .args(["cat-file", "--batch", "-z"])
+            .args(with_filter_neutralizers(
+                &repo.toplevel,
+                &["cat-file", "--batch", "-z"],
+            ))
             .current_dir(&repo.toplevel)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1631,7 +1699,14 @@ pub fn preview(repo: &GitRepo, capture: &Capture) -> Result<ImportPreview, Error
             }
         }
     }
-    let oids: Vec<GitOid> = candidates.iter().filter_map(|c| c.oid).collect();
+    // Gitlinks (mode 0o160000) point at commit OIDs that need not exist in
+    // this repository's object store; they are excluded as Submodule before
+    // classification, so they never enter the size query.
+    let oids: Vec<GitOid> = candidates
+        .iter()
+        .filter(|c| c.mode != 0o160000)
+        .filter_map(|c| c.oid)
+        .collect();
     let sizes = blob_sizes(repo, &oids)?;
     let mut reader = BlobReader::open(repo)?;
     let mut limitations = Vec::new();

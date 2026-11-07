@@ -15,7 +15,7 @@ implemented contracts.
 | ADR-01 | Reuse native text convergence within PuyuDB-owned history | [DT direction accepted 2026-10-26](01-native-text-evidence.md); [engine-bound profile frozen 2026-10-27](01-native-text-evidence.md#amendment-1-2026-10-27-engine-bound-canonical-profile-for-diamond-types); fork pin and [I03 closed 2026-10-28](01-native-text-evidence.md); no native encoding canonicalized |
 | ADR-02 | Patched SQLite, WAL/FULL, one owning writer | Pin accepted 2026-10-29: [rusqlite bundled 3.54.1, Apple fullfsync](02-i04-pin.md); VFS power-loss model tested; machine power-cut still required |
 | ADR-03 | Immutable logical history separate from rebuildable caches | I03/I04/I08 closed-history fixtures |
-| ADR-04 | System Git mutations; tested read-only library plumbing | I07/I14 real-Git fixtures, explicit effects |
+| ADR-04 | System Git mutations; tested read-only library plumbing | I07 D1/D2 record: [04-i07-git-plumbing.md](04-i07-git-plumbing.md) (branch `i07-git-baseline-import`); I14 real-Git fixtures, explicit effects |
 | ADR-05 | Embedding plus optional single-owner daemon | I06/I17 lifecycle and platform tests |
 | ADR-06 | Exact DAG replication with strict canonical CBOR profiles | I20–I22 independent codecs and simulator |
 | ADR-07 | Shared local/remote application HTTP contracts | I17/I26 API parity and authentication tests |

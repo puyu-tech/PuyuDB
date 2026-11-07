@@ -68,13 +68,20 @@ pub enum ImportError {
     Api(puyudb_core::api::Error),
     /// §7.2/6: HEAD/index/status changed between capture and recheck — the
     /// import never claims a mixed scan; reconcile as a new captured state
-    /// or restart.
+    /// or restart. Recovery limitation (documented, pinned by a P4 fixture):
+    /// re-importing with the NEW capture fails the branch-frontier CAS
+    /// against the old import's batches, so recovery today is to remove
+    /// `<toplevel>/.puyu` and import fresh (reconciliation of a changed
+    /// repo onto an existing import is I11/I14 work, §7.2/6).
     RepoChangedDuringImport {
         /// Fingerprint of the captured scan the import ran on.
         before: [u8; 32],
         /// Fingerprint of the post-import recheck scan.
         after: [u8; 32],
     },
+    /// `<toplevel>/.puyu` pre-exists and is not a PuyuDB space (no manifest
+    /// for our derived space id): never created over or clobbered (R04/R06).
+    PreExistingPuyuDir(PathBuf),
     /// An included entry's bytes could not be read consistently.
     Content(String),
 }
@@ -86,6 +93,9 @@ impl std::fmt::Display for ImportError {
             Self::Api(err) => write!(f, "api: {err}"),
             Self::RepoChangedDuringImport { .. } => {
                 write!(f, "repository changed during import (§7.2/6 recheck)")
+            }
+            Self::PreExistingPuyuDir(dir) => {
+                write!(f, "pre-existing non-PuyuDB directory {}", dir.display())
             }
             Self::Content(msg) => write!(f, "import content: {msg}"),
         }
@@ -331,13 +341,66 @@ pub fn recheck_scan(repo: &GitRepo, before: &[u8; 32]) -> Result<(), ImportError
     Ok(())
 }
 
-/// Run the import of a captured scan through the public facade (P3).
+/// Run the full import of a captured scan through the public facade (P3).
 ///
 /// # Errors
 /// [`ImportError::Git`]/[`ImportError::Api`] for environmental or §14
 /// failures, [`ImportError::RepoChangedDuringImport`] when the §7.2/6
-/// recheck detects a changed repository.
+/// recheck detects a changed repository, [`ImportError::PreExistingPuyuDir`]
+/// when `<toplevel>/.puyu` pre-exists and is not a PuyuDB space.
 pub fn import(repo: &GitRepo, capture: &Capture) -> Result<ImportResult, ImportError> {
+    let run = import_inner(repo, capture, None)?;
+    let import_root = run
+        .root
+        .expect("a full import always publishes the import root");
+    Ok(ImportResult {
+        space: run.space,
+        repository: run.repository,
+        branch: run.branch,
+        space_dir: run.space_dir,
+        import_root,
+        fingerprint: run.fingerprint,
+        file_batches: run.file_batches,
+        files: run.files,
+        empty_cap: run.empty_cap,
+        incomplete_capture: run.incomplete_capture,
+        limitations: run.limitations,
+    })
+}
+
+/// Fault-injection hook for the P4 crash fixture (mirrors
+/// `Database::create_space_vfs`): publish at most `max_file_batches` file
+/// batches and stop WITHOUT the import-root publication or the recheck,
+/// returning the root only when the full import ran. Production callers
+/// use [`import`].
+#[doc(hidden)]
+pub fn import_partial(
+    repo: &GitRepo,
+    capture: &Capture,
+    max_file_batches: usize,
+) -> Result<Option<BatchId>, ImportError> {
+    Ok(import_inner(repo, capture, Some(max_file_batches))?.root)
+}
+
+struct ImportRun {
+    space: SpaceId,
+    repository: RepositoryId,
+    branch: BranchId,
+    space_dir: PathBuf,
+    fingerprint: [u8; 32],
+    file_batches: usize,
+    files: usize,
+    empty_cap: bool,
+    incomplete_capture: bool,
+    limitations: Vec<String>,
+    root: Option<BatchId>,
+}
+
+fn import_inner(
+    repo: &GitRepo,
+    capture: &Capture,
+    limit: Option<usize>,
+) -> Result<ImportRun, ImportError> {
     let preview: ImportPreview = git::preview(repo, capture)?;
     let included: Vec<&PreviewEntry> = preview
         .entries
@@ -346,17 +409,41 @@ pub fn import(repo: &GitRepo, capture: &Capture) -> Result<ImportResult, ImportE
         .collect();
     let (space, repository, branch) = repo_identities(repo);
     let space_dir = repo.toplevel.join(SPACE_DIR_NAME);
-    std::fs::create_dir_all(&space_dir)
-        .map_err(|err| ImportError::Content(format!("creating {}: {err}", space_dir.display())))?;
-    // Create, or open the existing space of a previous (possibly crashed)
-    // attempt of the same capture — create's only precondition failure is
-    // "space already exists", so fall through to open (never message-parse).
-    let db = match Database::create_space(&space_dir, &space) {
-        Ok(db) => db,
-        Err(puyudb_core::api::Error::PreconditionFailed(_)) => {
-            Database::open_space(&space_dir, &space)?
+    // Pre-existing `.puyu`: if the directory exists and is non-empty, it must
+    // be OUR space from a previous attempt of the same capture — open it.
+    // Anything else (user content, a foreign directory) is an explicit
+    // precondition failure: never create over or clobber it (R04/R06).
+    let preexisting = space_dir.exists() && {
+        let mut entries = std::fs::read_dir(&space_dir).map_err(|err| {
+            ImportError::Content(format!("reading {}: {err}", space_dir.display()))
+        })?;
+        entries.next().is_some()
+    };
+    let db = if preexisting {
+        Database::open_space(&space_dir, &space).map_err(|err| match err {
+            puyudb_core::api::Error::PreconditionFailed(_) => {
+                ImportError::PreExistingPuyuDir(space_dir.clone())
+            }
+            other => other.into(),
+        })?
+    } else {
+        std::fs::create_dir_all(&space_dir).map_err(|err| {
+            ImportError::Content(format!("creating {}: {err}", space_dir.display()))
+        })?;
+        match Database::create_space(&space_dir, &space) {
+            Ok(db) => db,
+            // A race with a concurrent creator: fall back to open, and if
+            // that fails too it is not ours — explicit error, never clobber.
+            Err(puyudb_core::api::Error::PreconditionFailed(_)) => {
+                Database::open_space(&space_dir, &space).map_err(|err| match err {
+                    puyudb_core::api::Error::PreconditionFailed(_) => {
+                        ImportError::PreExistingPuyuDir(space_dir.clone())
+                    }
+                    other => other.into(),
+                })?
+            }
+            Err(err) => return Err(err.into()),
         }
-        Err(err) => return Err(err.into()),
     };
     let writer_seed = profile::raw_digest("puyudb/import-writer-seed/v1", space.as_bytes());
     let writer_epoch = WriterEpoch::from_array(derive16(
@@ -373,9 +460,13 @@ pub fn import(repo: &GitRepo, capture: &Capture) -> Result<ImportResult, ImportE
         fingerprint,
     };
     let batches = plan_batches(&included);
+    let run_batches: &[Vec<usize>] = match limit {
+        Some(n) => &batches[..n.min(batches.len())],
+        None => &batches[..],
+    };
     let mut reader = BlobReader::open(repo)?;
     let mut previous: Option<BatchId> = None;
-    for (index, batch) in batches.iter().enumerate() {
+    for (index, batch) in run_batches.iter().enumerate() {
         let mut ops = Vec::with_capacity(batch.len());
         for &entry_index in batch {
             let entry = included[entry_index];
@@ -422,27 +513,33 @@ pub fn import(repo: &GitRepo, capture: &Capture) -> Result<ImportResult, ImportE
         )?);
     }
     // The final import-root publication: the declared ready marker (§7.2/5).
-    let root = publish_batch(
-        &ctx,
-        batches.len() as u32,
-        previous,
-        Vec::new(),
-        vec![fingerprint.to_vec()],
-    )?;
-    // §7.2/6: recheck HEAD/index/status after import.
-    recheck_scan(repo, &fingerprint)?;
-    Ok(ImportResult {
+    // A limited (crash-simulated) run stops before it — no root, no recheck.
+    let root = if limit.is_none() {
+        let root = publish_batch(
+            &ctx,
+            batches.len() as u32,
+            previous,
+            Vec::new(),
+            vec![fingerprint.to_vec()],
+        )?;
+        // §7.2/6: recheck HEAD/index/status after import.
+        recheck_scan(repo, &fingerprint)?;
+        Some(root)
+    } else {
+        None
+    };
+    Ok(ImportRun {
         space,
         repository,
         branch,
         space_dir,
-        import_root: root,
         fingerprint,
-        file_batches: batches.len(),
+        file_batches: run_batches.len(),
         files: included.len(),
         empty_cap: preview.empty_cap,
         incomplete_capture: preview.incomplete_capture,
         limitations: preview.limitations,
+        root,
     })
 }
 // --------------------------------------------------------------------------
@@ -748,12 +845,14 @@ mod tests {
             excluded: Some(Exclusion::SensitiveDeny),
             ..preview_entry(".env", 3)
         };
-        assert!(plan_batches(&[&entry]).is_empty() || true); // plan sees only included entries
+        // The plan is built over included entries only: an excluded entry
+        // never reaches the facade.
         let included: Vec<&PreviewEntry> = [&entry]
             .into_iter()
             .filter(|e| e.excluded.is_none())
             .collect();
         assert!(included.is_empty());
+        assert!(plan_batches(&included).is_empty());
         let _ = ObjectFormat::Sha1; // keep imports used on all cfgs
         let _ = StatusRecord::Header(Vec::new());
         let _ = ApiError::code;
