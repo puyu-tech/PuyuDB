@@ -1426,6 +1426,9 @@ dependencies = [
 [[package]]
 name = "puyudb-local"
 version = "0.1.0-dev"
+dependencies = [
+ "puyudb-core",
+]
 
 [[package]]
 name = "quick_cache"
