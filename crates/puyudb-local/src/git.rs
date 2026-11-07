@@ -639,6 +639,15 @@ pub fn capture(repo: &GitRepo) -> Result<Capture, Error> {
     )?;
     let index = parse_ls_files(&ls, repo.object_format)?;
     let status = parse_status(&status_raw, repo.object_format)?;
+    // `.puyu` is the reserved control segment (spec §11): PuyuDB's own space
+    // directory inside the worktree is never user content, so untracked or
+    // ignored `.puyu/…` records are dropped from the scan (and its
+    // fingerprint) — creating the space must not change the captured state,
+    // which the §7.2/6 recheck compares.
+    let status: Vec<StatusRecord> = status
+        .into_iter()
+        .filter(|r| !is_puyu_control_record(r))
+        .collect();
     let mut fp_input = Vec::new();
     fp_input.extend_from_slice(match repo.object_format {
         ObjectFormat::Sha1 => b"sha1",
@@ -657,7 +666,7 @@ pub fn capture(repo: &GitRepo) -> Result<Capture, Error> {
     fp_input.push(0);
     fp_input.extend_from_slice(&ls);
     fp_input.push(0);
-    fp_input.extend_from_slice(&status_raw);
+    fp_input.extend_from_slice(&encode_status_records(&status, repo.object_format));
     let fingerprint = profile::raw_digest("puyudb/git-capture-fingerprint/v1", &fp_input);
     Ok(Capture {
         repo: repo.clone(),
@@ -665,6 +674,83 @@ pub fn capture(repo: &GitRepo) -> Result<Capture, Error> {
         status,
         fingerprint,
     })
+}
+
+/// Whether a status record's path lives under the reserved `.puyu` control
+/// segment (first path component, byte-exact).
+fn is_puyu_control_record(record: &StatusRecord) -> bool {
+    let path: &[u8] = match record {
+        StatusRecord::Ordinary { path, .. }
+        | StatusRecord::Renamed { path, .. }
+        | StatusRecord::Unmerged { path, .. }
+        | StatusRecord::Untracked(path)
+        | StatusRecord::Ignored(path) => path,
+        StatusRecord::Header(_) => return false,
+    };
+    path.split(|b| *b == b'/').next() == Some(b".puyu")
+}
+
+/// Canonical re-encoding of parsed status records for the scan fingerprint
+/// (deterministic, and unaffected by dropped `.puyu` control records).
+fn encode_status_records(records: &[StatusRecord], format: ObjectFormat) -> Vec<u8> {
+    let mut out = Vec::new();
+    for r in records {
+        match r {
+            StatusRecord::Header(h) => {
+                out.push(b'#');
+                out.extend_from_slice(h);
+                out.push(0);
+            }
+            StatusRecord::Ordinary {
+                xy,
+                path,
+                index_oid,
+            } => {
+                out.push(b'1');
+                out.extend_from_slice(xy);
+                out.push(0);
+                match index_oid {
+                    Some(oid) => out.extend_from_slice(&format.to_hex(oid).unwrap_or_default()),
+                    None => out.extend_from_slice(&format.zero_oid_hex()),
+                }
+                out.push(0);
+                out.extend_from_slice(path);
+                out.push(0);
+            }
+            StatusRecord::Renamed { xy, path, orig } => {
+                out.push(b'2');
+                out.extend_from_slice(xy);
+                out.push(0);
+                out.extend_from_slice(path);
+                out.push(0);
+                out.extend_from_slice(orig);
+                out.push(0);
+            }
+            StatusRecord::Unmerged { xy, path, stages } => {
+                out.push(b'u');
+                out.extend_from_slice(xy);
+                out.push(0);
+                for (stage, oid) in stages {
+                    out.push(*stage);
+                    out.extend_from_slice(&format.to_hex(oid).unwrap_or_default());
+                    out.push(0);
+                }
+                out.extend_from_slice(path);
+                out.push(0);
+            }
+            StatusRecord::Untracked(path) => {
+                out.push(b'?');
+                out.extend_from_slice(path);
+                out.push(0);
+            }
+            StatusRecord::Ignored(path) => {
+                out.push(b'!');
+                out.extend_from_slice(path);
+                out.push(0);
+            }
+        }
+    }
+    out
 }
 // --------------------------------------------------------------------------
 // Blob reads (P1, §7.2/4: `cat-file --batch`, size caps, typed verification)
@@ -899,6 +985,12 @@ pub fn read_worktree_file(
 /// Oversize targets and io failures; see [`Error`].
 pub fn read_symlink_target(repo: &GitRepo, rel_path: &[u8], cap: u64) -> Result<Vec<u8>, Error> {
     let rel = std::str::from_utf8(rel_path).map_err(|_| parse_err("worktree path is not UTF-8"))?;
+    // Same hardening as read_worktree_file: §11-validate before joining.
+    if let Err(err) = Path::new(rel) {
+        return Err(parse_err(format!(
+            "worktree path {rel:?} fails spec §11: {err}"
+        )));
+    }
     let full = repo.toplevel.join(FsPath::new(rel));
     let target = std::fs::read_link(&full)
         .map_err(|err| Error::Environment(format!("read_link {rel}: {err}")))?;
@@ -1236,6 +1328,8 @@ struct Candidate {
     size_hint: Option<u64>,
     skip_worktree: bool,
     intent_to_add: bool,
+    /// Came from a status `u` record (a real conflict marker).
+    from_unmerged: bool,
     unmerged_stages: Vec<(u8, GitOid)>,
     worktree_dirty: bool,
 }
@@ -1294,6 +1388,7 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
                 size_hint: None,
                 skip_worktree: e.skip_worktree(),
                 intent_to_add,
+                from_unmerged: false,
                 unmerged_stages: unmerged.get(e.path.as_slice()).cloned().unwrap_or_default(),
                 worktree_dirty: dirty.contains(e.path.as_slice()),
             },
@@ -1310,6 +1405,7 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
                     size_hint: None,
                     skip_worktree: false,
                     intent_to_add: false,
+                    from_unmerged: false,
                     unmerged_stages: Vec::new(),
                     worktree_dirty: false,
                 });
@@ -1318,6 +1414,8 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
             // with NO stage-0 entry, plus one `u` record. The conflicted path
             // must still become a candidate so it is reported as Unmerged
             // conflict metadata — never silently absent from the preview.
+            // A degenerate `u` record (no parsed stages AND no index stages)
+            // is still excluded as Unmerged — fail safe, never a clean file.
             StatusRecord::Unmerged { path, stages, .. } => {
                 let stages = if stages.is_empty() {
                     unmerged.get(path.as_slice()).cloned().unwrap_or_default()
@@ -1332,6 +1430,7 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
                     size_hint: None,
                     skip_worktree: false,
                     intent_to_add: false,
+                    from_unmerged: true,
                     unmerged_stages: stages,
                     worktree_dirty: dirty.contains(path.as_slice()),
                 });
@@ -1372,7 +1471,7 @@ fn early_exclusion(cand: &Candidate, ignored: &BTreeSet<Vec<u8>>) -> Option<(Exc
             format!("untracked path {text} excluded by Git ignore rules"),
         ));
     }
-    if !cand.unmerged_stages.is_empty() {
+    if cand.from_unmerged || !cand.unmerged_stages.is_empty() {
         return Some((
             Exclusion::Unmerged,
             format!(
@@ -1771,6 +1870,7 @@ mod tests {
             size_hint: None,
             skip_worktree: false,
             intent_to_add: false,
+            from_unmerged: false,
             unmerged_stages: Vec::new(),
             worktree_dirty: false,
         }
@@ -1909,6 +2009,61 @@ mod tests {
         assert_eq!(e.excluded, Some(Exclusion::Unmerged));
         assert_eq!(e.unmerged_stages.len(), 2);
         assert!(limitations.iter().any(|l| l.contains("conflict metadata")));
+    }
+
+    /// Carry-forward: a degenerate `u` record (no stages anywhere) is still
+    /// excluded as Unmerged — never silently treated as a clean file.
+    #[test]
+    fn degenerate_unmerged_record_is_excluded() {
+        let zero = ObjectFormat::Sha1.zero_oid_hex();
+        let mut st = Vec::new();
+        st.extend_from_slice(b"u AA N... 000000 100644 100644 100644 ");
+        st.extend_from_slice(&zero);
+        st.push(b' ');
+        st.extend_from_slice(&zero);
+        st.push(b' ');
+        st.extend_from_slice(&zero);
+        st.extend_from_slice(b" gone.txt\0");
+        let capture = Capture {
+            repo: test_repo(),
+            index: Vec::new(),
+            status: parse_status(&st, ObjectFormat::Sha1).unwrap(),
+            fingerprint: [0; 32],
+        };
+        let cands = build_candidates(&capture);
+        assert_eq!(cands.len(), 1);
+        assert!(cands[0].from_unmerged);
+        let mut limitations = Vec::new();
+        let e = decide(
+            &cands[0],
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+            &mut limitations,
+        );
+        assert_eq!(e.excluded, Some(Exclusion::Unmerged));
+    }
+
+    /// The reserved `.puyu` control segment is dropped from status records
+    /// (PuyuDB's own space dir is never user content).
+    #[test]
+    fn puyu_control_segment_is_filtered_from_scan() {
+        assert!(is_puyu_control_record(&StatusRecord::Untracked(
+            b".puyu/manifest.toml".to_vec()
+        )));
+        assert!(is_puyu_control_record(&StatusRecord::Untracked(
+            b".puyu".to_vec()
+        )));
+        assert!(!is_puyu_control_record(&StatusRecord::Untracked(
+            b".puyux/a".to_vec()
+        )));
+        assert!(!is_puyu_control_record(&StatusRecord::Untracked(
+            b"src/.puyu/a".to_vec()
+        )));
+        assert!(!is_puyu_control_record(&StatusRecord::Header(
+            b"branch.head main".to_vec()
+        )));
     }
 
     /// Gate A finding 2: an oversize untracked entry is excluded/classified by
@@ -2090,7 +2245,7 @@ mod tests {
         if !git_available() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("puyudb-i07-smoke-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("puyudb-i07-git-smoke-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let git = |args: &[&str]| {
@@ -2190,7 +2345,7 @@ mod tests {
         assert_eq!(bytes, b"hello\n");
         // Empty-cap preview on a fresh repo with nothing staged or untracked.
         let empty_dir =
-            std::env::temp_dir().join(format!("puyudb-i07-empty-{}", std::process::id()));
+            std::env::temp_dir().join(format!("puyudb-i07-git-empty-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&empty_dir);
         std::fs::create_dir_all(&empty_dir).unwrap();
         let out = Command::new("git")
@@ -2216,7 +2371,7 @@ mod tests {
         if !git_available() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("puyudb-i07-conf-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("puyudb-i07-git-conf-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let git = |args: &[&str]| {
@@ -2298,7 +2453,7 @@ mod tests {
         if !git_available() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("puyudb-i07-256-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("puyudb-i07-git-256-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let git = |args: &[&str]| {
