@@ -2401,8 +2401,15 @@ mod tests {
         assert!(gk.excluded.is_none());
         assert_eq!(gk.class, Some(ContentClass::Text));
         // Gate A finding 3: untracked exec bit and symlink are metadata.
+        // Windows semantics: no POSIX exec bit exists there (git's
+        // core.fileMode defaults to false, so even the index records 100644),
+        // so the exec-bit assertion is unix-only; elsewhere the mode is
+        // Regular.
         let run = find("run.sh");
+        #[cfg(unix)]
         assert_eq!(run.mode, ModeTag::Executable);
+        #[cfg(not(unix))]
+        assert_eq!(run.mode, ModeTag::Regular);
         assert_eq!(run.class, Some(ContentClass::Text));
         #[cfg(unix)]
         {

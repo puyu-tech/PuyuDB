@@ -105,6 +105,22 @@ Implementation: `crates/puyudb-local/src/git.rs` (discovery/capture/preview),
 - Idempotency caller/key ≤ 1024 B each (facade cap); keys are 32-byte
   `raw_digest("puyudb/import-key/v1", fingerprint ‖ batch_index)`.
 
+## Platform notes (Windows semantics)
+
+- The executable bit is POSIX-only. On Windows, git defaults
+  `core.fileMode=false`, so even the index records 100644 for everything;
+  untracked worktree files additionally have no exec bit in fs metadata.
+  PuyuDB preserves the exec bit exactly where it is representable: tracked
+  entries take the mode from the index (100755 works when
+  `core.fileMode=true`), untracked entries stat POSIX bits on unix and fall
+  back to Regular elsewhere (§7.3: exec bits are metadata; arbitrary
+  permission bits are not replicated). The exec-bit test assertions are
+  `#[cfg(unix)]`; on Windows they assert Regular.
+- Symlink creation/stat/read (`read_link`, `symlink_metadata`) is
+  `#[cfg(unix)]` in the fixtures; on Windows symlinks need privileges and are
+  not exercised. Non-UTF-8 path fixture is Linux-only (APFS rejects raw-byte
+  filenames; Windows filenames are WTF-16).
+
 ## Gates (repo root, all green at the phase-3 commit)
 
 `cargo fmt --check`; `cargo clippy --workspace --all-targets --all-features

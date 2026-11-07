@@ -770,12 +770,17 @@ mod tests {
         }
         assert!(!paths.contains(&".env"));
         assert!(!paths.contains(&"ignored.txt"));
-        // Modes survive: run.sh is executable.
+        // Modes survive: run.sh is executable on unix (on Windows there is no
+        // exec bit — git's core.fileMode=false records 100644 even in the
+        // index — so the mode is Regular there).
         let run = files
             .iter()
             .find(|f| f.paths.iter().any(|p| p.as_str() == "run.sh"))
             .unwrap();
+        #[cfg(unix)]
         assert!(run.modes.contains(&ModeTag::Executable));
+        #[cfg(not(unix))]
+        assert!(run.modes.contains(&ModeTag::Regular));
         assert!(run.live.contains(&LiveTag::Alive));
         // Epoch descriptors carry the git_oid of the tracked blob.
         let a = files
