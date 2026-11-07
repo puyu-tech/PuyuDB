@@ -120,6 +120,11 @@ Implementation: `crates/puyudb-local/src/git.rs` (discovery/capture/preview),
   `#[cfg(unix)]` in the fixtures; on Windows symlinks need privileges and are
   not exercised. Non-UTF-8 path fixture is Linux-only (APFS rejects raw-byte
   filenames; Windows filenames are WTF-16).
+- The no-shell-interpolation fixture is split by creatability, not gated
+  off Windows: all-platform hostile names (`;`, `$(...)`, backtick,
+  leading dash, `%VAR%`) run everywhere; names containing NTFS-forbidden
+  characters (`|`, `>`, …) are unix-only. The marker-file proof (no `pwned*`
+  file ever created) holds on every platform.
 
 ## Gates (repo root, all green at the phase-3 commit)
 

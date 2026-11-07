@@ -512,15 +512,26 @@ fn t08_unsafe_path_names_no_shell_interpolation() {
         return;
     }
     let fx = Fx::new("shell");
-    // Valid §11 paths that a shell would interpret; passed as literal argv.
+    // Valid §11 paths that a shell (or argv option parsing) would interpret;
+    // passed as literal argv / NUL-delimited stdin only. The first set is
+    // creatable on every platform (NTFS forbids only < > : " / \ | ? *), so
+    // the no-shell proof runs on Windows too; the second set needs those
+    // exact forbidden characters and is unix-only.
     let names = [
         "a;touch pwned1.txt",
         "$(touch pwned2.txt)",
         "`touch pwned3.txt`",
-        "x|touch pwned4.txt",
-        "b$(id > pwned5.txt)",
+        "-leading-dash.txt", // argv option-injection attempt
+        "%pwned0%.txt",      // Windows %VAR% expansion attempt
     ];
-    for name in names {
+    #[cfg(unix)]
+    let names = {
+        let mut v = names.to_vec();
+        v.push("x|touch pwned4.txt");
+        v.push("b$(id > pwned5.txt)");
+        v
+    };
+    for name in &names {
         fx.write(name, b"x\n");
     }
     fx.git(&["add", "-A"]);
@@ -530,14 +541,14 @@ fn t08_unsafe_path_names_no_shell_interpolation() {
     assert_eq!(result.files, names.len());
     let db = Database::open_space(&result.space_dir, &result.space).unwrap();
     let paths = db.paths_at(&[result.import_root]).unwrap();
-    for name in names {
+    for name in &names {
         assert!(
-            paths.iter().any(|(p, _)| p.as_str() == name),
+            paths.iter().any(|(p, _)| p.as_str() == *name),
             "literal path {name:?} imported"
         );
     }
     drop(db);
-    for i in 1..=5 {
+    for i in 0..=5 {
         let marker = fx.dir.join(format!("pwned{i}.txt"));
         assert!(
             !marker.exists(),
