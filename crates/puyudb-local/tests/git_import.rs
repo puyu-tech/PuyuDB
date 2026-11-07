@@ -450,6 +450,10 @@ fn t08_user_filter_and_hooks_never_executed_and_lfs_pointer_opaque() {
         "filter.pwn.clean",
         &format!("touch {}", pwn_clean.display()),
     ]);
+    // A real git-lfs install sets filter.lfs.required=true in the GLOBAL
+    // config; simulate that here so CI runners with git-lfs installed are
+    // covered locally (the die path is identical).
+    fx.git(&["config", "filter.lfs.required", "true"]);
     let hooks = fx.dir.join("hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     std::fs::write(

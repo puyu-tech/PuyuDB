@@ -215,6 +215,14 @@ fn filter_neutralizers(dir: &FsPath) -> Vec<String> {
             args.push("-c".to_owned());
             args.push(format!("filter.{driver}.{cap}="));
         }
+        // A real filter install (e.g. git-lfs) sets filter.<driver>.required=
+        // true, and git then DIES ("clean filter failed") when the (empty)
+        // command produces no output. required=false makes the neutralized
+        // filter a passthrough no-op instead of fatal — capture must never
+        // abort because a filter driver is installed (D5: never executed,
+        // but never fatal either).
+        args.push("-c".to_owned());
+        args.push(format!("filter.{driver}.required=false"));
     }
     args
 }
