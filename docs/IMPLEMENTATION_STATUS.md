@@ -641,3 +641,32 @@ std-only (`/proc/self/mountinfo` major:minor + longest mount-point match,
 conservative known-network fstype list; unknown types pass through, never
 mislabeled) as `publication::Error::NetworkFs`, surfaced by the facade as the
 non-§14 `Internal` variant.
+
+## Issue I07 — lossless Git baseline import (complete, branch `i07-git-baseline-import`)
+
+Phase 1 (P1+P2, `ce0dc3a` + Gate A fixes `23fee00`/`8f02011`) added
+`crates/puyudb-local/src/git.rs`: read-only system-git plumbing (D1, recorded
+in `docs/adr/04-i07-git-plumbing.md`) for discovery (git-dir/common-dir/
+gitfile/object format sha1+sha256/HEAD vs unborn), capture (`ls-files -s -t
+-z`, `status --porcelain=v2 -z -uall --ignored=matching
+--no-optional-locks`, fingerprint), capped `cat-file --batch` blob reads, and
+the inclusion/exclusion preview (tracked-even-if-ignored, sensitive deny →
+incomplete capture, submodule/intent-to-add/sparse/non-UTF-8/invalid-path/
+unmerged/oversize exclusions — always reported, never deletions).
+
+Phase 2 (P3, `1598255`) added `src/import.rs`: import execution through
+`puyudb_core::api::Database` only — space at `<toplevel>/.puyu`, baseline
+artifacts (256 KiB chunks, text/opaque/symlink kinds), create ops with §8.2
+epoch descriptors carrying `git_oid` + mode, bounded batches (256 files /
+64 MiB, Q2), D4 idempotent keys from the capture fingerprint + batch index,
+final import-root publication as ready marker, §7.2/6 recheck, lazy seeds
+(D3), empty-cap allowed.
+
+Phase 3 (P4+P5, `57ff8a0` + this doc) added the T05/T08 evidence:
+`crates/puyudb-local/tests/git_import.rs` (16 real-git fixtures: sha256,
+worktree/gitfile, sparse, gitlink, unmerged, CRLF attrs + core.autocrlf, LFS
+pointer, filters/hooks never executed, no-shell-interpolation, inert symlink,
+non-UTF-8 path, source-unchanged byte-compare, gc retention, crash/retry,
+changed-repo CAS failure, pre-existing `.puyu` rejection) plus
+`docs/validation/I07-git-import.md`. I07 is closed pending Gate C; no push/PR
+performed.
