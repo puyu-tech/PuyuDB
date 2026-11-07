@@ -112,12 +112,33 @@ fn run_git(
         .map_err(|err| Error::Environment(format!("cannot spawn system git: {err}")))?;
     let mut child_stdin = child.stdin.take();
     let mut stdout = child.stdout.take().expect("stdout is piped");
-    let mut err = Vec::new();
-    let (out, status) = std::thread::scope(|scope| {
+    let mut child_stderr = child.stderr.take();
+    let (out, status, err) = std::thread::scope(|scope| {
         let writer = scope.spawn(|| {
             if let (Some(mut pipe), Some(data)) = (child_stdin.take(), stdin_data) {
                 let _ = pipe.write_all(data);
             }
+        });
+        // Drain stderr to EOF on a helper thread (keeping only MAX_STDERR
+        // bytes): a child writing more than the pipe buffer to stderr must
+        // not block inside wait().
+        let drainer = scope.spawn(|| {
+            let mut kept = Vec::new();
+            let mut buf = [0u8; 8192];
+            if let Some(mut stderr) = child_stderr.take() {
+                loop {
+                    match stderr.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            let room = MAX_STDERR as usize - kept.len().min(MAX_STDERR as usize);
+                            if room > 0 {
+                                kept.extend_from_slice(&buf[..n.min(room)]);
+                            }
+                        }
+                    }
+                }
+            }
+            kept
         });
         let mut out = Vec::new();
         let read = stdout
@@ -125,15 +146,13 @@ fn run_git(
             .take(cap + 1)
             .read_to_end(&mut out)
             .map_err(|err| Error::Environment(format!("reading git stdout: {err}")));
-        if let Some(mut stderr) = child.stderr.take() {
-            let _ = stderr.by_ref().take(MAX_STDERR).read_to_end(&mut err);
-        }
         let status = child
             .wait()
             .map_err(|err| Error::Environment(format!("waiting for git: {err}")));
         let _ = writer.join();
+        let err = drainer.join().unwrap_or_default();
         match (read, status) {
-            (Ok(_), Ok(status)) => Ok((out, status)),
+            (Ok(_), Ok(status)) => Ok((out, status, err)),
             (Err(e), _) | (_, Err(e)) => Err(e),
         }
     })?;
@@ -439,6 +458,10 @@ pub enum StatusRecord {
         xy: [u8; 2],
         /// Path bytes.
         path: Vec<u8>,
+        /// Index hash `hI` (`None` when the zero OID: the intent-to-add
+        /// marker — a genuinely staged empty file has `hI` = the empty-blob
+        /// OID instead, spec §8.2 empty baselines are legitimate).
+        index_oid: Option<GitOid>,
     },
     /// `2 …`: renamed/copied entry; carries the original path.
     Renamed {
@@ -532,7 +555,20 @@ fn parse_status(out: &[u8], format: ObjectFormat) -> Result<Vec<StatusRecord>, E
                 let xy = [tokens[1][0], tokens[1][1]];
                 let path = tokens[max - 1].to_vec();
                 match kind {
-                    b'1' => records.push(StatusRecord::Ordinary { xy, path }),
+                    b'1' => {
+                        // hI is the 8th field; the zero OID means "no staged
+                        // content" (intent-to-add), not an empty blob.
+                        let index_oid = if tokens[7] == format.zero_oid_hex().as_slice() {
+                            None
+                        } else {
+                            Some(format.parse_oid(tokens[7])?)
+                        };
+                        records.push(StatusRecord::Ordinary {
+                            xy,
+                            path,
+                            index_oid,
+                        });
+                    }
                     b'2' => {
                         let orig = fields
                             .next()
@@ -716,6 +752,10 @@ impl BlobReader {
         }
         let header = header.trim_ascii_end();
         let parts: Vec<&[u8]> = header.split(|b| *b == b' ').collect();
+        // cat-file prints a 2-token "<oid> SP missing" line for absent objects.
+        if parts.len() == 2 && parts[1] == b"missing" {
+            return Err(parse_err(format!("object {oid} is missing")));
+        }
         if parts.len() != 3 {
             self.poisoned = true;
             return Err(parse_err(format!(
@@ -728,9 +768,6 @@ impl BlobReader {
         if echoed != oid {
             self.poisoned = true;
             return Err(parse_err("cat-file echoed a different oid than requested"));
-        }
-        if parts[1] == b"missing" {
-            return Err(parse_err(format!("object {oid} is missing")));
         }
         if parts[1] != b"blob" {
             self.poisoned = true;
@@ -789,12 +826,13 @@ pub fn blob_sizes(repo: &GitRepo, oids: &[GitOid]) -> Result<BTreeMap<GitOid, u6
     let mut sizes = BTreeMap::new();
     for line in out.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
         let parts: Vec<&[u8]> = line.split(|b| *b == b' ').collect();
+        let oid = repo.object_format.parse_oid(parts[0])?;
+        // cat-file prints a 2-token "<oid> SP missing" line for absent objects.
+        if parts.len() == 2 && parts[1] == b"missing" {
+            return Err(parse_err(format!("object {oid} is missing")));
+        }
         if parts.len() != 3 {
             return Err(parse_err("unexpected batch-check line"));
-        }
-        let oid = repo.object_format.parse_oid(parts[0])?;
-        if parts[1] == b"missing" {
-            return Err(parse_err(format!("object {oid} is missing")));
         }
         if parts[1] != b"blob" {
             return Err(parse_err(format!(
@@ -812,7 +850,10 @@ pub fn blob_sizes(repo: &GitRepo, oids: &[GitOid]) -> Result<BTreeMap<GitOid, u6
 }
 
 /// Read one worktree file's bytes, capped (§7.2/4: selected actual worktree
-/// bytes). Returns `None` when the file is absent (e.g. sparse omission).
+/// bytes). Never follows symlinks: `symlink_metadata` decides, a symlink (or
+/// any non-regular file) returns `None` — link targets are read separately
+/// via [`read_symlink_target`] (R06 safe paths, §7.3). Returns `None` when
+/// the file is absent (e.g. sparse omission).
 ///
 /// # Errors
 /// Oversize reads and io failures are [`Error::Environment`]/[`Error::Parse`].
@@ -823,13 +864,13 @@ pub fn read_worktree_file(
 ) -> Result<Option<Vec<u8>>, Error> {
     let rel = std::str::from_utf8(rel_path).map_err(|_| parse_err("worktree path is not UTF-8"))?;
     let full = repo.toplevel.join(FsPath::new(rel));
-    let meta = match std::fs::metadata(&full) {
+    let meta = match std::fs::symlink_metadata(&full) {
         Ok(m) => m,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(Error::Environment(format!("stat {rel}: {err}"))),
     };
     if !meta.is_file() {
-        return Ok(None);
+        return Ok(None); // symlink, directory, socket, … — never followed/read
     }
     let cap = cap.min(profile::MAX_ARTIFACT_RAW_BYTES);
     if meta.len() > cap {
@@ -841,6 +882,73 @@ pub fn read_worktree_file(
     std::fs::read(&full)
         .map_err(|err| Error::Environment(format!("reading {rel}: {err}")))
         .map(Some)
+}
+
+/// Read a symlink's target bytes (inert link-target content, §7.3), capped.
+/// `read_link` never follows the link.
+///
+/// # Errors
+/// Oversize targets and io failures; see [`Error`].
+pub fn read_symlink_target(repo: &GitRepo, rel_path: &[u8], cap: u64) -> Result<Vec<u8>, Error> {
+    let rel = std::str::from_utf8(rel_path).map_err(|_| parse_err("worktree path is not UTF-8"))?;
+    let full = repo.toplevel.join(FsPath::new(rel));
+    let target = std::fs::read_link(&full)
+        .map_err(|err| Error::Environment(format!("read_link {rel}: {err}")))?;
+    #[cfg(unix)]
+    let bytes: &[u8] = {
+        use std::os::unix::ffi::OsStrExt;
+        target.as_os_str().as_bytes()
+    };
+    #[cfg(not(unix))]
+    let bytes: &[u8] = target.to_string_lossy().as_bytes();
+    let cap = cap.min(profile::MAX_ARTIFACT_RAW_BYTES);
+    if bytes.len() as u64 > cap {
+        return Err(parse_err(format!(
+            "symlink target of {rel} is {} bytes, above the {cap} byte cap",
+            bytes.len()
+        )));
+    }
+    Ok(bytes.to_vec())
+}
+
+/// Stat one untracked candidate without following links (R06, §7.3): fills
+/// the mode (exec bit / symlink) and `size_hint`. The path is validated
+/// against spec §11 BEFORE joining, so a hostile path cannot escape the
+/// toplevel via `..`.
+fn stat_untracked(repo: &GitRepo, cand: &mut Candidate) -> Result<(), Error> {
+    let Ok(rel) = std::str::from_utf8(&cand.path) else {
+        return Ok(()); // decide() excludes non-UTF-8 paths
+    };
+    if Path::new(rel).is_err() {
+        return Ok(()); // decide() excludes invalid paths before any read
+    }
+    let full = repo.toplevel.join(FsPath::new(rel));
+    let meta = match std::fs::symlink_metadata(&full) {
+        Ok(m) => m,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(Error::Environment(format!("stat {rel}: {err}"))),
+    };
+    let file_type = meta.file_type();
+    if file_type.is_symlink() {
+        cand.mode = 0o120000;
+        cand.size_hint = Some(meta.len());
+    } else if file_type.is_file() {
+        cand.size_hint = Some(meta.len());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            cand.mode = if meta.permissions().mode() & 0o111 != 0 {
+                0o100755
+            } else {
+                0o100644
+            };
+        }
+        #[cfg(not(unix))]
+        {
+            cand.mode = 0o100644;
+        }
+    }
+    Ok(())
 }
 
 // --------------------------------------------------------------------------
@@ -906,6 +1014,32 @@ pub fn conversion_profiles(
         .into_iter()
         .map(|(path, values)| (path, classify_attrs(&values)))
         .collect())
+}
+
+/// Whether the repository config (`core.autocrlf`, `core.eol`) asks git to
+/// apply a built-in conversion, so blob and worktree bytes can differ even
+/// when no path attribute is set (§7.3: do not label them the same object).
+/// Read-only `git config --get`; exit 1 ("unset") is not an error.
+///
+/// # Errors
+/// See [`Error`].
+pub fn repo_builtin_conversion(repo: &GitRepo) -> Result<bool, Error> {
+    let get = |key: &str| -> Result<Option<String>, Error> {
+        let out = git_ok_codes(
+            &repo.toplevel,
+            &["config", "--get", key],
+            None,
+            MAX_HEADER,
+            &[1],
+        )?;
+        let text = std::str::from_utf8(out.trim_ascii_end())
+            .map_err(|_| parse_err("config value is not UTF-8"))?;
+        Ok((!text.is_empty()).then(|| text.to_owned()))
+    };
+    let autocrlf = get("core.autocrlf")?;
+    let eol = get("core.eol")?;
+    Ok(matches!(autocrlf.as_deref(), Some("true") | Some("input"))
+        || matches!(eol.as_deref(), Some("crlf") | Some("native")))
 }
 
 fn classify_attrs(values: &BTreeMap<Vec<u8>, Vec<u8>>) -> ConversionProfile {
@@ -1080,12 +1214,15 @@ fn mode_tag(mode: u32) -> Result<ModeTag, Error> {
     }
 }
 
-/// One candidate before policy, built purely from the capture.
+/// One candidate before policy, built purely from the capture (plus a
+/// worktree stat for untracked entries — see [`stat_untracked`]).
 struct Candidate {
     path: Vec<u8>,
     source: Source,
     mode: u32,
     oid: Option<GitOid>,
+    /// Worktree size for untracked candidates (from `symlink_metadata`).
+    size_hint: Option<u64>,
     skip_worktree: bool,
     intent_to_add: bool,
     unmerged_stages: Vec<(u8, GitOid)>,
@@ -1094,13 +1231,17 @@ struct Candidate {
 
 fn build_candidates(capture: &Capture) -> Vec<Candidate> {
     let format = capture.repo.object_format;
-    // Intent-to-add: stage-0 entry pointing at the empty blob whose status
-    // `1` record exists for the path (no staged content).
+    // Intent-to-add: a stage-0 index entry pointing at the empty blob whose
+    // status `1` record has the ZERO index hash (hI = 0, XY ".A"). A genuinely
+    // staged empty file has hI = the empty-blob OID and stays included
+    // (spec §8.2 empty baselines are legitimate).
     let ita: BTreeSet<&[u8]> = capture
         .status
         .iter()
         .filter_map(|r| match r {
-            StatusRecord::Ordinary { path, .. } => Some(path.as_slice()),
+            StatusRecord::Ordinary {
+                path, index_oid, ..
+            } if index_oid.is_none() => Some(path.as_slice()),
             _ => None,
         })
         .collect();
@@ -1110,7 +1251,7 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
         .status
         .iter()
         .filter_map(|r| match r {
-            StatusRecord::Ordinary { xy, path }
+            StatusRecord::Ordinary { xy, path, .. }
             | StatusRecord::Renamed { xy, path, .. }
             | StatusRecord::Unmerged { xy, path, .. } => (xy[1] != b'.').then_some(path.as_slice()),
             _ => None,
@@ -1139,6 +1280,7 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
                 source: Source::Tracked,
                 mode: e.mode,
                 oid: Some(e.oid),
+                size_hint: None,
                 skip_worktree: e.skip_worktree(),
                 intent_to_add,
                 unmerged_stages: unmerged.get(e.path.as_slice()).cloned().unwrap_or_default(),
@@ -1153,6 +1295,7 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
                 source: Source::Untracked,
                 mode: 0o100644,
                 oid: None,
+                size_hint: None,
                 skip_worktree: false,
                 intent_to_add: false,
                 unmerged_stages: Vec::new(),
@@ -1163,9 +1306,66 @@ fn build_candidates(capture: &Capture) -> Vec<Candidate> {
     by_path.into_values().collect()
 }
 
+/// Policy checks that run BEFORE any content is read (§11 representability,
+/// sensitive deny, untracked-ignored, unmerged, gitlink, intent-to-add).
+/// Returns the exclusion and its report note. Pure: no content is touched.
+fn early_exclusion(cand: &Candidate, ignored: &BTreeSet<Vec<u8>>) -> Option<(Exclusion, String)> {
+    // §11: path representability first — non-UTF-8 and invalid paths are
+    // explicit exclusions, never lossy substitutions (§5.6/§11).
+    let Ok(text) = std::str::from_utf8(&cand.path) else {
+        return Some((
+            Exclusion::NonUtf8Path,
+            "non-UTF-8 path excluded (spec §11)".into(),
+        ));
+    };
+    if let Err(err) = Path::new(text) {
+        return Some((
+            Exclusion::InvalidPath,
+            format!("path {text:?} excluded: {err}"),
+        ));
+    }
+    if sensitive_deny(text) {
+        return Some((
+            Exclusion::SensitiveDeny,
+            format!("sensitive path {text} denied by Puyu policy; capture is incomplete"),
+        ));
+    }
+    if cand.source == Source::Untracked && ignored.contains(&cand.path) {
+        return Some((
+            Exclusion::IgnoredByGit,
+            format!("untracked path {text} excluded by Git ignore rules"),
+        ));
+    }
+    if !cand.unmerged_stages.is_empty() {
+        return Some((
+            Exclusion::Unmerged,
+            format!(
+                "path {text} has unmerged stages {:?}; kept as conflict metadata",
+                cand.unmerged_stages
+                    .iter()
+                    .map(|(s, _)| *s)
+                    .collect::<Vec<_>>()
+            ),
+        ));
+    }
+    if cand.mode == 0o160000 {
+        return Some((
+            Exclusion::Submodule,
+            format!("gitlink/submodule {text} is a typed entry; no nested import"),
+        ));
+    }
+    if cand.intent_to_add {
+        return Some((
+            Exclusion::IntentToAdd,
+            format!("intent-to-add path {text} has no staged content"),
+        ));
+    }
+    None
+}
+
 /// Pure policy decision for one candidate. `content` is the already-read,
-/// capped baseline bytes (blob for tracked, worktree file for untracked) when
-/// classification needed them.
+/// capped baseline bytes (blob for tracked, worktree file or symlink target
+/// for untracked) when classification needed them.
 fn decide(
     cand: &Candidate,
     ignored: &BTreeSet<Vec<u8>>,
@@ -1191,77 +1391,28 @@ fn decide(
         unmerged_stages: cand.unmerged_stages.clone(),
         worktree_dirty: cand.worktree_dirty,
         conversion,
-        size: cand.oid.and_then(|o| sizes.get(&o).copied()),
+        size: cand
+            .oid
+            .and_then(|o| sizes.get(&o).copied())
+            .or(cand.size_hint),
     };
+    if let Some((excl, note)) = early_exclusion(cand, ignored) {
+        // Keep the path text when it is representable, for the report.
+        if let Ok(text) = std::str::from_utf8(&cand.path)
+            && Path::new(text).is_ok()
+        {
+            entry.path = text.to_owned();
+        }
+        limitations.push(note);
+        entry.excluded = Some(excl);
+        return entry;
+    }
+    let text = std::str::from_utf8(&cand.path).expect("early_exclusion passed UTF-8");
+    entry.path = text.to_owned();
     let mut fail = |entry: &mut PreviewEntry, excl: Exclusion, note: String| {
         limitations.push(note);
         entry.excluded = Some(excl);
     };
-    // §11: path representability first — non-UTF-8 and invalid paths are
-    // explicit exclusions, never lossy substitutions (§5.6/§11).
-    let Ok(text) = std::str::from_utf8(&cand.path) else {
-        fail(
-            &mut entry,
-            Exclusion::NonUtf8Path,
-            "non-UTF-8 path excluded (spec §11)".into(),
-        );
-        return entry;
-    };
-    if let Err(err) = Path::new(text) {
-        fail(
-            &mut entry,
-            Exclusion::InvalidPath,
-            format!("path {text:?} excluded: {err}"),
-        );
-        return entry;
-    }
-    entry.path = text.to_owned();
-    if sensitive_deny(text) {
-        fail(
-            &mut entry,
-            Exclusion::SensitiveDeny,
-            format!("sensitive path {text} denied by Puyu policy; capture is incomplete"),
-        );
-        return entry;
-    }
-    if cand.source == Source::Untracked && ignored_by_git {
-        fail(
-            &mut entry,
-            Exclusion::IgnoredByGit,
-            format!("untracked path {text} excluded by Git ignore rules"),
-        );
-        return entry;
-    }
-    if !cand.unmerged_stages.is_empty() {
-        fail(
-            &mut entry,
-            Exclusion::Unmerged,
-            format!(
-                "path {text} has unmerged stages {:?}; kept as conflict metadata",
-                cand.unmerged_stages
-                    .iter()
-                    .map(|(s, _)| *s)
-                    .collect::<Vec<_>>()
-            ),
-        );
-        return entry;
-    }
-    if cand.mode == 0o160000 {
-        fail(
-            &mut entry,
-            Exclusion::Submodule,
-            format!("gitlink/submodule {text} is a typed entry; no nested import"),
-        );
-        return entry;
-    }
-    if cand.intent_to_add {
-        fail(
-            &mut entry,
-            Exclusion::IntentToAdd,
-            format!("intent-to-add path {text} has no staged content"),
-        );
-        return entry;
-    }
     let mode = match mode_tag(cand.mode) {
         Ok(m) => m,
         Err(err) => {
@@ -1323,28 +1474,61 @@ fn decide(
 /// # Errors
 /// See [`Error`].
 pub fn preview(repo: &GitRepo, capture: &Capture) -> Result<ImportPreview, Error> {
-    let candidates = build_candidates(capture);
+    let mut candidates = build_candidates(capture);
+    // Untracked entries: stat without following links (exec bit, symlink,
+    // size) before any read (R06, §7.3).
+    for cand in &mut candidates {
+        if cand.source == Source::Untracked {
+            stat_untracked(repo, cand)?;
+        }
+    }
     let paths: Vec<Vec<u8>> = candidates.iter().map(|c| c.path.clone()).collect();
     let ignored = ignored_paths(repo, &paths)?;
-    let profiles = conversion_profiles(repo, &paths)?;
+    let mut profiles = conversion_profiles(repo, &paths)?;
+    let repo_config_conversion = repo_builtin_conversion(repo)?;
+    if repo_config_conversion {
+        // core.autocrlf/core.eol apply a built-in conversion even without
+        // path attributes; bytes are captured verbatim and the difference is
+        // reported (§7.3: blob and worktree bytes are not the same object).
+        for profile in profiles.values_mut() {
+            if *profile == ConversionProfile::None {
+                *profile = ConversionProfile::BuiltIn;
+            }
+        }
+    }
     let oids: Vec<GitOid> = candidates.iter().filter_map(|c| c.oid).collect();
     let sizes = blob_sizes(repo, &oids)?;
     let mut reader = BlobReader::open(repo)?;
     let mut limitations = Vec::new();
+    if repo_config_conversion {
+        limitations.push(
+            "repo config core.autocrlf/core.eol requests a built-in conversion; \
+             blob and worktree bytes may differ and are captured verbatim (§7.3)"
+                .into(),
+        );
+    }
     let mut entries = Vec::new();
     let mut incomplete_capture = false;
+    let read_cap = profile::MAX_TEXT_EPOCH_BYTES as u64;
     for cand in &candidates {
-        // Read baseline bytes only when classification needs them (tracked:
-        // blob; untracked: worktree file), capped at the text-epoch cap.
-        let need_content = cand.oid.is_some() || cand.source == Source::Untracked;
-        let size_ok = cand
+        // Policy first: never read content for an excluded entry (finding: no
+        // bytes fetched for sensitive-denied or otherwise excluded paths).
+        let early = early_exclusion(cand, &ignored);
+        let size = cand
             .oid
             .and_then(|o| sizes.get(&o).copied())
-            .is_none_or(|s| s <= profile::MAX_TEXT_EPOCH_BYTES as u64);
-        let content: Option<Vec<u8>> = if need_content && size_ok {
+            .or(cand.size_hint);
+        // Read baseline bytes only when classification needs them (tracked:
+        // blob; untracked: worktree file or symlink target), and only within
+        // the text-epoch cap — larger entries classify opaque by size alone,
+        // never by aborting the preview.
+        let content: Option<Vec<u8>> = if early.is_none() && size.is_none_or(|s| s <= read_cap) {
             match cand.oid {
-                Some(oid) => Some(reader.read_blob(oid, profile::MAX_TEXT_EPOCH_BYTES as u64)?),
-                None => read_worktree_file(repo, &cand.path, profile::MAX_TEXT_EPOCH_BYTES as u64)?,
+                Some(oid) => Some(reader.read_blob(oid, read_cap)?),
+                None if cand.mode == 0o120000 => {
+                    Some(read_symlink_target(repo, &cand.path, read_cap)?)
+                }
+                None => read_worktree_file(repo, &cand.path, read_cap)?,
             }
         } else {
             None
@@ -1476,7 +1660,8 @@ mod tests {
             records[1],
             StatusRecord::Ordinary {
                 xy: *b"AM",
-                path: b"a.txt".to_vec()
+                path: b"a.txt".to_vec(),
+                index_oid: Some(oid)
             }
         );
         assert_eq!(
@@ -1535,11 +1720,128 @@ mod tests {
             source,
             mode: 0o100644,
             oid: Some(sha1_oid(9)),
+            size_hint: None,
             skip_worktree: false,
             intent_to_add: false,
             unmerged_stages: Vec::new(),
             worktree_dirty: false,
         }
+    }
+
+    fn test_repo() -> GitRepo {
+        GitRepo {
+            toplevel: PathBuf::from("/tmp/x"),
+            git_dir: PathBuf::from("/tmp/x/.git"),
+            common_dir: PathBuf::from("/tmp/x/.git"),
+            gitfile: false,
+            object_format: ObjectFormat::Sha1,
+            head: Head::Unborn("main".into()),
+        }
+    }
+
+    /// Gate A finding 1: a genuinely staged EMPTY file (index OID = empty
+    /// blob, status hI = empty-blob OID) must NOT be flagged intent-to-add;
+    /// real intent-to-add (status hI = zero OID) must be.
+    #[test]
+    fn intent_to_add_vs_staged_empty_file() {
+        let empty = ObjectFormat::Sha1.empty_blob();
+        let empty_hex = ObjectFormat::Sha1.to_hex(&empty).unwrap();
+        let zero = ObjectFormat::Sha1.zero_oid_hex();
+        let mk_status = |staged_empty: bool| {
+            let mut raw = Vec::new();
+            if staged_empty {
+                // `git add empty.txt`: hI = empty-blob OID.
+                raw.extend_from_slice(b"1 A. N... 000000 100644 100644 ");
+                raw.extend_from_slice(&zero);
+                raw.push(b' ');
+                raw.extend_from_slice(&empty_hex);
+                raw.extend_from_slice(b" empty.txt\0");
+            } else {
+                // `git add -N ita.txt`: hI = zero OID.
+                raw.extend_from_slice(b"1 .A N... 000000 000000 100644 ");
+                raw.extend_from_slice(&zero);
+                raw.push(b' ');
+                raw.extend_from_slice(&zero);
+                raw.extend_from_slice(b" ita.txt\0");
+            }
+            parse_status(&raw, ObjectFormat::Sha1).unwrap()
+        };
+        let mk_index = |name: &str| {
+            let mut raw = Vec::new();
+            raw.extend_from_slice(b"H 100644 ");
+            raw.extend_from_slice(&empty_hex);
+            raw.extend_from_slice(b" 0\t");
+            raw.extend_from_slice(name.as_bytes());
+            raw.push(0);
+            parse_ls_files(&raw, ObjectFormat::Sha1).unwrap()
+        };
+        // Staged empty file: included, not ITA.
+        let capture = Capture {
+            repo: test_repo(),
+            index: mk_index("empty.txt"),
+            status: mk_status(true),
+            fingerprint: [0; 32],
+        };
+        let cands = build_candidates(&capture);
+        assert_eq!(cands.len(), 1);
+        assert!(!cands[0].intent_to_add, "staged empty file must not be ITA");
+        // Intent-to-add: flagged.
+        let capture = Capture {
+            repo: test_repo(),
+            index: mk_index("ita.txt"),
+            status: mk_status(false),
+            fingerprint: [0; 32],
+        };
+        let cands = build_candidates(&capture);
+        assert_eq!(cands.len(), 1);
+        assert!(cands[0].intent_to_add, "zero-hI record must be ITA");
+        let mut limitations = Vec::new();
+        let e = decide(
+            &cands[0],
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+            &mut limitations,
+        );
+        assert_eq!(e.excluded, Some(Exclusion::IntentToAdd));
+    }
+
+    /// Gate A finding 2: an oversize untracked entry is excluded/classified by
+    /// size alone — decide never needs its bytes and never errors.
+    #[test]
+    fn oversize_untracked_entry_is_reported_not_fatal() {
+        let mut c = candidate("video.bin", Source::Untracked);
+        c.oid = None;
+        c.size_hint = Some(profile::MAX_TEXT_EPOCH_BYTES as u64 + 1);
+        let mut limitations = Vec::new();
+        let e = decide(
+            &c,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None, // no content read
+            &mut limitations,
+        );
+        assert!(e.excluded.is_none());
+        assert_eq!(e.class, Some(ContentClass::Opaque));
+        assert_eq!(e.size, Some(profile::MAX_TEXT_EPOCH_BYTES as u64 + 1));
+        assert!(
+            limitations
+                .iter()
+                .any(|l| l.contains("MAX_TEXT_EPOCH_BYTES"))
+        );
+        // Above the 1 GiB profile cap: excluded as oversize.
+        c.size_hint = Some(profile::MAX_ARTIFACT_RAW_BYTES + 1);
+        let e = decide(
+            &c,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+            &mut limitations,
+        );
+        assert_eq!(e.excluded, Some(Exclusion::Oversize));
     }
 
     #[test]
@@ -1709,15 +2011,31 @@ mod tests {
         std::fs::write(dir.join(".env"), "secret=1").unwrap();
         std::fs::write(dir.join("ignored.txt"), "i").unwrap();
         std::fs::write(dir.join(".gitignore"), "ignored.txt\n").unwrap();
-        git(&["add", "a.txt", "b.bin", "sub/c.txt", ".gitignore"]);
+        std::fs::write(dir.join(".gitkeep"), "").unwrap(); // staged EMPTY file
+        git(&[
+            "add",
+            "a.txt",
+            "b.bin",
+            "sub/c.txt",
+            ".gitignore",
+            ".gitkeep",
+        ]);
         std::fs::write(dir.join("untracked.txt"), "u\n").unwrap();
+        std::fs::write(dir.join("run.sh"), "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir.join("run.sh"), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+            std::os::unix::fs::symlink("a.txt", dir.join("ulink")).unwrap();
+        }
         let repo = discover(&dir).expect("discover");
         assert_eq!(repo.object_format, ObjectFormat::Sha1);
         assert!(!repo.gitfile);
         assert_eq!(repo.head, Head::Unborn("main".into()));
         assert_eq!(repo.toplevel, dir.canonicalize().unwrap());
         let cap = capture(&repo).expect("capture");
-        assert_eq!(cap.index.len(), 4);
+        assert_eq!(cap.index.len(), 5);
         let pv = preview(&repo, &cap).expect("preview");
         let find = |p: &str| pv.entries.iter().find(|e| e.path == p).unwrap();
         let a = find("a.txt");
@@ -1731,6 +2049,28 @@ mod tests {
         assert_eq!(find("untracked.txt").class, Some(ContentClass::Text));
         assert_eq!(find(".env").excluded, Some(Exclusion::SensitiveDeny));
         assert_eq!(find("ignored.txt").excluded, Some(Exclusion::IgnoredByGit));
+        // Gate A finding 1: a staged empty file is included (empty baseline
+        // is legitimate, spec §8.2), never flagged intent-to-add.
+        let gk = find(".gitkeep");
+        assert!(gk.excluded.is_none());
+        assert_eq!(gk.class, Some(ContentClass::Text));
+        // Gate A finding 3: untracked exec bit and symlink are metadata.
+        let run = find("run.sh");
+        assert_eq!(run.mode, ModeTag::Executable);
+        assert_eq!(run.class, Some(ContentClass::Text));
+        #[cfg(unix)]
+        {
+            let ulink = find("ulink");
+            assert_eq!(ulink.mode, ModeTag::Symlink);
+            assert_eq!(ulink.class, Some(ContentClass::SymlinkTarget));
+            // The link target bytes are the inert content, not a.txt's bytes.
+            let mut reader = BlobReader::open(&repo).unwrap();
+            let _ = &mut reader;
+            assert_eq!(
+                read_symlink_target(&repo, b"ulink", 4096).unwrap(),
+                b"a.txt".to_vec()
+            );
+        }
         assert!(pv.incomplete_capture);
         assert!(!pv.empty_cap);
         assert!(!pv.limitations.is_empty());
