@@ -9,5 +9,8 @@ repository.workspace = true
 readme.workspace = true
 publish.workspace = true
 
+[dependencies]
+puyudb-core = { path = "../puyudb-core", version = "=0.1.0-dev" }
+
 [lints]
 workspace = true

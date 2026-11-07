@@ -2,5 +2,9 @@
 
 //! PuyuDB local Git and filesystem integration boundary.
 //!
-//! Foundation only: no Git operations, capture, or materialization are implemented.
-//! Local integration will consume core operations, not own history semantics.
+//! Local integration consumes core operations, not own history semantics.
+//! I07 Phase 1 (P1+P2) adds read-only Git discovery, capture, and the import
+//! preview in [`git`]; import execution (P3) will go through
+//! `puyudb_core::api::Database` only.
+
+pub mod git;
