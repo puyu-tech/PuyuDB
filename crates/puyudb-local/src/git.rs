@@ -1075,8 +1075,12 @@ pub fn read_symlink_target(repo: &GitRepo, rel_path: &[u8], cap: u64) -> Result<
         use std::os::unix::ffi::OsStrExt;
         target.as_os_str().as_bytes()
     };
+    // Non-unix: bind the Cow at function scope so `bytes` does not borrow a
+    // temporary (E0716 on Windows builds).
     #[cfg(not(unix))]
-    let bytes: &[u8] = target.to_string_lossy().as_bytes();
+    let lossy = target.to_string_lossy();
+    #[cfg(not(unix))]
+    let bytes: &[u8] = lossy.as_bytes();
     let cap = cap.min(profile::MAX_ARTIFACT_RAW_BYTES);
     if bytes.len() as u64 > cap {
         return Err(parse_err(format!(
