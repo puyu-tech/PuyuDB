@@ -185,9 +185,13 @@ pub(crate) fn cache_dir(space_dir: &Path) -> PathBuf {
 /// The checkpoint file path for one version (key derivation is internal per
 /// plan Q2: the VersionId hex itself).
 pub(crate) fn checkpoint_path(space_dir: &Path, version: &VersionId) -> PathBuf {
-    cache_dir(space_dir)
-        .join(CHECKPOINT_DIR)
-        .join(format!("{}.{CHECKPOINT_EXT}", version))
+    cache_dir(space_dir).join(CHECKPOINT_DIR).join(format!(
+        // Display carries the type prefix with a ':' (`version1:<hex>`);
+        // Windows forbids ':' in file names (NTFS ADS separator), so the
+        // cache key is always the raw lowercase hex.
+        "{}.{CHECKPOINT_EXT}",
+        crate::identity::hex(version.as_bytes())
+    ))
 }
 
 /// Replay cost of a version: the size of its ancestor closure (§5.8 — each
@@ -222,8 +226,9 @@ pub(crate) fn write_checkpoint(
     fs::create_dir_all(&dir)?;
     let path = checkpoint_path(space_dir, &checkpoint.version);
     let tmp = dir.join(format!(
+        // Same ':' rule as checkpoint_path (Windows ADS separator).
         ".{}.{}.tmp",
-        checkpoint.version,
+        crate::identity::hex(checkpoint.version.as_bytes()),
         std::process::id()
     ));
     fs::write(&tmp, &bytes)?;
@@ -338,5 +343,35 @@ pub(crate) fn maybe_generate(
         Ok(size) => Ok(Some(size)),
         Err(Error::Projection(ProjectionError::Encoding(_))) => Ok(None), // over cap: replay stays the path
         Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Windows forbids ':' in file names (NTFS ADS separator) and the ids'
+    /// Display prints `prefix:<hex>`; the cache layout must always use the
+    /// raw lowercase hex or checkpoints silently never appear on Windows.
+    #[test]
+    fn checkpoint_file_names_are_windows_safe() {
+        let version = VersionId::from_array([7; 32]);
+        let name = checkpoint_path(Path::new("space"), &version);
+        let name = name
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("utf-8 name");
+        assert!(
+            !name.contains(':'),
+            "file name must not contain ':': {name}"
+        );
+        assert!(
+            !name.contains('\\'),
+            "no separators inside a file name: {name}"
+        );
+        assert!(
+            name.ends_with(".ckpt"),
+            "checkpoints keep the .ckpt extension: {name}"
+        );
     }
 }
