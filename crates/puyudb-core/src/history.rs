@@ -138,8 +138,12 @@ impl ReadBudget {
 /// `closure(H)`; computed over the DAG, quarantined batches excluded).
 ///
 /// # Errors
-/// Returns `invalid_encoding` above the frontier cap and SQLite errors.
+/// Returns `invalid_encoding` above the frontier cap, for a non-visible head,
+/// and SQLite errors.
 pub fn closure(conn: &Connection, heads: &[BatchId]) -> Result<Vec<BatchId>, Error> {
+    // Gate visibility first (spec §5: a missing head is never silently
+    // dropped into a smaller closure).
+    projection::check_cut_pub(conn, heads)?;
     let mut out: Vec<BatchId> = projection::closure_set_pub(conn, heads)?
         .into_iter()
         .collect();
@@ -148,37 +152,37 @@ pub fn closure(conn: &Connection, heads: &[BatchId]) -> Result<Vec<BatchId>, Err
 }
 
 /// Whether `ancestor` lies in the ancestor closure of `descendant` (DAG
-/// dominance; arrival order and lamport values never decide).
+/// dominance; arrival order and lamport values never decide). Both ids must
+/// be visible publications; a quarantined or unknown id is
+/// [`Error::MissingVersion`], never a silently smaller answer.
 ///
 /// # Errors
-/// Returns SQLite errors.
+/// Returns [`Error::MissingVersion`] for a non-visible id and SQLite errors.
 pub fn is_ancestor(
     conn: &Connection,
     ancestor: &BatchId,
     descendant: &BatchId,
 ) -> Result<bool, Error> {
+    for id in [ancestor, descendant] {
+        let visible: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM batches WHERE batch_id = ?1 AND quarantined = 0",
+            [id.as_bytes().as_slice()],
+            |row| row.get(0),
+        )?;
+        if visible != 1 {
+            return Err(Error::MissingVersion);
+        }
+    }
     let set = projection::closure_set_pub(conn, std::slice::from_ref(descendant))?;
     Ok(set.contains(ancestor))
 }
 
-/// The native-head mapping of a version's closure: every `native_changes`
-/// row whose producer is the epoch seed (NULL) or lies in `closure`, sorted
-/// by (epoch, artifact). Post-cut producers never appear, so no future
-/// native change can leak into an old view (D1).
-///
-/// # Errors
-/// Returns SQLite errors.
-pub fn native_heads(
-    conn: &Connection,
-    closure: &HashSet<BatchId>,
-) -> Result<Vec<NativeHead>, Error> {
-    let mut seen: HashSet<NativeHead> = HashSet::new();
-    // Chunked VALUES respect the bind-variable budget; producer-NULL seed
-    // rows are closure-independent and repeat per chunk, so the set dedups.
-    let mut chunks: Vec<Vec<BatchId>> = Vec::new();
-    let mut current: Vec<BatchId> = Vec::new();
-    for batch in closure {
-        current.push(*batch);
+/// Split a set into owned chunks of at most `SEED_CHUNK` for VALUES lists.
+fn chunked<T: Copy>(set: &HashSet<T>) -> Vec<Vec<T>> {
+    let mut chunks: Vec<Vec<T>> = Vec::new();
+    let mut current: Vec<T> = Vec::new();
+    for item in set {
+        current.push(*item);
         if current.len() == projection::SEED_CHUNK {
             chunks.push(std::mem::take(&mut current));
         }
@@ -186,23 +190,69 @@ pub fn native_heads(
     if !current.is_empty() {
         chunks.push(current);
     }
-    if chunks.is_empty() {
-        chunks.push(Vec::new());
+    chunks
+}
+
+/// Epoch ids whose declaring `Field::Epoch` write lies in `closure`. A seed
+/// row (producer NULL) belongs to an old view only when its epoch is declared
+/// in that view's closure — a seed registered later for a post-cut epoch must
+/// not leak into the old version's native-head listing (D1).
+fn declared_epochs(
+    conn: &Connection,
+    closure: &HashSet<BatchId>,
+) -> Result<HashSet<EpochId>, Error> {
+    let mut out = HashSet::new();
+    let epoch_tag = projection::Field::Epoch.tag();
+    for chunk in chunked(closure) {
+        let values = projection::values_list(chunk.len());
+        let sql = format!(
+            "SELECT fw.field, fw.value FROM field_writes fw
+             JOIN batches b ON b.batch_id = fw.batch_id AND b.quarantined = 0
+             WHERE fw.batch_id IN (SELECT column1 FROM (VALUES {values}))"
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(
+            rusqlite::params_from_iter(projection::seed_params(&chunk)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )?;
+        for row in rows {
+            let (field, value) = row?;
+            if field as u64 != epoch_tag {
+                continue;
+            }
+            let descriptor =
+                projection::decode_epoch_value_pub(&value).map_err(Error::Projection)?;
+            let id = descriptor
+                .id()
+                .map_err(|err| Error::Projection(projection::Error::Profile(err)))?;
+            out.insert(id);
+        }
     }
+    Ok(out)
+}
+
+/// The native-head mapping of a version's closure: every `native_changes`
+/// row whose producer lies in `closure`, plus the seed row (producer NULL)
+/// of each epoch declared in `closure`, sorted by (epoch, artifact). Post-cut
+/// producers and post-cut epochs never appear, so no future native change or
+/// seed can leak into an old view (D1).
+///
+/// # Errors
+/// Returns SQLite errors and profile errors for undecodable rows.
+pub fn native_heads(
+    conn: &Connection,
+    closure: &HashSet<BatchId>,
+) -> Result<Vec<NativeHead>, Error> {
+    let mut seen: HashSet<NativeHead> = HashSet::new();
+    let chunks = chunked(closure);
+    // Non-seed rows: producer in the closure (chunked VALUES respect the
+    // bind-variable budget).
     for chunk in &chunks {
-        // An empty VALUES list is not valid SQL; the seed-only query covers
-        // the empty-closure case (e.g. the empty frontier).
-        let sql = if chunk.is_empty() {
-            "SELECT epoch, artifact_id, producer FROM native_changes WHERE producer IS NULL"
-                .to_owned()
-        } else {
-            let values = projection::values_list(chunk.len());
-            format!(
-                "SELECT epoch, artifact_id, producer FROM native_changes
-                 WHERE producer IS NULL
-                    OR producer IN (SELECT column1 FROM (VALUES {values}))"
-            )
-        };
+        let values = projection::values_list(chunk.len());
+        let sql = format!(
+            "SELECT epoch, artifact_id, producer FROM native_changes
+             WHERE producer IN (SELECT column1 FROM (VALUES {values}))"
+        );
         let mut statement = conn.prepare(&sql)?;
         let rows = statement.query_map(
             rusqlite::params_from_iter(projection::seed_params(chunk)),
@@ -214,6 +264,28 @@ pub fn native_heads(
                 ))
             },
         )?;
+        for row in rows {
+            let (epoch, artifact, producer) = row?;
+            seen.insert(native_head_row(epoch, artifact, producer)?);
+        }
+    }
+    // Seed rows: only for epochs declared inside this closure.
+    let epochs = declared_epochs(conn, closure)?;
+    for chunk in chunked(&epochs) {
+        let values = projection::values_list(chunk.len());
+        let sql = format!(
+            "SELECT epoch, artifact_id, producer FROM native_changes
+             WHERE producer IS NULL AND epoch IN (SELECT column1 FROM (VALUES {values}))"
+        );
+        let params: Vec<&[u8]> = chunk.iter().map(|e| e.as_bytes().as_slice()).collect();
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Option<Vec<u8>>>(2)?,
+            ))
+        })?;
         for row in rows {
             let (epoch, artifact, producer) = row?;
             seen.insert(native_head_row(epoch, artifact, producer)?);

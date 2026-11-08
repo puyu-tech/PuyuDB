@@ -239,6 +239,7 @@ fn text_epoch_descriptor(baseline: ArtifactId) -> EpochDescriptor {
 struct TextWorld {
     db: Database,
     epoch: EpochId,
+    baseline: ArtifactId,
     seed_native: Vec<u8>,
     root: BatchId,
 }
@@ -284,6 +285,7 @@ fn text_world_in(dir: &std::path::Path, baseline_text: &str) -> TextWorld {
     TextWorld {
         db,
         epoch,
+        baseline: baseline_manifest.id().expect("id"),
         seed_native: seed_bytes,
         root,
     }
@@ -790,4 +792,134 @@ fn versions_survive_reload() {
 
 fn epoch_of(db: &Database, version: &VersionId) -> EpochId {
     db.epochs_at_version(version, FILE).unwrap()[0].0
+}
+
+#[test]
+fn native_heads_seed_rows_are_scoped_to_epochs_declared_in_the_closure() {
+    let w = text_world("hello");
+    let v1 = w.db.version_of(&[w.root]).unwrap();
+    let initial = w.db.branch_initial_version(&BRANCH).unwrap().unwrap();
+
+    let heads_v1_before: Vec<_> = w.db.native_heads(&v1).unwrap();
+    assert_eq!(heads_v1_before.len(), 1);
+    assert_eq!(heads_v1_before[0].epoch, w.epoch);
+    assert_eq!(heads_v1_before[0].producer, None);
+    // The empty initial version declares no epoch, so it lists no seed.
+    assert!(w.db.native_heads(&initial).unwrap().is_empty());
+
+    // Post-cut: a second file with a new epoch over the same baseline, plus
+    // its registered seed, must NOT leak into the old version's listing.
+    let file2 = FileId::from_array([2; 16]);
+    let epoch2_desc = EpochDescriptor {
+        file: file2,
+        nonce: GenerationNonce::from_array([2; 16]),
+        kind: EpochKind::Text,
+        baseline: w.baseline,
+        seed_profile: Some(profile::TEXT_PROFILE.to_owned()),
+        git_oid: None,
+    };
+    let epoch2 = epoch2_desc.id().unwrap();
+    let _c2 = publish_meta(
+        &w.db,
+        meta(2, Some(w.root), vec![w.root], 2),
+        vec![Operation::Create {
+            repository: RepositoryId::from_array([9; 16]),
+            file: file2,
+            path: Path::new("b.txt").expect("path"),
+            mode: ModeTag::Regular,
+            epoch: epoch2_desc,
+        }],
+        2,
+        2,
+    );
+    let seed_name2 = profile::seed_actor_name(&epoch2);
+    let mut doc = TextDoc::empty();
+    let agent = doc.agent_id(&seed_name2);
+    doc.add_insert(agent, &[], 0, "hello");
+    let (seed_manifest, seed_chunks) = frame_payload(
+        &w.db,
+        "native-change-v1",
+        &NativeArtifact {
+            epoch: epoch2,
+            profile: profile::TEXT_PROFILE.to_owned(),
+            native: doc.encode(),
+        }
+        .encode()
+        .expect("seed artifact"),
+    );
+    w.db.register_seed(&epoch2, &seed_manifest, &seed_chunks)
+        .expect("register seed 2");
+
+    let heads_v1_after = w.db.native_heads(&v1).unwrap();
+    assert_eq!(
+        heads_v1_after, heads_v1_before,
+        "post-cut epoch seed must not leak into the old version"
+    );
+    assert!(w.db.native_heads(&initial).unwrap().is_empty());
+    let current = w.db.branch_current_version(&BRANCH).unwrap().unwrap();
+    let heads_current = w.db.native_heads(&current).unwrap();
+    assert_eq!(heads_current.len(), 2, "current version lists both seeds");
+    assert!(heads_current.iter().any(|h| h.epoch == epoch2));
+}
+
+#[test]
+fn quarantine_makes_a_version_unavailable_never_a_smaller_set() {
+    let dir = temp();
+    let db = Database::create_space(&dir, &SPACE).expect("create");
+    let root = publish_meta(&db, meta(1, None, Vec::new(), 1), Vec::new(), 1, 1);
+    let c2 = publish_meta(&db, meta(2, Some(root), vec![root], 2), Vec::new(), 2, 2);
+    let v2 = db.version_of(&[c2]).unwrap();
+
+    // Populate the closure cache, then verify the full set.
+    assert_eq!(db.closure(&v2).unwrap().len(), 2);
+
+    // Equivocation: a different batch claiming the same (stream, sequence)
+    // quarantines c2 (spec §13 writer_equivocation).
+    let (manifest, chunks) = frame_payload(&db, "metadata-v1", &ops_payload(Vec::new(), 99));
+    let metadata = manifest.id().expect("id");
+    let rival = body(2, Some(root), vec![root], 2, metadata);
+    let signature = profile::sign_batch(&KEY_SEED, &rival.space, &rival.id().expect("id"));
+    let expected = db.branch_frontier(&BRANCH).unwrap();
+    let err = db
+        .transact(
+            b"i08-test",
+            &[9],
+            &expected,
+            &Publication {
+                body: &rival,
+                signature_key: &rival.public_key,
+                signature: &signature,
+                artifacts: std::slice::from_ref(&manifest),
+                chunks: &chunks,
+                peer: 1,
+            },
+        )
+        .expect_err("equivocation must fail");
+    assert_eq!(err.code(), "writer_equivocation");
+    assert!(!db.is_published(&c2).unwrap(), "c2 is quarantined");
+
+    // Spec §5 / D1: a version whose frontier head is no longer visible is
+    // VersionUnavailable -> content_unavailable, never a reduced closure.
+    // This also proves the closure cache was cleared on quarantine (a stale
+    // hit would have returned the pre-quarantine set).
+    let err = db.resolve_version(&v2).expect_err("quarantined head");
+    assert_eq!(err.code(), "content_unavailable");
+    let err = db
+        .closure(&v2)
+        .expect_err("closure must not shrink silently");
+    assert_eq!(err.code(), "content_unavailable");
+    let err = db
+        .native_heads(&v2)
+        .expect_err("native heads must not shrink");
+    assert_eq!(err.code(), "content_unavailable");
+    let err = db
+        .is_ancestor_of(&root, &c2)
+        .expect_err("quarantined descendant");
+    assert_eq!(err.code(), "content_unavailable");
+
+    // The still-valid old version resolves fine.
+    let v1 = db.version_of(&[root]).unwrap();
+    assert_eq!(db.closure(&v1).unwrap(), vec![root]);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

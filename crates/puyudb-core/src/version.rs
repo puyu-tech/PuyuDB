@@ -194,7 +194,36 @@ pub fn resolve(conn: &Connection, space: &SpaceId, version: &VersionId) -> Resul
         ));
     }
     validate_dominance(conn, &frontier)?;
+    // §5: a missing head is VersionUnavailable, never an approximate latest
+    // view. Gate head visibility HERE, before any closure computation, so a
+    // quarantined or unknown head surfaces as MissingVersion instead of a
+    // silently smaller closure downstream.
+    require_visible(conn, &frontier.heads)?;
     Ok(frontier)
+}
+
+/// Every head of a resolved frontier must be a visible publication; otherwise
+/// the version is unavailable (MissingVersion → content_unavailable).
+fn require_visible(conn: &Connection, heads: &[BatchId]) -> Result<(), Error> {
+    for chunk in heads.chunks(projection::SEED_CHUNK) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let values = projection::values_list(chunk.len());
+        let sql = format!(
+            "SELECT COUNT(*) FROM batches b
+             WHERE b.quarantined = 0 AND b.batch_id IN (SELECT column1 FROM (VALUES {values}))"
+        );
+        let visible: i64 = conn.query_row(
+            &sql,
+            rusqlite::params_from_iter(projection::seed_params(chunk)),
+            |row| row.get(0),
+        )?;
+        if visible != chunk.len() as i64 {
+            return Err(Error::MissingVersion);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

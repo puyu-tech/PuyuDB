@@ -1020,6 +1020,13 @@ impl Store {
                         body.sequence as i64,
                     ],
                 )?;
+                // Quarantine removes a batch from visible history: the cached
+                // closures that still contain it must not be served anymore
+                // (D3 — the cache is disposable derived state).
+                self.closure_cache
+                    .lock()
+                    .map_err(|_| Error::Corrupt("closure cache lock poisoned".into()))?
+                    .clear();
                 self.conn.execute_batch("COMMIT")?;
                 return Err(Error::Equivocation);
             }
@@ -1258,8 +1265,9 @@ impl Store {
     }
 
     /// The native-head mapping of a version's closure (I08 P1, §6.3
-    /// `native_changes`): seed rows plus changes whose producer lies in the
-    /// closure. Post-cut producers never appear (D1).
+    /// `native_changes`): changes whose producer lies in the closure, plus
+    /// the seed row of each epoch declared in the closure. Post-cut
+    /// producers and post-cut epochs never appear (D1).
     ///
     /// # Errors
     /// Same as [`Store::resolve_version`], plus SQLite errors.
