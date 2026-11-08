@@ -92,7 +92,7 @@ pub struct ReadBudget {
     pub max_steps: u64,
     /// Maximum output bytes of one read result.
     pub max_output_bytes: u64,
-    /// Wall-clock deadline, sampled every 64 steps.
+    /// Wall-clock deadline, checked on every replay step.
     pub deadline: Option<Instant>,
 }
 
@@ -107,8 +107,9 @@ impl ReadBudget {
         Ok(())
     }
 
-    /// Account one reconstruction step. The clock is sampled every 64 steps
-    /// so a tight replay loop does not pay a clock read per step.
+    /// Account one reconstruction step. The deadline is checked on every
+    /// step: `Instant::now` is a vDSO call, negligible against the merge it
+    /// guards, and a sampled deadline can overshoot by up to 63 steps.
     pub(crate) fn consume_step(&self, steps: &mut u64) -> Result<(), Error> {
         *steps = steps
             .checked_add(1)
@@ -116,8 +117,7 @@ impl ReadBudget {
         if *steps > self.max_steps {
             return Err(Error::ReadCancelled("step budget exceeded".into()));
         }
-        if steps.is_multiple_of(64)
-            && let Some(deadline) = self.deadline
+        if let Some(deadline) = self.deadline
             && Instant::now() >= deadline
         {
             return Err(Error::ReadCancelled("read deadline exceeded".into()));

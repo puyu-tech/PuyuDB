@@ -231,7 +231,7 @@ fn build_log(
     // batch DAG): a change's native parents are always admitted by its
     // producer's parent cut, so this order is causal and deterministic —
     // never the unspecified SQL row order.
-    let order = topo_order(conn, closure, &pending)?;
+    let order = topo_order(conn, &pending)?;
     for (_, payload) in order {
         if let Some(budget) = budget {
             budget.consume_step(&mut steps)?;
@@ -241,11 +241,35 @@ fn build_log(
     Ok(base)
 }
 
-/// Topological order (parents first) of the pending producers within the cut,
+/// All ancestor ids of `batch` through `batch_parents` (visible batches only,
+/// `batch` itself excluded).
+fn ancestor_ids(conn: &Connection, batch: &BatchId) -> Result<Vec<BatchId>, Error> {
+    let mut statement = conn.prepare(
+        "WITH RECURSIVE anc(x) AS (
+           SELECT bp.parent FROM batch_parents bp
+           JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
+           WHERE bp.child = ?1
+           UNION
+           SELECT bp.parent FROM anc
+           JOIN batch_parents bp ON bp.child = anc.x
+           JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
+         )
+         SELECT x FROM anc",
+    )?;
+    let rows = statement.query_map([batch.as_bytes().as_slice()], |row| {
+        row.get::<_, Vec<u8>>(0)
+    })?;
+    rows.map(|row| {
+        let bytes = row?;
+        BatchId::from_bytes(&bytes).map_err(|err| Error::Rejected(err.to_string()))
+    })
+    .collect()
+}
+
+/// Topological order (ancestors first) of the pending producers within the cut,
 /// deterministic by batch id.
 fn topo_order(
     conn: &Connection,
-    closure: &HashSet<BatchId>,
     pending: &[(BatchId, Vec<u8>)],
 ) -> Result<Vec<(BatchId, Vec<u8>)>, Error> {
     let wanted: HashSet<BatchId> = pending.iter().map(|(batch, _)| *batch).collect();
@@ -260,22 +284,15 @@ fn topo_order(
         // Deterministic: smallest batch id first among ready ones.
         remaining.sort_by_key(|(batch, _)| *batch);
         for (batch, payload) in remaining.drain(..) {
-            let mut parents: Vec<BatchId> = conn
-                .prepare("SELECT parent FROM batch_parents WHERE child = ?1")?
-                .query_map([batch.as_bytes().as_slice()], |row| {
-                    row.get::<_, Vec<u8>>(0)
-                })?
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(|b| BatchId::from_bytes(&b).map_err(|err| Error::Rejected(err.to_string())))
-                .collect::<Result<Vec<_>, _>>()?;
-            parents.retain(|parent| closure.contains(parent));
-            // A parent that is not itself a pending producer is already in the
-            // base (seed or admitted history) — only pending producers need
-            // to be emitted first.
-            if parents
+            // Native causality follows batch ancestry, not only direct parent
+            // edges: a pending producer can depend on another pending
+            // producer through a non-direct path (its native base lies in
+            // its parent cut, §12.5). Ready = every pending producer that is
+            // an ancestor of this batch within the closure is already emitted.
+            let ancestors = ancestor_ids(conn, &batch)?;
+            if ancestors
                 .iter()
-                .all(|parent| !wanted.contains(parent) || emitted.contains(parent))
+                .all(|a| a == &batch || !wanted.contains(a) || emitted.contains(a))
             {
                 emitted.insert(batch);
                 out.push((batch, payload));
