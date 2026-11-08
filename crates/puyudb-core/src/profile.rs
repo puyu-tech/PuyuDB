@@ -701,6 +701,29 @@ impl Frontier {
     pub fn id(&self) -> Result<VersionId, Error> {
         Ok(version_id(&self.encode()?))
     }
+
+    /// Decode a canonical frontier body.
+    ///
+    /// The three §5 normalization steps are producer-side construction; a
+    /// decoder never repairs received bytes, so an unsorted, duplicated, or
+    /// over-cap head list is `invalid_encoding`, never silently fixed.
+    ///
+    /// # Errors
+    /// Returns the validation failure for non-canonical or unnormalized input.
+    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        let item = canon::decode(bytes)?;
+        validate_record(Record::Frontier, bytes)?;
+        let record = as_list(&item, 3, "frontier")?;
+        let space = as_bytes(&record[1], 16, "space")?;
+        let heads = bytes32_list(&record[2], "frontier heads", MAX_FRONTIER_HEADS)?;
+        let space: [u8; 16] = space
+            .try_into()
+            .map_err(|_| Error::encoding("frontier space width"))?;
+        Ok(Self {
+            space: SpaceId::from_array(space),
+            heads: heads.into_iter().map(BatchId::from_array).collect(),
+        })
+    }
 }
 
 /// Artifact manifest framing one raw payload.

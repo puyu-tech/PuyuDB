@@ -670,3 +670,42 @@ non-UTF-8 path, source-unchanged byte-compare, gc retention, crash/retry,
 changed-repo CAS failure, pre-existing `.puyu` rejection) plus
 `docs/validation/I07-git-import.md`. I07 is closed pending Gate C; no push/PR
 performed.
+
+## Issue I08 — history, versions, checkpoints (in progress, branch `i08-history-versions-checkpoints`)
+
+Phase 1 (P1+P2, `eef3731` + ruling swap `1c5284a` + Gate A fixes `520abec`)
+added closed-frontier version queries and budgeted old reads in
+`crates/puyudb-core`: `version.rs` (frontier decode validates and never
+repairs — `invalid_encoding`; producer-side normalize; DAG dominance;
+VersionId record/resolve, missing head = `content_unavailable`), `history.rs`
+(derived `frontiers`/`branches`/`snapshots` tables maintained inside the
+publication commit; cached `closure(H)`; `native_changes` head mapping per
+version closure; branch current/initial version per §8.3; snapshot-pin read),
+`replay.rs` (full-replay old reads over the version's own closure, never a
+post-cut view), plus Store/facade reads on `puyudb_core::api::Database`
+(`version_of`/`resolve_version`/`closure`/`is_ancestor_of`/`native_heads`/
+`branch_*_version`/`snapshot_version`/`*_at_version`/`text_at_version` with
+`ReadBudget`). Gate A found and `520abec` fixed three blocking issues:
+native-head seed scoping to in-closure epochs, closure-cache clear on
+quarantine, and head-visibility gating (no silently smaller closures).
+
+Phase 2 (P3, `f3d80d1`) added `checkpoint.rs`: bounded, hash-checked physical
+checkpoints under `cache/checkpoints/` keyed by VersionId (never post-cut,
+§6.6), auto-generated after commit past the configurable replay-cost
+threshold (Q1 default 1024, pinned by test, persisted in `format_meta`),
+failure-tolerant per §6.4 step 6, 64 MiB budget with oldest-first eviction;
+`rm -rf cache/` re-derives identical reads (test-pinned). Named snapshots:
+`create_snapshot` with CAS on name take-over (`precondition_failed`), global
+names (Q3 resolved), `list_snapshots`. Gate B approved (`f3d80d1`).
+
+Phase 3 (P4+P5) adds the T02/W07 evidence:
+`crates/puyudb-core/tests/history_fidelity.rs` (all-frontier survival across
+reload/checkpoint/cache-discard/pins, future-leak battery, deleted-content,
+invalid_encoding negatives, broad DAG + cancellation, gc fixture),
+`w07_harness.rs` (1k/100k/1m ignored evidence runs + gate-sized warm/cold
+run), `puyudb-local/tests/history_fidelity_local.rs` (I07-import fixture as
+generator), and `docs/validation/I08-history-versions.md`. P4 also fixed a
+latent `native::topo_order` ordering bug (pending producers must order by
+ancestry, not direct parents) found by the fidelity battery. Full gate suite
+green; plan/gate log in the Maestri note `I08-IMPLEMENTATION-PLAN`. No push/PR
+performed.

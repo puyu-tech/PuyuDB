@@ -23,6 +23,7 @@ use rusqlite::Connection;
 use puyudb_crdt::dt_text::{Error as CrdtError, TextDoc};
 
 use crate::canon::{self, Item};
+use crate::history::ReadBudget;
 use crate::identity::{ArtifactId, BatchId, EpochId};
 use crate::profile::{self, BatchBody, EpochKind, NativeArtifact, Record};
 use crate::projection::{self, Field};
@@ -171,11 +172,13 @@ fn text_epoch_at(
 
 /// Build the native document for `epoch` at a closure: seed first, then every
 /// admitted change in the closure applied in causal (frontier) order. The
-/// result is arrival-order independent because DT converges.
+/// result is arrival-order independent because DT converges. `budget`
+/// (I08 P2, D5) is charged one step for the seed and one per applied change.
 fn build_log(
     conn: &Connection,
     epoch: &EpochId,
     closure: &HashSet<BatchId>,
+    budget: Option<&ReadBudget>,
 ) -> Result<TextDoc, Error> {
     let mut statement =
         conn.prepare("SELECT artifact_id, producer FROM native_changes WHERE epoch = ?1")?;
@@ -213,6 +216,10 @@ fn build_log(
         }
     }
     let seed = seed.ok_or(Error::MissingDependency)?;
+    let mut steps = 0u64;
+    if let Some(budget) = budget {
+        budget.consume_step(&mut steps)?;
+    }
     // §12.4: an empty baseline has a zero-length seed payload, which is not a
     // DT document; the base is then the empty document.
     let mut base = if seed.is_empty() {
@@ -224,18 +231,45 @@ fn build_log(
     // batch DAG): a change's native parents are always admitted by its
     // producer's parent cut, so this order is causal and deterministic —
     // never the unspecified SQL row order.
-    let order = topo_order(conn, closure, &pending)?;
+    let order = topo_order(conn, &pending)?;
     for (_, payload) in order {
+        if let Some(budget) = budget {
+            budget.consume_step(&mut steps)?;
+        }
         base.merge(&payload).map_err(crdt_error)?;
     }
     Ok(base)
 }
 
-/// Topological order (parents first) of the pending producers within the cut,
+/// All ancestor ids of `batch` through `batch_parents` (visible batches only,
+/// `batch` itself excluded).
+fn ancestor_ids(conn: &Connection, batch: &BatchId) -> Result<Vec<BatchId>, Error> {
+    let mut statement = conn.prepare(
+        "WITH RECURSIVE anc(x) AS (
+           SELECT bp.parent FROM batch_parents bp
+           JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
+           WHERE bp.child = ?1
+           UNION
+           SELECT bp.parent FROM anc
+           JOIN batch_parents bp ON bp.child = anc.x
+           JOIN batches b ON b.batch_id = bp.parent AND b.quarantined = 0
+         )
+         SELECT x FROM anc",
+    )?;
+    let rows = statement.query_map([batch.as_bytes().as_slice()], |row| {
+        row.get::<_, Vec<u8>>(0)
+    })?;
+    rows.map(|row| {
+        let bytes = row?;
+        BatchId::from_bytes(&bytes).map_err(|err| Error::Rejected(err.to_string()))
+    })
+    .collect()
+}
+
+/// Topological order (ancestors first) of the pending producers within the cut,
 /// deterministic by batch id.
 fn topo_order(
     conn: &Connection,
-    closure: &HashSet<BatchId>,
     pending: &[(BatchId, Vec<u8>)],
 ) -> Result<Vec<(BatchId, Vec<u8>)>, Error> {
     let wanted: HashSet<BatchId> = pending.iter().map(|(batch, _)| *batch).collect();
@@ -250,22 +284,15 @@ fn topo_order(
         // Deterministic: smallest batch id first among ready ones.
         remaining.sort_by_key(|(batch, _)| *batch);
         for (batch, payload) in remaining.drain(..) {
-            let mut parents: Vec<BatchId> = conn
-                .prepare("SELECT parent FROM batch_parents WHERE child = ?1")?
-                .query_map([batch.as_bytes().as_slice()], |row| {
-                    row.get::<_, Vec<u8>>(0)
-                })?
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(|b| BatchId::from_bytes(&b).map_err(|err| Error::Rejected(err.to_string())))
-                .collect::<Result<Vec<_>, _>>()?;
-            parents.retain(|parent| closure.contains(parent));
-            // A parent that is not itself a pending producer is already in the
-            // base (seed or admitted history) — only pending producers need
-            // to be emitted first.
-            if parents
+            // Native causality follows batch ancestry, not only direct parent
+            // edges: a pending producer can depend on another pending
+            // producer through a non-direct path (its native base lies in
+            // its parent cut, §12.5). Ready = every pending producer that is
+            // an ancestor of this batch within the closure is already emitted.
+            let ancestors = ancestor_ids(conn, &batch)?;
+            if ancestors
                 .iter()
-                .all(|parent| !wanted.contains(parent) || emitted.contains(parent))
+                .all(|a| a == &batch || !wanted.contains(a) || emitted.contains(a))
             {
                 emitted.insert(batch);
                 out.push((batch, payload));
@@ -337,7 +364,7 @@ pub(crate) fn check_native(
         if seed.is_none() {
             return Err(Error::MissingDependency);
         }
-        let base = build_log(conn, &epoch, &closure)?;
+        let base = build_log(conn, &epoch, &closure, None)?;
         let base_len = base.op_len();
         let (staged, report) = base
             .strict_append(&native.native)
@@ -635,6 +662,37 @@ fn find_text_epoch_anywhere(
 /// cut's closure. A historical read at a version is the same call with the
 /// version's heads as the cut.
 pub fn text_at(conn: &Connection, cut: &[BatchId], epoch: &EpochId) -> Result<String, Error> {
+    text_at_budgeted(conn, cut, epoch, None)
+}
+
+/// Merged native document bytes of `epoch` at a cut (I08 P3 checkpoint
+/// building): the same replay as [`text_at`], returning the encoded document
+/// instead of its text.
+pub(crate) fn doc_bytes_at(
+    conn: &Connection,
+    cut: &[BatchId],
+    epoch: &EpochId,
+    budget: Option<&ReadBudget>,
+) -> Result<Vec<u8>, Error> {
+    projection::check_cut_pub(conn, cut)?;
+    if text_epoch_at(conn, cut, epoch)?.is_none() {
+        return Err(Error::Rejected(
+            "epoch is not a declared text epoch at this cut".into(),
+        ));
+    }
+    let closure = closure_of(conn, cut)?;
+    Ok(build_log(conn, epoch, &closure, budget)?.encode())
+}
+
+/// Budgeted form of [`text_at`] used by the I08 historical reads (D5): the
+/// replay accounts every applied native change against `budget` and the
+/// final text against its output-byte limit.
+pub(crate) fn text_at_budgeted(
+    conn: &Connection,
+    cut: &[BatchId],
+    epoch: &EpochId,
+    budget: Option<&ReadBudget>,
+) -> Result<String, Error> {
     projection::check_cut_pub(conn, cut)?;
     // The epoch must be a declared text epoch visible at this cut.
     if text_epoch_at(conn, cut, epoch)?.is_none() {
@@ -643,6 +701,13 @@ pub fn text_at(conn: &Connection, cut: &[BatchId], epoch: &EpochId) -> Result<St
         ));
     }
     let closure = closure_of(conn, cut)?;
-    let doc = build_log(conn, epoch, &closure)?;
-    Ok(doc.text())
+    if let Some(budget) = budget {
+        budget.check_deadline()?;
+    }
+    let doc = build_log(conn, epoch, &closure, budget)?;
+    let text = doc.text();
+    if let Some(budget) = budget {
+        budget.consume_output(text.len() as u64)?;
+    }
+    Ok(text)
 }
