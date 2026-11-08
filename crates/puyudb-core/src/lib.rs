@@ -7,11 +7,12 @@
 //! a durable ack only after that commit. I06 adds the public embedded facade
 //! (`api`): create/open, the §14 error codes, and the keyed transaction
 //! interface. I08 adds history: version/frontier resolution (`version`),
-//! closure and branch/snapshot queries (`history`), and budgeted old reads
-//! (`replay`).
+//! closure and branch/snapshot queries (`history`), budgeted old reads
+//! (`replay`), and bounded physical checkpoints (`checkpoint`).
 
 pub mod api;
 pub mod canon;
+pub mod checkpoint;
 pub mod history;
 pub mod identity;
 pub mod native;

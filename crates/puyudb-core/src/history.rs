@@ -197,7 +197,7 @@ fn chunked<T: Copy>(set: &HashSet<T>) -> Vec<Vec<T>> {
 /// row (producer NULL) belongs to an old view only when its epoch is declared
 /// in that view's closure — a seed registered later for a post-cut epoch must
 /// not leak into the old version's native-head listing (D1).
-fn declared_epochs(
+pub(crate) fn declared_epochs(
     conn: &Connection,
     closure: &HashSet<BatchId>,
 ) -> Result<HashSet<EpochId>, Error> {
@@ -348,9 +348,8 @@ pub fn branch_initial_version(
     row.map(|bytes| version_id_from_bytes(&bytes)).transpose()
 }
 
-/// Resolve a snapshot pin to its VersionId (D4; the `snapshots` table is
-/// populated by P3 — Phase 1 exposes only this read resolution). Global name
-/// namespace. `None` when the name is not pinned.
+/// Resolve a snapshot pin to its VersionId (D4; global name namespace).
+/// `None` when the name is not pinned.
 ///
 /// # Errors
 /// Returns SQLite errors.
@@ -363,6 +362,91 @@ pub fn snapshot_version(conn: &Connection, name: &str) -> Result<Option<VersionI
         )
         .ok();
     row.map(|bytes| version_id_from_bytes(&bytes)).transpose()
+}
+
+/// One named snapshot pin (D4: name → VersionId, immutable entries).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotPin {
+    /// Global snapshot name.
+    pub name: String,
+    /// Pinned version.
+    pub version: VersionId,
+    /// When the pin was created (unix seconds).
+    pub created_unix: u64,
+}
+
+/// Pin `name` to `version` (D4). Idempotent when the name already pins the
+/// SAME version; a different version under the same name is rejected with
+/// `precondition_failed` (CAS on name take-over, §14) — never silently
+/// re-pointed. The version must resolve (visible heads), else
+/// [`Error::MissingVersion`]. Runs inside the caller's transaction.
+///
+/// Returns `Ok(true)` when a new pin was written, `Ok(false)` when the
+/// identical pin already existed.
+///
+/// # Errors
+/// Returns `invalid_encoding` for an empty or over-cap name,
+/// [`Error::Precondition`] on name take-over with a different version, and
+/// [`Error::MissingVersion`] for an unresolvable version.
+pub fn create_snapshot(
+    conn: &Connection,
+    space: &SpaceId,
+    name: &str,
+    version: &VersionId,
+    now_unix: u64,
+) -> Result<bool, Error> {
+    if name.is_empty() || name.len() > crate::checkpoint::MAX_NAME_BYTES {
+        return Err(encoding("snapshot name is empty or exceeds the cap"));
+    }
+    // The pinned version must resolve: visible heads, stored frontier object.
+    version::resolve(conn, space, version)?;
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO snapshots(name, version_id, created_unix) VALUES (?1, ?2, ?3)",
+        rusqlite::params![name, version.as_bytes().as_slice(), now_unix as i64],
+    )?;
+    if inserted == 1 {
+        return Ok(true);
+    }
+    let existing: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT version_id FROM snapshots WHERE name = ?1",
+            [name],
+            |row| row.get(0),
+        )
+        .ok();
+    match existing {
+        Some(bytes) if version_id_from_bytes(&bytes)? == *version => Ok(false),
+        // §14 CAS: a name take-over with a different version fails.
+        _ => Err(Error::Precondition(format!(
+            "snapshot name {name:?} already pins a different version"
+        ))),
+    }
+}
+
+/// All snapshot pins, sorted by name. Read-only.
+///
+/// # Errors
+/// Returns SQLite errors.
+pub fn list_snapshots(conn: &Connection) -> Result<Vec<SnapshotPin>, Error> {
+    let mut statement =
+        conn.prepare("SELECT name, version_id, created_unix FROM snapshots ORDER BY name")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Vec<u8>>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (name, version, created) = row?;
+        out.push(SnapshotPin {
+            name,
+            version: version_id_from_bytes(&version)?,
+            created_unix: u64::try_from(created).map_err(|_| corrupt("negative created_unix"))?,
+        });
+    }
+    Ok(out)
 }
 
 /// Maintain the derived `frontiers`/`branches` rows inside the publication

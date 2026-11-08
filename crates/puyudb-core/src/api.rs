@@ -23,7 +23,8 @@ use crate::identity::{
 use crate::profile::{self, ArtifactManifest};
 use crate::publication::{self, OpenMode, Store};
 
-pub use crate::history::{NativeHead, ReadBudget};
+pub use crate::checkpoint::DEFAULT_REPLAY_COST_THRESHOLD;
+pub use crate::history::{NativeHead, ReadBudget, SnapshotPin};
 pub use crate::projection::{FileProjection, RegisterWrite};
 pub use crate::publication::{Availability, Publication, Receipt};
 
@@ -685,5 +686,53 @@ impl Database {
         budget: Option<&ReadBudget>,
     ) -> Result<String, Error> {
         Ok(self.store.text_at_version(version, epoch, budget)?)
+    }
+
+    /// Pin a snapshot name to a version (I08 P3, D4): idempotent for the same
+    /// (name, version); a different version under the same name is
+    /// [`Error::PreconditionFailed`] (CAS on name take-over, §14). Global name
+    /// namespace (Q3 resolved). The pinned version must resolve.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidEncoding`] for an empty/over-cap name,
+    /// [`Error::ContentUnavailable`] for an unresolvable version, and
+    /// [`Error::PreconditionFailed`] on name take-over.
+    pub fn create_snapshot(&self, name: &str, version: &VersionId) -> Result<bool, Error> {
+        Ok(self.store.create_snapshot(name, version)?)
+    }
+
+    /// All snapshot pins, sorted by name (I08 P3, D4). Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails.
+    pub fn list_snapshots(&self) -> Result<Vec<SnapshotPin>, Error> {
+        Ok(self.store.list_snapshots()?)
+    }
+
+    /// The configured replay-cost threshold for auto-checkpoint generation
+    /// (I08 P3, Q1 default [`DEFAULT_REPLAY_COST_THRESHOLD`]; 0 disables).
+    /// Read-only.
+    #[must_use]
+    pub fn checkpoint_replay_threshold(&self) -> u64 {
+        self.store.checkpoint_replay_threshold()
+    }
+
+    /// Set the local replay-cost threshold (persisted in the space's
+    /// `format_meta`; auto-checkpoints are generated after a commit when the
+    /// branch frontier's closure reaches it).
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the write fails.
+    pub fn set_checkpoint_replay_threshold(&self, threshold: u64) -> Result<(), Error> {
+        Ok(self.store.set_checkpoint_replay_threshold(threshold)?)
+    }
+
+    /// Whether a valid hash-checked checkpoint is cached for `version`
+    /// (I08 P3). Read-only; `false` after `rm -rf cache/` by design (D3).
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the check fails.
+    pub fn checkpoint_cached(&self, version: &VersionId) -> Result<bool, Error> {
+        Ok(self.store.checkpoint_cached(version)?)
     }
 }

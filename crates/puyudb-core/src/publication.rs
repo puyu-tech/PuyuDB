@@ -296,10 +296,17 @@ pub struct Receipt {
 pub struct Store {
     conn: Connection,
     space: SpaceId,
+    /// Space directory; `cache/` lives under it (§6.2).
+    dir: std::path::PathBuf,
     /// In-memory closure cache keyed by VersionId (I08 P1, §5.8 "cached").
     /// Disposable derived state (D3): DAG edges are append-only, so the
     /// closure of a resolved version never changes once computed.
     closure_cache: Mutex<HashMap<VersionId, Vec<BatchId>>>,
+    /// Configurable replay-cost threshold for auto-checkpoints (I08 P3, Q1);
+    /// persisted in `format_meta`, 0 disables auto-generation.
+    checkpoint_threshold: std::cell::Cell<u64>,
+    /// Bounded budget for the `cache/` tree in bytes (I08 P3, §6.2).
+    cache_budget_bytes: u64,
     _owner: File,
 }
 
@@ -411,7 +418,17 @@ impl Store {
             conn.execute_batch(projection::SCHEMA)?;
             conn.execute_batch(crate::native::SCHEMA)?;
             conn.execute_batch(crate::history::SCHEMA)?;
-            check_format_meta(&conn, space, db_existed == 1)
+            check_format_meta(&conn, space, db_existed == 1)?;
+            // I08 P3 local configuration keys (additive; defaults when absent).
+            conn.execute(
+                "INSERT OR IGNORE INTO format_meta(key, value) VALUES
+                 ('checkpoint_replay_threshold', ?1), ('cache_budget_bytes', ?2)",
+                params![
+                    crate::checkpoint::DEFAULT_REPLAY_COST_THRESHOLD.to_string(),
+                    crate::checkpoint::DEFAULT_CACHE_BUDGET_BYTES.to_string(),
+                ],
+            )?;
+            Ok(())
         })();
         match schema_result {
             Ok(()) => conn.execute_batch("COMMIT")?,
@@ -430,10 +447,34 @@ impl Store {
         if !manifest_path.exists() {
             write_manifest(&manifest_path, space)?;
         }
+        let meta_get = |key: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT value FROM format_meta WHERE key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .ok()
+        };
+        let parse_u64 = |key: &str, default: u64| -> u64 {
+            meta_get(key)
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(default)
+        };
+        let checkpoint_threshold = parse_u64(
+            "checkpoint_replay_threshold",
+            crate::checkpoint::DEFAULT_REPLAY_COST_THRESHOLD,
+        );
+        let cache_budget_bytes = parse_u64(
+            "cache_budget_bytes",
+            crate::checkpoint::DEFAULT_CACHE_BUDGET_BYTES,
+        );
         Ok(Self {
             conn,
             space: *space,
+            dir: dir.to_path_buf(),
             closure_cache: Mutex::new(HashMap::new()),
+            checkpoint_threshold: std::cell::Cell::new(checkpoint_threshold),
+            cache_budget_bytes,
             _owner: owner,
         })
     }
@@ -975,8 +1016,42 @@ impl Store {
         })();
         if result.is_err() {
             let _ = self.conn.execute_batch("ROLLBACK");
+        } else {
+            // I08 P3: cache publication follows the commit (§6.4 step 6). A
+            // checkpoint failure here only invalidates/rebuilds the
+            // disposable cache — never the committed batch.
+            self.post_commit_checkpoint(&publication.body.branch);
         }
         result
+    }
+
+    /// Auto-generate a physical checkpoint for the branch's current frontier
+    /// when its replay cost reached the configured threshold. Best-effort:
+    /// any failure leaves the cache absent/partial, which reads treat as
+    /// discard-and-replay (D3).
+    fn post_commit_checkpoint(&self, branch: &BranchId) {
+        let heads = match projection::branch_heads(&self.conn, branch) {
+            Ok(heads) => heads,
+            Err(_) => return,
+        };
+        self.post_commit_checkpoint_heads(&heads);
+    }
+
+    fn post_commit_checkpoint_heads(&self, heads: &[BatchId]) {
+        if heads.is_empty() || self.checkpoint_threshold.get() == 0 {
+            return;
+        }
+        if let Err(_err) = crate::checkpoint::maybe_generate(
+            &self.conn,
+            &self.dir,
+            &self.space,
+            heads,
+            self.checkpoint_threshold.get(),
+            self.cache_budget_bytes,
+        ) {
+            // Disposable cache: sweep any half-written temp file.
+            let _ = sweep_tmp_checkpoints(&self.dir);
+        }
     }
 
     fn visible_cursor(&self, id: &BatchId) -> Result<Option<u64>, Error> {
@@ -1317,7 +1392,85 @@ impl Store {
         epoch: &EpochId,
         budget: Option<&crate::history::ReadBudget>,
     ) -> Result<String, Error> {
-        crate::replay::text_at_version(&self.conn, &self.space, version, epoch, budget)
+        crate::replay::text_at_version(&self.conn, &self.dir, &self.space, version, epoch, budget)
+    }
+
+    /// Pin a snapshot name to a version (I08 P3, D4): idempotent for the same
+    /// (name, version), `precondition_failed` on name take-over with a
+    /// different version (CAS, §14). Runs in its own transaction; the pinned
+    /// version gets a best-effort post-commit checkpoint like a branch head.
+    ///
+    /// # Errors
+    /// Returns `invalid_encoding` for a bad name, [`Error::MissingVersion`]
+    /// for an unresolvable version, and [`Error::Precondition`] on take-over.
+    pub fn create_snapshot(&self, name: &str, version: &VersionId) -> Result<bool, Error> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let now = now_unix()?;
+        let result = crate::history::create_snapshot(&self.conn, &self.space, name, version, now);
+        match result {
+            Ok(written) => {
+                self.conn.execute_batch("COMMIT")?;
+                if let Ok(frontier) = crate::version::resolve(&self.conn, &self.space, version) {
+                    self.post_commit_checkpoint_heads(&frontier.heads);
+                }
+                Ok(written)
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
+    }
+
+    /// All snapshot pins, sorted by name (I08 P3, D4). Read-only.
+    ///
+    /// # Errors
+    /// Returns SQLite errors.
+    pub fn list_snapshots(&self) -> Result<Vec<crate::history::SnapshotPin>, Error> {
+        crate::history::list_snapshots(&self.conn)
+    }
+
+    /// The configured replay-cost threshold for auto-checkpoints (I08 P3,
+    /// Q1; 0 disables auto-generation). Read-only.
+    #[must_use]
+    pub fn checkpoint_replay_threshold(&self) -> u64 {
+        self.checkpoint_threshold.get()
+    }
+
+    /// Set the local replay-cost threshold (persisted in `format_meta`).
+    ///
+    /// # Errors
+    /// Returns SQLite errors.
+    pub fn set_checkpoint_replay_threshold(&self, threshold: u64) -> Result<(), Error> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| {
+            self.conn.execute(
+                "INSERT INTO format_meta(key, value) VALUES ('checkpoint_replay_threshold', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![threshold.to_string()],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                self.checkpoint_threshold.set(threshold);
+                Ok(())
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
+    }
+
+    /// Whether a valid (hash-checked) checkpoint file is cached for `version`
+    /// (I08 P3). Read-only.
+    ///
+    /// # Errors
+    /// Returns io errors other than a missing file.
+    pub fn checkpoint_cached(&self, version: &VersionId) -> Result<bool, Error> {
+        Ok(crate::checkpoint::read_checkpoint(&self.dir, &self.space, version)?.is_some())
     }
 
     /// Conflicts visible at a cut, recomputed from history with stable
@@ -1727,11 +1880,29 @@ impl Store {
     }
 }
 
-fn now_unix() -> Result<u64, Error> {
+pub(crate) fn now_unix() -> Result<u64, Error> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|err| Error::Rejected(format!("system clock before the unix epoch: {err}")))?
         .as_secs())
+}
+
+/// Remove half-written checkpoint temp files (best-effort cache hygiene).
+fn sweep_tmp_checkpoints(space_dir: &std::path::Path) -> std::io::Result<()> {
+    let dir = crate::checkpoint::cache_dir(space_dir).join("checkpoints");
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.') && n.ends_with(".tmp"))
+            {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Map a constraint violation to a domain rejection; keep other SQLite errors.

@@ -648,6 +648,25 @@ pub fn text_at(conn: &Connection, cut: &[BatchId], epoch: &EpochId) -> Result<St
     text_at_budgeted(conn, cut, epoch, None)
 }
 
+/// Merged native document bytes of `epoch` at a cut (I08 P3 checkpoint
+/// building): the same replay as [`text_at`], returning the encoded document
+/// instead of its text.
+pub(crate) fn doc_bytes_at(
+    conn: &Connection,
+    cut: &[BatchId],
+    epoch: &EpochId,
+    budget: Option<&ReadBudget>,
+) -> Result<Vec<u8>, Error> {
+    projection::check_cut_pub(conn, cut)?;
+    if text_epoch_at(conn, cut, epoch)?.is_none() {
+        return Err(Error::Rejected(
+            "epoch is not a declared text epoch at this cut".into(),
+        ));
+    }
+    let closure = closure_of(conn, cut)?;
+    Ok(build_log(conn, epoch, &closure, budget)?.encode())
+}
+
 /// Budgeted form of [`text_at`] used by the I08 historical reads (D5): the
 /// replay accounts every applied native change against `budget` and the
 /// final text against its output-byte limit.
