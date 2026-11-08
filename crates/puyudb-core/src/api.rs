@@ -10,17 +10,21 @@
 //! callback, so no core lock is held across user code). The read methods
 //! (`branch_frontier`, `files_at`, `text_at`, …) are read-only, hold no
 //! engine lock across the call, and take an explicit cut `&[BatchId]` of
-//! heads as the version identity until I08 lands version handles.
+//! heads; the I08 `*_version` reads resolve a `VersionId` through the same
+//! machinery first.
 
 use std::path::Path;
 
 use thiserror::Error;
 
-use crate::identity::{ArtifactId, BatchId, BranchId, ChunkId, EpochId, FileId, SpaceId};
+use crate::identity::{
+    ArtifactId, BatchId, BranchId, ChunkId, EpochId, FileId, SpaceId, VersionId,
+};
 use crate::profile::{self, ArtifactManifest};
 use crate::publication::{self, OpenMode, Store};
 
-pub use crate::projection::FileProjection;
+pub use crate::history::{NativeHead, ReadBudget};
+pub use crate::projection::{FileProjection, RegisterWrite};
 pub use crate::publication::{Availability, Publication, Receipt};
 
 /// A second open of an owned space (§8.1).
@@ -158,6 +162,17 @@ impl From<publication::Error> for Error {
                 Self::PreconditionFailed("manifest and database name different spaces".into())
             }
             P::Corrupt(detail) => Self::Corruption(detail),
+            // Spec §5: a missing head/object is VersionUnavailable →
+            // content_unavailable, never an approximate latest view (D1).
+            P::MissingVersion => Self::ContentUnavailable(
+                "version unavailable: no stored frontier object for this VersionId".into(),
+            ),
+            // pending: maintainer ruling on the §14 budget/cancellation code —
+            // D5 requires a §14-typed error; provisioned as
+            // content_unavailable until ruled. Single mapping point.
+            P::ReadCancelled(detail) => {
+                Self::ContentUnavailable(format!("read cancelled: {detail}"))
+            }
             // §8.1 writable-open environment rejection; environmental, not a
             // §14 code, so it reports the non-stable "internal" sentinel.
             P::NetworkFs(detail) => {
@@ -369,8 +384,9 @@ impl Database {
 
     /// Current visible heads of `branch` — the branch frontier (§5.3).
     ///
-    /// Read-only. Until I08 lands version handles, this cut of heads is the
-    /// "version" identity accepted by the `*_at` reads below.
+    /// Read-only. This cut of heads is the "version" identity accepted by the
+    /// `*_at` reads below; the I08 `*_version` reads resolve a `VersionId`
+    /// (see [`Database::branch_current_version`]) to the same heads.
     ///
     /// # Errors
     /// Returns [`Error::Internal`] when the read fails.
@@ -481,5 +497,192 @@ impl Database {
     /// Returns [`Error::Internal`] when the read fails.
     pub fn is_published(&self, id: &BatchId) -> Result<bool, Error> {
         Ok(self.store.is_published(id)?)
+    }
+
+    /// VersionId of a raw head cut (I08 P1): producer-side normalize + hash.
+    /// Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidEncoding`] for an over-cap cut or one naming a
+    /// batch that is not a visible publication.
+    pub fn version_of(&self, cut: &[BatchId]) -> Result<VersionId, Error> {
+        Ok(self.store.version_of_cut(cut)?)
+    }
+
+    /// Resolve a VersionId to its canonical frontier (I08 P1, spec §5).
+    /// Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::ContentUnavailable`] (`VersionUnavailable`) for an
+    /// unknown VersionId — never an approximate latest view (D1) —
+    /// [`Error::InvalidEncoding`] for a provably redundant stored head list,
+    /// and [`Error::Corruption`] for an inconsistent stored row.
+    pub fn resolve_version(&self, version: &VersionId) -> Result<profile::Frontier, Error> {
+        Ok(self.store.resolve_version(version)?)
+    }
+
+    /// Consumer-side frontier validation against the local DAG (I08 P1,
+    /// spec §5, D2): a head provably dominated by another head is rejected as
+    /// [`Error::InvalidEncoding`], never silently normalized.
+    ///
+    /// # Errors
+    /// Same contract as [`Database::resolve_version`].
+    pub fn validate_frontier(&self, frontier: &profile::Frontier) -> Result<(), Error> {
+        Ok(self.store.validate_frontier(frontier)?)
+    }
+
+    /// `closure(H)` of a resolved version, sorted (I08 P1, D1). Read-only;
+    /// cached in memory because DAG edges are append-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::resolve_version`], plus [`Error::Internal`].
+    pub fn closure(&self, version: &VersionId) -> Result<Vec<BatchId>, Error> {
+        Ok(self.store.closure(version)?)
+    }
+
+    /// Whether `ancestor` lies in the ancestor closure of `descendant` (DAG
+    /// dominance; I08 P1). Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails.
+    pub fn is_ancestor_of(&self, ancestor: &BatchId, descendant: &BatchId) -> Result<bool, Error> {
+        Ok(self.store.is_ancestor_of(ancestor, descendant)?)
+    }
+
+    /// The native-head mapping of a version's closure (I08 P1, §6.3
+    /// `native_changes` epoch/hash → artifact). Read-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::resolve_version`], plus [`Error::Internal`].
+    pub fn native_heads(&self, version: &VersionId) -> Result<Vec<NativeHead>, Error> {
+        Ok(self.store.native_heads(version)?)
+    }
+
+    /// The branch's current frontier VersionId (I08 P1, §6.3 `branches`),
+    /// alongside [`Database::branch_frontier`]. Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails.
+    pub fn branch_current_version(&self, branch: &BranchId) -> Result<Option<VersionId>, Error> {
+        Ok(self.store.branch_current_version(branch)?)
+    }
+
+    /// The branch's immutable initial VersionId (I08 P1, §8.3). Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails.
+    pub fn branch_initial_version(&self, branch: &BranchId) -> Result<Option<VersionId>, Error> {
+        Ok(self.store.branch_initial_version(branch)?)
+    }
+
+    /// Resolve a snapshot pin to its VersionId (I08 P1 read resolution; pins
+    /// are written by P3). Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::Internal`] when the read fails.
+    pub fn snapshot_version(&self, name: &str) -> Result<Option<VersionId>, Error> {
+        Ok(self.store.snapshot_version(name)?)
+    }
+
+    /// MV register evaluation at a version (I08 P2): the maximal writes of the
+    /// version's closure, alternatives in stable bytewise write-identity
+    /// order. Read-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::resolve_version`], plus the cut-gate errors of
+    /// [`Database::files_at`].
+    pub fn register_at_version(&self, version: &VersionId) -> Result<Vec<RegisterWrite>, Error> {
+        let frontier = self.store.resolve_version(version)?;
+        Ok(self.store.register_at(&frontier.heads)?)
+    }
+
+    /// Per-file register projections at a version (I08 P2). Read-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::register_at_version`].
+    pub fn files_at_version(&self, version: &VersionId) -> Result<Vec<FileProjection>, Error> {
+        let frontier = self.store.resolve_version(version)?;
+        Ok(self.store.files_at(&frontier.heads)?)
+    }
+
+    /// Path assignments at a version (I08 P2 historical path view). Read-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::register_at_version`].
+    pub fn paths_at_version(
+        &self,
+        version: &VersionId,
+    ) -> Result<Vec<(profile::Path, Vec<FileId>)>, Error> {
+        let frontier = self.store.resolve_version(version)?;
+        Ok(self.store.paths_at(&frontier.heads)?)
+    }
+
+    /// Prefix conflicts at a version (I08 P2). Read-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::register_at_version`].
+    pub fn prefix_conflicts_at_version(
+        &self,
+        version: &VersionId,
+    ) -> Result<Vec<(profile::Path, profile::Path)>, Error> {
+        let frontier = self.store.resolve_version(version)?;
+        Ok(self.store.prefix_conflicts_at(&frontier.heads)?)
+    }
+
+    /// All epochs declared for `file` at a version, old epochs included (I08
+    /// P2). Read-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::register_at_version`].
+    pub fn epochs_at_version(
+        &self,
+        version: &VersionId,
+        file: FileId,
+    ) -> Result<Vec<(EpochId, profile::EpochDescriptor)>, Error> {
+        let frontier = self.store.resolve_version(version)?;
+        Ok(self.store.epochs_at(&frontier.heads, file)?)
+    }
+
+    /// Conflicts visible at a version (I08 P2), recomputed from history with
+    /// stable `ConflictId`s. Read-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::register_at_version`].
+    pub fn conflicts_at_version(
+        &self,
+        version: &VersionId,
+    ) -> Result<Vec<profile::Conflict>, Error> {
+        let frontier = self.store.resolve_version(version)?;
+        Ok(self.store.conflicts_at(&frontier.heads)?)
+    }
+
+    /// The canonical semantic manifest at a version (I08 P2). Read-only.
+    ///
+    /// # Errors
+    /// Same as [`Database::register_at_version`].
+    pub fn semantic_manifest_at_version(
+        &self,
+        version: &VersionId,
+    ) -> Result<profile::SemanticManifest, Error> {
+        let frontier = self.store.resolve_version(version)?;
+        Ok(self.store.semantic_manifest_at(&frontier.heads)?)
+    }
+
+    /// Text of the text `epoch` at a version (I08 P2): full replay over the
+    /// version's own closure under `budget` — never a checkpoint carrying
+    /// post-cut changes, and never a partial "latest" fallback on budget
+    /// exhaustion (D1/D5). Read-only.
+    ///
+    /// # Errors
+    /// Returns [`Error::ContentUnavailable`] for an unknown VersionId and
+    /// when `budget` is exceeded (typed cancellation, D5), plus the errors of
+    /// [`Database::text_at`].
+    pub fn text_at_version(
+        &self,
+        version: &VersionId,
+        epoch: &EpochId,
+        budget: Option<&ReadBudget>,
+    ) -> Result<String, Error> {
+        Ok(self.store.text_at_version(version, epoch, budget)?)
     }
 }

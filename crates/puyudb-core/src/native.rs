@@ -23,6 +23,7 @@ use rusqlite::Connection;
 use puyudb_crdt::dt_text::{Error as CrdtError, TextDoc};
 
 use crate::canon::{self, Item};
+use crate::history::ReadBudget;
 use crate::identity::{ArtifactId, BatchId, EpochId};
 use crate::profile::{self, BatchBody, EpochKind, NativeArtifact, Record};
 use crate::projection::{self, Field};
@@ -171,11 +172,13 @@ fn text_epoch_at(
 
 /// Build the native document for `epoch` at a closure: seed first, then every
 /// admitted change in the closure applied in causal (frontier) order. The
-/// result is arrival-order independent because DT converges.
+/// result is arrival-order independent because DT converges. `budget`
+/// (I08 P2, D5) is charged one step for the seed and one per applied change.
 fn build_log(
     conn: &Connection,
     epoch: &EpochId,
     closure: &HashSet<BatchId>,
+    budget: Option<&ReadBudget>,
 ) -> Result<TextDoc, Error> {
     let mut statement =
         conn.prepare("SELECT artifact_id, producer FROM native_changes WHERE epoch = ?1")?;
@@ -213,6 +216,10 @@ fn build_log(
         }
     }
     let seed = seed.ok_or(Error::MissingDependency)?;
+    let mut steps = 0u64;
+    if let Some(budget) = budget {
+        budget.consume_step(&mut steps)?;
+    }
     // §12.4: an empty baseline has a zero-length seed payload, which is not a
     // DT document; the base is then the empty document.
     let mut base = if seed.is_empty() {
@@ -226,6 +233,9 @@ fn build_log(
     // never the unspecified SQL row order.
     let order = topo_order(conn, closure, &pending)?;
     for (_, payload) in order {
+        if let Some(budget) = budget {
+            budget.consume_step(&mut steps)?;
+        }
         base.merge(&payload).map_err(crdt_error)?;
     }
     Ok(base)
@@ -337,7 +347,7 @@ pub(crate) fn check_native(
         if seed.is_none() {
             return Err(Error::MissingDependency);
         }
-        let base = build_log(conn, &epoch, &closure)?;
+        let base = build_log(conn, &epoch, &closure, None)?;
         let base_len = base.op_len();
         let (staged, report) = base
             .strict_append(&native.native)
@@ -635,6 +645,18 @@ fn find_text_epoch_anywhere(
 /// cut's closure. A historical read at a version is the same call with the
 /// version's heads as the cut.
 pub fn text_at(conn: &Connection, cut: &[BatchId], epoch: &EpochId) -> Result<String, Error> {
+    text_at_budgeted(conn, cut, epoch, None)
+}
+
+/// Budgeted form of [`text_at`] used by the I08 historical reads (D5): the
+/// replay accounts every applied native change against `budget` and the
+/// final text against its output-byte limit.
+pub(crate) fn text_at_budgeted(
+    conn: &Connection,
+    cut: &[BatchId],
+    epoch: &EpochId,
+    budget: Option<&ReadBudget>,
+) -> Result<String, Error> {
     projection::check_cut_pub(conn, cut)?;
     // The epoch must be a declared text epoch visible at this cut.
     if text_epoch_at(conn, cut, epoch)?.is_none() {
@@ -643,6 +665,13 @@ pub fn text_at(conn: &Connection, cut: &[BatchId], epoch: &EpochId) -> Result<St
         ));
     }
     let closure = closure_of(conn, cut)?;
-    let doc = build_log(conn, epoch, &closure)?;
-    Ok(doc.text())
+    if let Some(budget) = budget {
+        budget.check_deadline()?;
+    }
+    let doc = build_log(conn, epoch, &closure, budget)?;
+    let text = doc.text();
+    if let Some(budget) = budget {
+        budget.consume_output(text.len() as u64)?;
+    }
+    Ok(text)
 }

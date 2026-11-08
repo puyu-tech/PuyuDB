@@ -842,16 +842,16 @@ pub fn epochs_at(
 /// 32,766 variables per statement, so seed lists are chunked well below that;
 /// the ancestor closure itself is always walked inside the SQL CTE, never
 /// turned into bind parameters.
-const SEED_CHUNK: usize = 16_384;
+pub(crate) const SEED_CHUNK: usize = 16_384;
 
-fn values_list(count: usize) -> String {
+pub(crate) fn values_list(count: usize) -> String {
     (1..=count)
         .map(|i| format!("(?{i})"))
         .collect::<Vec<_>>()
         .join(",")
 }
 
-fn seed_params(chunk: &[BatchId]) -> Vec<&[u8]> {
+pub(crate) fn seed_params(chunk: &[BatchId]) -> Vec<&[u8]> {
     chunk
         .iter()
         .map(|seed| seed.as_bytes().as_slice())
