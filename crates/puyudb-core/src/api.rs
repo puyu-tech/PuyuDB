@@ -167,11 +167,11 @@ impl From<publication::Error> for Error {
             P::MissingVersion => Self::ContentUnavailable(
                 "version unavailable: no stored frontier object for this VersionId".into(),
             ),
-            // pending: maintainer ruling on the §14 budget/cancellation code —
-            // D5 requires a §14-typed error; provisioned as
-            // content_unavailable until ruled. Single mapping point.
+            // Maintainer ruling (final): a budget-exceeded/cancelled read is
+            // §14 precondition_failed — D5's typed error, never a partial
+            // "latest" fallback. Single mapping point.
             P::ReadCancelled(detail) => {
-                Self::ContentUnavailable(format!("read cancelled: {detail}"))
+                Self::PreconditionFailed(format!("read cancelled: {detail}"))
             }
             // §8.1 writable-open environment rejection; environmental, not a
             // §14 code, so it reports the non-stable "internal" sentinel.
@@ -675,7 +675,8 @@ impl Database {
     ///
     /// # Errors
     /// Returns [`Error::ContentUnavailable`] for an unknown VersionId and
-    /// when `budget` is exceeded (typed cancellation, D5), plus the errors of
+    /// [`Error::PreconditionFailed`] when `budget` is exceeded (typed
+    /// cancellation, D5 — maintainer ruling), plus the errors of
     /// [`Database::text_at`].
     pub fn text_at_version(
         &self,

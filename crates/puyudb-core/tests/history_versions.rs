@@ -712,18 +712,17 @@ fn read_budget_cancels_typed_never_partial() {
     );
 
     // Zero step budget: the typed cancellation fires, never a partial text.
-    // (The exact §14 code is a pending maintainer ruling — the Conductor
-    // ruled it must be a single mapping point — so this test asserts only
-    // that the read fails typed, not the code string.)
+    // Spec-negative per the final maintainer ruling: an exhausted/cancelled
+    // budget read is §14 precondition_failed.
     let zero_steps = ReadBudget {
         max_steps: 0,
         max_output_bytes: u64::MAX,
         deadline: None,
     };
-    assert!(
+    let err =
         w.db.text_at_version(&v2, &w.epoch, Some(&zero_steps))
-            .is_err()
-    );
+            .expect_err("zero-step budget must cancel");
+    assert_eq!(err.code(), "precondition_failed");
 
     // Output-byte budget below the result length.
     let tiny_bytes = ReadBudget {
@@ -731,10 +730,10 @@ fn read_budget_cancels_typed_never_partial() {
         max_output_bytes: 1,
         deadline: None,
     };
-    assert!(
+    let err =
         w.db.text_at_version(&v2, &w.epoch, Some(&tiny_bytes))
-            .is_err()
-    );
+            .expect_err("tiny output budget must cancel");
+    assert_eq!(err.code(), "precondition_failed");
 
     // Deadline already in the past.
     let past = ReadBudget {
@@ -742,7 +741,10 @@ fn read_budget_cancels_typed_never_partial() {
         max_output_bytes: u64::MAX,
         deadline: Some(Instant::now() - Duration::from_secs(1)),
     };
-    assert!(w.db.text_at_version(&v2, &w.epoch, Some(&past)).is_err());
+    let err =
+        w.db.text_at_version(&v2, &w.epoch, Some(&past))
+            .expect_err("past deadline must cancel");
+    assert_eq!(err.code(), "precondition_failed");
 }
 
 #[test]
